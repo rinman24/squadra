@@ -1,0 +1,5 @@
+# Normalise line endings. The shell glue under src/flotilla/_scripts ships as
+# package data and is executed verbatim once materialised from the installed
+# package, so it must always be LF — a CRLF checkout on Windows would break it.
+* text=auto
+*.sh text eol=lf
