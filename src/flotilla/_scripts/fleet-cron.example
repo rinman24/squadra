@@ -1,0 +1,20 @@
+# AFK fleet supervisor — one cron entry, every 3
+# minutes, ordered passes under one lock.
+#
+# Activation is manual/opt-in (never auto-enabled). With a cron daemon present,
+# install for the current user with (adjust the paths to your environment):
+#
+#   { crontab -l 2>/dev/null; \
+#     echo '*/3 * * * * FLEET_HOME=/path/to/target-repo /path/to/venv/bin/flotilla tick'; \
+#   } | crontab -
+#
+# `flotilla tick` runs one supervisor tick and logs to
+# $FLEET_HOME/.claude/fleet/supervisor.log. FLEET_HOME must point at the repo
+# the fleet operates on; use the `flotilla` console script from the virtualenv
+# flotilla is installed in (it sets FLEET_PYTHON for you).
+#
+# Many dev images ship NO cron daemon (and no systemd), so the supported
+# autostart path there is the opt-in FLEET_AUTOSTART tmux ticker
+# (fleet-autostart.sh) / `flotilla start`. This file is for environments that
+# DO have cron.
+*/3 * * * * FLEET_HOME=/path/to/target-repo /path/to/venv/bin/flotilla tick

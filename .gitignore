@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# uv / virtualenv (uv.lock IS committed)
+.venv/
+
+# Build artifacts
+build/
+dist/
+
+# Test / type-checker caches
+.pytest_cache/
+.ruff_cache/
+.pyright/
+.coverage
+htmlcov/
+
+# Fleet runtime state — created in the TARGET repo (FLEET_HOME), never here,
+# but ignored defensively in case flotilla is run from its own checkout.
+.claude/fleet/
+
+# Editor / OS
+.DS_Store
+*.swp
