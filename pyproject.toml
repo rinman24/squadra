@@ -1,0 +1,70 @@
+[project]
+name = "flotilla"
+version = "0.1.0"
+description = "Deterministic supervisor + per-slice runner machinery for an AFK, board-driven Claude implementation fleet (ADR-0007)."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "GenShift Energy" }]
+# Pure standard library — the fleet machinery has no third-party runtime deps.
+dependencies = []
+
+[project.scripts]
+flotilla = "flotilla.cli:main"
+flotilla-supervisor = "flotilla.supervisor:main"
+flotilla-status = "flotilla.status:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/flotilla"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/flotilla", "tests", "README.md", "CLAUDE.md"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.11",
+    "pyright>=1.1.390",
+    "pytest>=8",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+extend-select = [
+    "D",    # pydocstyle
+    "PL",   # Pylint
+    "I",    # isort (import sorting / grouping)
+    "TID",  # flake8-tidy-imports (banned-api, import hygiene)
+]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+force-sort-within-sections = true
+known-first-party = ["flotilla", "tests"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.per-file-ignores]
+# Test helpers often use non-imperative fixture docstrings; multi-line format rules are noisy.
+"tests/*" = ["D100", "D103", "D401", "D205", "D209", "PLR2004", "PLR0913"]
+# Empty package markers don't need docstrings.
+"**/__init__.py" = ["D104"]
+
+[tool.pyright]
+typeCheckingMode = "strict"
+pythonVersion = "3.11"
+include = ["src", "tests"]
+extraPaths = [".", "src"]
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
