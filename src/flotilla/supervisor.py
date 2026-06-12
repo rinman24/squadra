@@ -241,8 +241,7 @@ def _auth_probe_command(model: str) -> tuple[str, ...]:
     than silently failing every claimed runner. No ``--effort`` — the probe
     does no reasoning, so the runner's effort tier is irrelevant to it.
     """
-    return ("claude", "-p", "reply READY", "--dangerously-skip-permissions",
-            "--model", model)
+    return ("claude", "-p", "reply READY", "--dangerously-skip-permissions", "--model", model)
 
 
 def _run_auth_probe(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
@@ -273,7 +272,9 @@ def _claude_auth_ok(
     return completed.returncode == 0 and "READY" in completed.stdout
 
 
-def _archive_worktree(worktree: Path, issue_id: int, attempt: int, config: SupervisorConfig) -> None:
+def _archive_worktree(
+    worktree: Path, issue_id: int, attempt: int, config: SupervisorConfig
+) -> None:
     """Move the dead worktree under the slice's archive/ for inspection."""
     if not worktree.is_dir():
         return
@@ -325,9 +326,7 @@ def config_from_env(
 ) -> SupervisorConfig:
     """Build the tick configuration from constants and the environment."""
     raw_epics: str = os.environ.get("FLEET_EPIC_IDS", "")
-    epic_ids: tuple[int, ...] = tuple(
-        int(part) for part in raw_epics.split(",") if part.strip()
-    )
+    epic_ids: tuple[int, ...] = tuple(int(part) for part in raw_epics.split(",") if part.strip())
     return SupervisorConfig(
         fleet_root=fleet_root if fleet_root is not None else FLEET_ROOT,
         fleet_home=fleet_home
@@ -445,7 +444,7 @@ def finalize_pass(seams: TickSeams, config: SupervisorConfig) -> FinalizeOutcome
                 ado.remove_tag(issue.issue_id, tag)
         ado.add_comment(
             issue.issue_id,
-            f"<p>fleet: finalized — PR completed (<a href=\"{pr_url}\">{pr_url}</a>), "
+            f'<p>fleet: finalized — PR completed (<a href="{pr_url}">{pr_url}</a>), '
             f"branch <code>{branch}</code> cleaned up.</p>",
         )
         if status is not None:
@@ -598,9 +597,7 @@ def claim_pass(seams: TickSeams, config: SupervisorConfig) -> ClaimOutcome:
     """Claim unblocked, unclaimed slices up to the cap and launch their runners."""
     ado: AdoClient = seams.ado
     inflight: tuple[int, ...] = tuple(
-        issue.issue_id
-        for issue in ado.issues_in_state(STATE_DOING)
-        if TAG_CLAIMED in issue.tags
+        issue.issue_id for issue in ado.issues_in_state(STATE_DOING) if TAG_CLAIMED in issue.tags
     )
     budget: int = config.cap - len(inflight)
     claimed: list[int] = []
@@ -621,8 +618,7 @@ def claim_pass(seams: TickSeams, config: SupervisorConfig) -> ClaimOutcome:
             if config.epic_ids and links.parent_id not in config.epic_ids:
                 continue
             if not all(
-                ado.issue_state(predecessor) == STATE_DONE
-                for predecessor in links.predecessor_ids
+                ado.issue_state(predecessor) == STATE_DONE for predecessor in links.predecessor_ids
             ):
                 blocked.append(issue.issue_id)
                 continue
@@ -760,9 +756,7 @@ class AzCliAdo:
             {"ids": ids, "fields": ["System.Id", "System.Title", "System.Tags"]},
         )
         value: object = _json_object(batch).get("value")
-        items: list[object] = (
-            cast("list[object]", value) if isinstance(value, list) else []
-        )
+        items: list[object] = cast("list[object]", value) if isinstance(value, list) else []
         return _issue_refs_from_items(items)
 
     def _resolve_project(self) -> str:
@@ -784,10 +778,24 @@ class AzCliAdo:
             in_file: str = handle.name
         try:
             return self._run(
-                ["devops", "invoke", "--area", "wit", "--resource", resource,
-                 "--route-parameters", f"project={self._resolve_project()}",
-                 "--http-method", "POST", "--in-file", in_file,
-                 "--api-version", "7.1", "-o", "json"]
+                [
+                    "devops",
+                    "invoke",
+                    "--area",
+                    "wit",
+                    "--resource",
+                    resource,
+                    "--route-parameters",
+                    f"project={self._resolve_project()}",
+                    "--http-method",
+                    "POST",
+                    "--in-file",
+                    in_file,
+                    "--api-version",
+                    "7.1",
+                    "-o",
+                    "json",
+                ]
             )
         finally:
             os.unlink(in_file)
@@ -795,16 +803,36 @@ class AzCliAdo:
     def issue_links(self, issue_id: int) -> IssueLinks:
         """Read parent / predecessor relations from the work item."""
         out: str = self._run(
-            ["boards", "work-item", "show", "--id", str(issue_id), "--expand", "relations",
-             "-o", "json"]
+            [
+                "boards",
+                "work-item",
+                "show",
+                "--id",
+                str(issue_id),
+                "--expand",
+                "relations",
+                "-o",
+                "json",
+            ]
         )
         return _parse_issue_links(out)
 
     def completed_pr_url(self, branch: str) -> str | None:
         """Find a completed PR from ``branch`` into main, if one exists."""
         out: str = self._run(
-            ["repos", "pr", "list", "--source-branch", branch, "--target-branch", "main",
-             "--status", "completed", "-o", "json"]
+            [
+                "repos",
+                "pr",
+                "list",
+                "--source-branch",
+                branch,
+                "--target-branch",
+                "main",
+                "--status",
+                "completed",
+                "-o",
+                "json",
+            ]
         )
         if not out.strip():
             return None
@@ -830,8 +858,7 @@ class AzCliAdo:
     def set_state(self, issue_id: int, state: str) -> None:
         """Transition the work item to ``state``."""
         self._run(
-            ["boards", "work-item", "update", "--id", str(issue_id), "--state", state,
-             "-o", "none"]
+            ["boards", "work-item", "update", "--id", str(issue_id), "--state", state, "-o", "none"]
         )
 
     def add_tag(self, issue_id: int, tag: str) -> None:
@@ -851,8 +878,17 @@ class AzCliAdo:
     def add_comment(self, issue_id: int, html: str) -> None:
         """Add an HTML discussion comment to the work item."""
         self._run(
-            ["boards", "work-item", "update", "--id", str(issue_id), "--discussion", html,
-             "-o", "none"]
+            [
+                "boards",
+                "work-item",
+                "update",
+                "--id",
+                str(issue_id),
+                "--discussion",
+                html,
+                "-o",
+                "none",
+            ]
         )
 
     def _current_tags(self, issue_id: int) -> list[str]:
@@ -864,8 +900,17 @@ class AzCliAdo:
 
     def _write_tags(self, issue_id: int, tags: list[str]) -> None:
         self._run(
-            ["boards", "work-item", "update", "--id", str(issue_id),
-             "--fields", f"System.Tags={'; '.join(tags)}", "-o", "none"]
+            [
+                "boards",
+                "work-item",
+                "update",
+                "--id",
+                str(issue_id),
+                "--fields",
+                f"System.Tags={'; '.join(tags)}",
+                "-o",
+                "none",
+            ]
         )
 
 
@@ -1032,14 +1077,14 @@ class TmuxLauncher:
             f"{shlex.quote(str(wrap))} {issue_id} {shlex.quote(branch)} {attempt}"
         )
         if self._run(["tmux", "has-session", "-t", "fleet"]) != 0:
-            return self._run(["tmux", "new-session", "-d", "-s", "fleet", "-n", "grid",
-                              command]) == 0
+            return (
+                self._run(["tmux", "new-session", "-d", "-s", "fleet", "-n", "grid", command]) == 0
+            )
         if self._run(["tmux", "split-window", "-d", "-t", "fleet:grid", command]) == 0:
             self._run(["tmux", "select-layout", "-t", "fleet:grid", "tiled"])
             return True
         # The session exists but the grid window is gone (e.g. closed by hand).
-        return self._run(["tmux", "new-window", "-d", "-t", "fleet", "-n", "grid",
-                          command]) == 0
+        return self._run(["tmux", "new-window", "-d", "-t", "fleet", "-n", "grid", command]) == 0
 
 
 class ClaudeCleanup:
@@ -1068,9 +1113,16 @@ class ClaudeCleanup:
         """Clean one merged branch; return False when the session failed."""
         return (
             self._run(
-                ["claude", "-p", f"/cleanup-merged-branches {branch}",
-                 "--dangerously-skip-permissions",
-                 "--model", self._model, "--effort", self._effort],
+                [
+                    "claude",
+                    "-p",
+                    f"/cleanup-merged-branches {branch}",
+                    "--dangerously-skip-permissions",
+                    "--model",
+                    self._model,
+                    "--effort",
+                    self._effort,
+                ],
                 self._fleet_home,
             )
             == 0
@@ -1132,10 +1184,7 @@ class DryRunLauncher:
 
     def launch(self, issue_id: int, branch: str, attempt: int) -> bool:
         """Log the would-be runner pane and report success."""
-        _log(
-            f"[dry-run] WOULD launch runner for #{issue_id} "
-            f"(branch {branch}, attempt {attempt})"
-        )
+        _log(f"[dry-run] WOULD launch runner for #{issue_id} (branch {branch}, attempt {attempt})")
         return True
 
 

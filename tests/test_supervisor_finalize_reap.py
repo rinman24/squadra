@@ -145,9 +145,7 @@ def test_reap_requeues_a_stale_dead_runner_and_archives_the_worktree(
     worktree: Path = tmp_path / "worktrees" / "feat+slice-41-example"
     worktree.mkdir(parents=True)
     (worktree / "scratch.txt").write_text("evidence")
-    write(
-        make_status(phase="tdd", last_heartbeat=_STALE, worktree=str(worktree)), fleet_root
-    )
+    write(make_status(phase="tdd", last_heartbeat=_STALE, worktree=str(worktree)), fleet_root)
     (fleet_root / "41" / "runner.pid").write_text("99999\n")
     git_runner = _RecordingGitRunner()
     seams: TickSeams = make_seams(pid_alive=_never_alive, run_git=git_runner)
@@ -343,9 +341,7 @@ def test_reap_skips_a_deliberate_park_with_tag_even_when_stale_and_dead(
 ) -> None:
     make_issue(41, state="Doing", tags=["fleet:claimed", "fleet:awaiting-pr-approval"])
     write(
-        make_status(
-            phase="parked", parked_state="awaiting-pr-approval", last_heartbeat=_STALE
-        ),
+        make_status(phase="parked", parked_state="awaiting-pr-approval", last_heartbeat=_STALE),
         fleet_root,
     )
     seams: TickSeams = make_seams(pid_alive=_never_alive)
@@ -411,12 +407,12 @@ def test_tick_runs_finalize_then_reap_then_claim(
     make_issue(40, title="feat: merged", state="Done", tags=["fleet:claimed"])
     fake_board.completed_prs["feat/slice-40-merged"] = "https://pr/40"
     make_issue(41, title="feat: example", state="Doing", tags=["fleet:claimed"])
-    write(make_status(phase="tdd", last_heartbeat=_ANCIENT, worktree=str(tmp_path / "gone")),
-          fleet_root)
-    make_issue(50, title="feat: fresh slice")
-    seams: TickSeams = make_seams(
-        pid_alive=_never_alive, run_git=_RecordingGitRunner()
+    write(
+        make_status(phase="tdd", last_heartbeat=_ANCIENT, worktree=str(tmp_path / "gone")),
+        fleet_root,
     )
+    make_issue(50, title="feat: fresh slice")
+    seams: TickSeams = make_seams(pid_alive=_never_alive, run_git=_RecordingGitRunner())
     assert run_tick(seams, make_supervisor_config()) == 0
     assert fake_cleaner.cleaned == ["feat/slice-40-merged"]
     assert fake_launcher.launches == [

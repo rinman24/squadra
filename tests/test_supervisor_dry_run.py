@@ -66,9 +66,7 @@ def test_dry_run_tick_mutates_nothing_and_reports_every_would_be_action(
     worktree: Path = tmp_path / "worktrees" / "feat+slice-41-example"
     worktree.mkdir(parents=True)
     (worktree / "scratch.txt").write_text("evidence")
-    write(
-        make_status(phase="tdd", last_heartbeat=_ANCIENT, worktree=str(worktree)), fleet_root
-    )
+    write(make_status(phase="tdd", last_heartbeat=_ANCIENT, worktree=str(worktree)), fleet_root)
     # #50 claim-eligible (To Do, untagged, unblocked).
     make_issue(50, title="feat: fresh slice")
     issues_before = copy.deepcopy(fake_board.issues)
