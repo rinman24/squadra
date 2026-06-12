@@ -1,60 +1,113 @@
-"""The board ResourceAccess seam and its Azure DevOps adapter.
+"""The board ResourceAccess seam, its Azure DevOps adapter, and the registry.
 
-``BoardAccess`` (renamed from ``AdoClient``) is the contract the supervisor
-passes depend on; ``AzCliAdo`` is the concrete az-CLI-backed adapter together
-with its WIQL/JSON parsing helpers. Renaming the Protocol is the only change
-here — the operations, their signatures, and the ADO wire behaviour are
-unchanged. PR2 makes this seam provider-neutral (``Lifecycle`` state, structured
-comment events, configurable tag prefix).
+``BoardAccess`` is the provider-neutral contract the supervisor passes depend
+on — it speaks the neutral ``Lifecycle`` state, ``WorkItem`` records, and
+structured ``CommentEvent`` values, never board-native state strings or markup.
+``AzCliAdo`` is the concrete az-CLI-backed adapter: it maps native states to and
+from ``Lifecycle`` via the configured state map, renders comment events to ADO
+HTML, and validates the configured names against the live board. ``build_board``
+is the hardcoded provider registry (the composition-root seam) — name maps to an
+adapter factory.
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 import json
 import os
 import subprocess
 import tempfile
 from typing import Final, Protocol, cast
 
-from flotilla.domain import IssueLinks, IssueRef
+from flotilla.config import ADO_BASIC_STATES, ConfigError, FlotillaConfig
+from flotilla.domain import (
+    Claimed,
+    CommentEvent,
+    Escalated,
+    Finalized,
+    Lifecycle,
+    Reaped,
+    RolledBack,
+    Tags,
+    WorkItem,
+    WorkItemLinks,
+)
 
 _PREDECESSOR_REL: Final[str] = "System.LinkTypes.Dependency-Reverse"
 _PARENT_REL: Final[str] = "System.LinkTypes.Hierarchy-Reverse"
 
 
-class BoardAccess(Protocol):
-    """The ADO operations the supervisor passes need (az-CLI-backed in prod)."""
+class BoardValidationError(RuntimeError):
+    """Raised when the configuration does not resolve against the live board."""
 
-    def issues_in_state(self, state: str) -> tuple[IssueRef, ...]:
-        """Return all Issues currently in ``state``."""
+
+class BoardAccess(Protocol):
+    """The provider-neutral board operations the supervisor passes need."""
+
+    def items_in_state(self, state: Lifecycle) -> tuple[WorkItem, ...]:
+        """Return all work items whose native state maps to ``state``."""
         ...
 
     def completed_pr_url(self, branch: str) -> str | None:
-        """Return the completed PR for ``branch`` targeting main, if any."""
+        """Return the completed PR for ``branch`` vs the base branch, if any."""
         ...
 
-    def issue_links(self, issue_id: int) -> IssueLinks:
-        """Return parent / predecessor links of one Issue."""
+    def item_links(self, item_id: int) -> WorkItemLinks:
+        """Return parent / predecessor links of one work item."""
         ...
 
-    def issue_state(self, issue_id: int) -> str:
-        """Return the current ``System.State`` of a work item."""
+    def item_state(self, item_id: int) -> Lifecycle:
+        """Return the neutral lifecycle bucket of one work item."""
         ...
 
-    def set_state(self, issue_id: int, state: str) -> None:
-        """Transition a work item to ``state``."""
+    def set_state(self, item_id: int, state: Lifecycle) -> None:
+        """Transition a work item into the native state of ``state``."""
         ...
 
-    def add_tag(self, issue_id: int, tag: str) -> None:
-        """Add ``tag`` to the work item (read-append-write of System.Tags)."""
+    def add_tag(self, item_id: int, tag: str) -> None:
+        """Add ``tag`` to the work item (idempotent)."""
         ...
 
-    def remove_tag(self, issue_id: int, tag: str) -> None:
+    def remove_tag(self, item_id: int, tag: str) -> None:
         """Remove ``tag`` from the work item."""
         ...
 
-    def add_comment(self, issue_id: int, html: str) -> None:
-        """Add an HTML discussion comment to the work item."""
+    def add_comment(self, item_id: int, event: CommentEvent) -> None:
+        """Add a discussion comment, rendering ``event`` to native markup."""
         ...
+
+    def validate_config(self) -> None:
+        """Resolve the configuration against the live board; raise loud on mismatch."""
+        ...
+
+
+# --- ADO comment rendering ----------------------------------------------------
+
+
+def render_ado_html(event: CommentEvent, tags: Tags) -> str:
+    """Render a structured ``CommentEvent`` to one ADO discussion HTML comment."""
+    match event:
+        case Claimed(runner_id=runner_id, branch=branch, when=when):
+            return (
+                f"<p>fleet: claimed by supervisor — runner <code>{runner_id}</code>, "
+                f"branch <code>{branch}</code>, {when}.</p>"
+            )
+        case RolledBack(reason=reason):
+            return f"<p>fleet: {reason} — claim rolled back.</p>"
+        case Finalized(pr_url=pr_url, branch=branch):
+            return (
+                f'<p>fleet: finalized — PR completed (<a href="{pr_url}">{pr_url}</a>), '
+                f"branch <code>{branch}</code> cleaned up.</p>"
+            )
+        case Reaped(evidence=evidence, attempt=attempt):
+            return (
+                f"<p>fleet: reaped — {evidence} (attempt {attempt}); "
+                f"worktree archived, requeued for retry.</p>"
+            )
+        case Escalated(attempt=attempt, cap=cap):
+            return (
+                f"<p>fleet: retry cap exhausted (next attempt would be {attempt}, cap {cap}) "
+                f"— escalated to <code>{tags.failed}</code>. Triage via the status file, then "
+                f"remove the tag (and the fleet status dir for a clean restart) to requeue.</p>"
+            )
 
 
 # --- az CLI adapter ----------------------------------------------------------
@@ -75,29 +128,39 @@ class AzCliAdo:
         self,
         run: Callable[[Sequence[str]], str] = _run_az,
         project: str | None = None,
+        *,
+        states: Mapping[Lifecycle, tuple[str, ...]] = ADO_BASIC_STATES,
+        base_branch: str = "main",
+        tags: Tags = Tags(),
     ) -> None:
-        """Wire the adapter to a command runner (injectable for tests).
+        """Wire the adapter to a command runner and its board configuration.
 
-        ``project`` names the Azure DevOps project for the REST route
-        parameter; when omitted it is resolved once from the configured az
-        default on first use.
+        ``project`` names the Azure DevOps project for the REST route parameter;
+        when omitted it is resolved once from the configured az default on first
+        use. ``states`` is the Lifecycle→native-state map (set writes use the
+        first native name of a bucket); ``base_branch`` is the PR target;
+        ``tags`` is the fleet tag vocabulary used when rendering comments.
         """
         self._run = run
         self._project = project
+        self._states = states
+        self._base_branch = base_branch
+        self._tags = tags
 
-    def issues_in_state(self, state: str) -> tuple[IssueRef, ...]:
-        """Return Issues in ``state`` with their tags, via the WIQL REST API.
+    def items_in_state(self, state: Lifecycle) -> tuple[WorkItem, ...]:
+        """Return work items whose native state maps to ``state``, via WIQL REST.
 
         ``az boards query`` produces no output under the devbox's az-CLI /
         azure-devops extension pairing, so the query goes through ``az devops
         invoke`` instead: ``wit/wiql`` for the matching ids, then
         ``wit/workitemsbatch`` for their fields.
         """
+        in_clause: str = ", ".join(f"'{name}'" for name in self._states[state])
         wiql: str = (
             "SELECT [System.Id] FROM WorkItems "
             "WHERE [System.TeamProject] = @project "
             "AND [System.WorkItemType] = 'Issue' "
-            f"AND [System.State] = '{state}'"
+            f"AND [System.State] IN ({in_clause})"
         )
         ids: list[int] = _wiql_ids(self._invoke_json("wiql", {"query": wiql}))
         if not ids:
@@ -108,7 +171,7 @@ class AzCliAdo:
         )
         value: object = _json_object(batch).get("value")
         items: list[object] = cast("list[object]", value) if isinstance(value, list) else []
-        return _issue_refs_from_items(items)
+        return _work_items_from_items(items)
 
     def _resolve_project(self) -> str:
         """Return the project for REST routes, resolving the az default once."""
@@ -117,10 +180,33 @@ class AzCliAdo:
         return self._project
 
     def _invoke_json(self, resource: str, body: dict[str, object]) -> str:
-        """POST ``body`` to a ``wit`` REST resource via ``az devops invoke``.
+        """POST ``body`` to a project-scoped ``wit`` REST resource.
 
-        The body is written to a temp file because ``az devops invoke`` reads
-        its payload from ``--in-file`` only; the file is removed afterwards.
+        Thin wrapper over :meth:`_invoke` that scopes the call to the resolved
+        project and returns JSON — the shape the WIQL / batch reads expect.
+        """
+        return self._invoke(
+            resource,
+            body,
+            http_method="POST",
+            route_parameters=[f"project={self._resolve_project()}"],
+        )
+
+    def _invoke(
+        self,
+        resource: str,
+        body: object,
+        *,
+        http_method: str,
+        route_parameters: Sequence[str],
+        output: str = "json",
+    ) -> str:
+        """Invoke a ``wit`` REST resource via ``az devops invoke``.
+
+        ``az devops invoke`` reads its request payload from ``--in-file`` only,
+        so ``body`` is serialized to a temp file (removed in ``finally``). The
+        method, route parameters, and output format are caller-supplied so the
+        same machinery serves the POST reads and the PATCH op:replace tag write.
         """
         with tempfile.NamedTemporaryFile(
             "w", suffix=".json", delete=False, encoding="utf-8"
@@ -137,21 +223,21 @@ class AzCliAdo:
                     "--resource",
                     resource,
                     "--route-parameters",
-                    f"project={self._resolve_project()}",
+                    *route_parameters,
                     "--http-method",
-                    "POST",
+                    http_method,
                     "--in-file",
                     in_file,
                     "--api-version",
                     "7.1",
                     "-o",
-                    "json",
+                    output,
                 ]
             )
         finally:
             os.unlink(in_file)
 
-    def issue_links(self, issue_id: int) -> IssueLinks:
+    def item_links(self, item_id: int) -> WorkItemLinks:
         """Read parent / predecessor relations from the work item."""
         out: str = self._run(
             [
@@ -159,17 +245,17 @@ class AzCliAdo:
                 "work-item",
                 "show",
                 "--id",
-                str(issue_id),
+                str(item_id),
                 "--expand",
                 "relations",
                 "-o",
                 "json",
             ]
         )
-        return _parse_issue_links(out)
+        return _parse_item_links(out)
 
     def completed_pr_url(self, branch: str) -> str | None:
-        """Find a completed PR from ``branch`` into main, if one exists."""
+        """Find a completed PR from ``branch`` into the base branch, if one exists."""
         out: str = self._run(
             [
                 "repos",
@@ -178,7 +264,7 @@ class AzCliAdo:
                 "--source-branch",
                 branch,
                 "--target-branch",
-                "main",
+                self._base_branch,
                 "--status",
                 "completed",
                 "-o",
@@ -200,74 +286,161 @@ class AzCliAdo:
         pr_id: object = pr.get("pullRequestId")
         return f"PR {pr_id}" if isinstance(pr_id, int) else None
 
-    def issue_state(self, issue_id: int) -> str:
-        """Read ``System.State`` of one work item."""
-        fields: dict[str, object] = _show_fields(self._run, issue_id)
-        state: object = fields.get("System.State")
-        return state if isinstance(state, str) else ""
+    def item_state(self, item_id: int) -> Lifecycle:
+        """Read the work item's native ``System.State`` and map it to a bucket."""
+        fields: dict[str, object] = _show_fields(self._run, item_id)
+        native: object = fields.get("System.State")
+        return self._lifecycle_of(native if isinstance(native, str) else "")
 
-    def set_state(self, issue_id: int, state: str) -> None:
-        """Transition the work item to ``state``."""
+    def _lifecycle_of(self, native: str) -> Lifecycle:
+        """Reverse-map a native state to its bucket; unmapped → QUEUED (not done)."""
+        for lifecycle, names in self._states.items():
+            if native in names:
+                return lifecycle
+        return Lifecycle.QUEUED
+
+    def set_state(self, item_id: int, state: Lifecycle) -> None:
+        """Transition the work item into the first native name of ``state``."""
+        native: str = self._states[state][0]
         self._run(
-            ["boards", "work-item", "update", "--id", str(issue_id), "--state", state, "-o", "none"]
+            ["boards", "work-item", "update", "--id", str(item_id), "--state", native, "-o", "none"]
         )
 
-    def add_tag(self, issue_id: int, tag: str) -> None:
+    def add_tag(self, item_id: int, tag: str) -> None:
         """Append ``tag`` to System.Tags (read-append-write)."""
-        tags: list[str] = self._current_tags(issue_id)
+        tags: list[str] = self._current_tags(item_id)
         if tag in tags:
             return
-        self._write_tags(issue_id, [*tags, tag])
+        self._write_tags(item_id, [*tags, tag])
 
-    def remove_tag(self, issue_id: int, tag: str) -> None:
+    def remove_tag(self, item_id: int, tag: str) -> None:
         """Filter ``tag`` out of System.Tags."""
-        tags: list[str] = self._current_tags(issue_id)
+        tags: list[str] = self._current_tags(item_id)
         if tag not in tags:
             return
-        self._write_tags(issue_id, [item for item in tags if item != tag])
+        self._write_tags(item_id, [item for item in tags if item != tag])
 
-    def add_comment(self, issue_id: int, html: str) -> None:
-        """Add an HTML discussion comment to the work item."""
+    def add_comment(self, item_id: int, event: CommentEvent) -> None:
+        """Render ``event`` to ADO HTML and add it as a discussion comment."""
         self._run(
             [
                 "boards",
                 "work-item",
                 "update",
                 "--id",
-                str(issue_id),
+                str(item_id),
                 "--discussion",
-                html,
+                render_ado_html(event, self._tags),
                 "-o",
                 "none",
             ]
         )
 
-    def _current_tags(self, issue_id: int) -> list[str]:
-        fields: dict[str, object] = _show_fields(self._run, issue_id)
+    def validate_config(self) -> None:
+        """Check every configured native state exists among the project's states.
+
+        This is the safety mechanism: a misconfigured state name fails the
+        startup preflight loudly rather than silently mis-mutating the board.
+        """
+        available: set[str] = self._board_state_names()
+        configured: set[str] = {name for names in self._states.values() for name in names}
+        missing: list[str] = sorted(name for name in configured if name not in available)
+        if missing:
+            raise BoardValidationError(
+                f"configured board state(s) {missing} not found among this project's "
+                f"Issue states {sorted(available)}; fix flotilla.toml [board.states]"
+            )
+
+    def _board_state_names(self) -> set[str]:
+        """Return the names of the Issue work-item-type's states on the live board."""
+        out: str = self._run(
+            [
+                "devops",
+                "invoke",
+                "--area",
+                "wit",
+                "--resource",
+                "workItemTypeStates",
+                "--route-parameters",
+                f"project={self._resolve_project()}",
+                "type=Issue",
+                "--api-version",
+                "7.1",
+                "-o",
+                "json",
+            ]
+        )
+        value: object = _json_object(out).get("value")
+        names: set[str] = set()
+        if isinstance(value, list):
+            for entry in cast("list[object]", value):
+                if isinstance(entry, dict):
+                    name: object = cast("dict[str, object]", entry).get("name")
+                    if isinstance(name, str):
+                        names.add(name)
+        return names
+
+    def _current_tags(self, item_id: int) -> list[str]:
+        fields: dict[str, object] = _show_fields(self._run, item_id)
         raw: object = fields.get("System.Tags")
         if not isinstance(raw, str) or not raw.strip():
             return []
         return [part.strip() for part in raw.split(";") if part.strip()]
 
-    def _write_tags(self, issue_id: int, tags: list[str]) -> None:
-        self._run(
-            [
-                "boards",
-                "work-item",
-                "update",
-                "--id",
-                str(issue_id),
-                "--fields",
-                f"System.Tags={'; '.join(tags)}",
-                "-o",
-                "none",
-            ]
+    def _write_tags(self, item_id: int, tags: list[str]) -> None:
+        """Replace System.Tags wholesale via a JSON-Patch op:replace.
+
+        The ``az boards work-item update --fields`` path is unreliable for the
+        multi-value, semicolon-laden Tags string on an already-tagged item: it
+        applies add/merge semantics rather than a clean replace. Issuing an
+        explicit ``op: replace`` of ``/fields/System.Tags`` through ``az devops
+        invoke`` (PATCH ``wit/workitems`` by id) sets the field to exactly the
+        joined value, so a removed tag is genuinely dropped.
+        """
+        patch: list[dict[str, str]] = [
+            {"op": "replace", "path": "/fields/System.Tags", "value": "; ".join(tags)}
+        ]
+        self._invoke(
+            "workitems",
+            patch,
+            http_method="PATCH",
+            route_parameters=[f"id={item_id}"],
+            output="none",
         )
 
 
-def _show_fields(run: Callable[[Sequence[str]], str], issue_id: int) -> dict[str, object]:
+# --- provider registry (composition-root seam) --------------------------------
+
+ProviderFactory = Callable[[FlotillaConfig], BoardAccess]
+
+
+def _build_ado(config: FlotillaConfig) -> BoardAccess:
+    """Construct the ADO adapter from the resolved configuration."""
+    return AzCliAdo(states=config.states, base_branch=config.base_branch, tags=config.tags)
+
+
+# Hardcoded name → adapter factory. New providers register here; out-of-tree
+# entry-point plugins are a deferred future volatility, not built now.
+PROVIDERS: Final[dict[str, ProviderFactory]] = {"ado": _build_ado}
+
+
+def build_board(config: FlotillaConfig) -> BoardAccess:
+    """Build the configured provider's ``BoardAccess`` adapter (the registry)."""
+    try:
+        factory: ProviderFactory = PROVIDERS[config.provider]
+    except KeyError:
+        raise ConfigError(
+            f"unknown board provider {config.provider!r}; known providers: {sorted(PROVIDERS)}"
+        ) from None
+    return factory(config)
+
+
+# --- parsing helpers ----------------------------------------------------------
+
+
+def _show_fields(run: Callable[[Sequence[str]], str], item_id: int) -> dict[str, object]:
     """Fetch a work item's fields dict."""
-    out: str = run(["boards", "work-item", "show", "--id", str(issue_id), "-o", "json"])
+    out: str = run(["boards", "work-item", "show", "--id", str(item_id), "-o", "json"])
     data: dict[str, object] = _json_object(out)
     fields: object = data.get("fields")
     return cast("dict[str, object]", fields) if isinstance(fields, dict) else {}
@@ -303,9 +476,9 @@ def _configured_project(run: Callable[[Sequence[str]], str]) -> str:
     )
 
 
-def _issue_refs_from_items(items: Sequence[object]) -> tuple[IssueRef, ...]:
-    """Build IssueRefs from work-item dicts (each an ``id`` + ``fields`` map)."""
-    refs: list[IssueRef] = []
+def _work_items_from_items(items: Sequence[object]) -> tuple[WorkItem, ...]:
+    """Build WorkItems from work-item dicts (each an ``id`` + ``fields`` map)."""
+    refs: list[WorkItem] = []
     for entry in items:
         if not isinstance(entry, dict):
             continue
@@ -314,16 +487,16 @@ def _issue_refs_from_items(items: Sequence[object]) -> tuple[IssueRef, ...]:
         fields_map: dict[str, object] = (
             cast("dict[str, object]", fields) if isinstance(fields, dict) else {}
         )
-        issue_id: object = item.get("id", fields_map.get("System.Id"))
+        item_id: object = item.get("id", fields_map.get("System.Id"))
         title: object = fields_map.get("System.Title", "")
         tags_raw: object = fields_map.get("System.Tags", "")
-        if isinstance(issue_id, str) and issue_id.isdigit():
-            issue_id = int(issue_id)
-        if not isinstance(issue_id, int):
+        if isinstance(item_id, str) and item_id.isdigit():
+            item_id = int(item_id)
+        if not isinstance(item_id, int):
             continue
         refs.append(
-            IssueRef(
-                issue_id=issue_id,
+            WorkItem(
+                item_id=item_id,
                 title=title if isinstance(title, str) else "",
                 tags=_split_tags(tags_raw),
             )
@@ -331,7 +504,7 @@ def _issue_refs_from_items(items: Sequence[object]) -> tuple[IssueRef, ...]:
     return tuple(refs)
 
 
-def _parse_issue_links(payload: str) -> IssueLinks:
+def _parse_item_links(payload: str) -> WorkItemLinks:
     """Parse parent / predecessor ids out of an expanded work item."""
     data: dict[str, object] = _json_object(payload)
     relations: object = data.get("relations")
@@ -351,7 +524,7 @@ def _parse_issue_links(payload: str) -> IssueLinks:
                 predecessors.append(target)
             elif rel_type == _PARENT_REL:
                 parent_id = target
-    return IssueLinks(parent_id=parent_id, predecessor_ids=tuple(predecessors))
+    return WorkItemLinks(parent_id=parent_id, predecessor_ids=tuple(predecessors))
 
 
 def _id_from_url(url: str) -> int | None:

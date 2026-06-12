@@ -1,40 +1,16 @@
-"""Unit tests for the supervisor's az-CLI and tmux adapters (canned I/O, no az/tmux)."""
+"""Unit tests for the supervisor's tmux launcher + cleanup adapters (no tmux/claude).
+
+The board adapter (``AzCliAdo``) lives in :mod:`flotilla.board` and is covered by
+``tests/test_board.py``; this module covers the supervisor-owned process seams.
+"""
 
 from collections.abc import Sequence
-import json
 from pathlib import Path
 
 from flotilla.constants import FLEET_EFFORT, FLEET_MODEL, HEARTBEAT_INTERVAL_SECONDS
-from flotilla.supervisor import (
-    AzCliAdo,
-    ClaudeCleanup,
-    IssueLinks,
-    IssueRef,
-    TmuxLauncher,
-)
+from flotilla.supervisor import ClaudeCleanup, TmuxLauncher
 
 # fleet_root is provided by tests/conftest.py
-
-
-class _RecordingAzRunner:
-    """Canned az stdout per matched argv fragment; records every call."""
-
-    def __init__(self, responses: dict[str, str]) -> None:
-        self.responses = responses
-        self.calls: list[list[str]] = []
-        self.in_files: list[str] = []
-
-    def __call__(self, args: Sequence[str]) -> str:
-        arglist: list[str] = list(args)
-        self.calls.append(arglist)
-        if "--in-file" in arglist:
-            path: str = arglist[arglist.index("--in-file") + 1]
-            self.in_files.append(Path(path).read_text(encoding="utf-8"))
-        joined: str = " ".join(args)
-        for fragment, response in self.responses.items():
-            if fragment in joined:
-                return response
-        return "{}"
 
 
 class _RecordingTmuxRunner:
@@ -47,91 +23,6 @@ class _RecordingTmuxRunner:
     def __call__(self, args: Sequence[str]) -> int:
         self.calls.append(list(args))
         return self.exit_codes.get(args[1], 0)
-
-
-def test_issues_in_state_queries_via_rest_and_parses_tags() -> None:
-    wiql_resp: str = json.dumps({"workItems": [{"id": 69}, {"id": 70}]})
-    batch_resp: str = json.dumps(
-        {
-            "value": [
-                {
-                    "id": 69,
-                    "fields": {"System.Title": "feat: status", "System.Tags": "fleet:claimed; x"},
-                },
-                {"id": 70, "fields": {"System.Title": "feat: runner"}},
-            ]
-        }
-    )
-    runner = _RecordingAzRunner({"resource wiql": wiql_resp, "workitemsbatch": batch_resp})
-    refs: tuple[IssueRef, ...] = AzCliAdo(runner, project="gswa-dev").issues_in_state("To Do")
-    assert refs == (
-        IssueRef(issue_id=69, title="feat: status", tags=("fleet:claimed", "x")),
-        IssueRef(issue_id=70, title="feat: runner", tags=()),
-    )
-    # The WIQL body is delivered through the wiql invoke's --in-file payload.
-    assert any(
-        "[System.WorkItemType] = 'Issue'" in body and "[System.State] = 'To Do'" in body
-        for body in runner.in_files
-    )
-
-
-def test_issues_in_state_short_circuits_when_no_ids_match() -> None:
-    runner = _RecordingAzRunner({"resource wiql": json.dumps({"workItems": []})})
-    refs: tuple[IssueRef, ...] = AzCliAdo(runner, project="gswa-dev").issues_in_state("Done")
-    assert refs == ()
-    assert all("workitemsbatch" not in " ".join(call) for call in runner.calls)
-
-
-def test_issues_in_state_tolerates_an_empty_board_read() -> None:
-    # The original blocker: a blank stdout must yield no issues, not a JSONDecodeError.
-    runner = _RecordingAzRunner({"resource wiql": ""})
-    assert AzCliAdo(runner, project="gswa-dev").issues_in_state("To Do") == ()
-
-
-def test_issue_links_parses_predecessor_and_parent_relations() -> None:
-    payload: str = json.dumps(
-        {
-            "relations": [
-                {"rel": "System.LinkTypes.Dependency-Reverse", "url": "https://x/workItems/68"},
-                {"rel": "System.LinkTypes.Dependency-Reverse", "url": "https://x/workItems/67"},
-                {"rel": "System.LinkTypes.Hierarchy-Reverse", "url": "https://x/workItems/50"},
-                {"rel": "AttachedFile", "url": "https://x/attachments/abc"},
-            ]
-        }
-    )
-    runner = _RecordingAzRunner({"--expand relations": payload})
-    links: IssueLinks = AzCliAdo(runner).issue_links(70)
-    assert links == IssueLinks(parent_id=50, predecessor_ids=(68, 67))
-
-
-def test_issue_state_reads_system_state() -> None:
-    payload: str = json.dumps({"fields": {"System.State": "Done"}})
-    runner = _RecordingAzRunner({"work-item show": payload})
-    assert AzCliAdo(runner).issue_state(68) == "Done"
-
-
-def test_add_tag_appends_to_existing_tags() -> None:
-    payload: str = json.dumps({"fields": {"System.Tags": "alpha; beta"}})
-    runner = _RecordingAzRunner({"work-item show": payload})
-    AzCliAdo(runner).add_tag(70, "fleet:claimed")
-    update: list[str] = runner.calls[-1]
-    assert "update" in update
-    assert "System.Tags=alpha; beta; fleet:claimed" in update
-
-
-def test_add_tag_is_idempotent() -> None:
-    payload: str = json.dumps({"fields": {"System.Tags": "fleet:claimed"}})
-    runner = _RecordingAzRunner({"work-item show": payload})
-    AzCliAdo(runner).add_tag(70, "fleet:claimed")
-    assert all("update" not in call for call in runner.calls)
-
-
-def test_remove_tag_filters_the_tag_out() -> None:
-    payload: str = json.dumps({"fields": {"System.Tags": "alpha; fleet:claimed; beta"}})
-    runner = _RecordingAzRunner({"work-item show": payload})
-    AzCliAdo(runner).remove_tag(70, "fleet:claimed")
-    update: list[str] = runner.calls[-1]
-    assert "System.Tags=alpha; beta" in update
 
 
 def test_launcher_creates_the_session_on_first_launch(fleet_root: Path) -> None:
@@ -235,21 +126,25 @@ class _RecordingCleanupRunner:
         return self.exit_code
 
 
-def test_cleanup_defaults_the_model_and_effort_to_the_constants() -> None:
+def test_cleanup_defaults_the_skill_model_and_effort_to_the_constants() -> None:
     runner = _RecordingCleanupRunner()
     cleaner = ClaudeCleanup(Path("/repo"), runner)
     assert cleaner.cleanup("feat/slice-9-x") is True
     argv: list[str] = runner.calls[-1][0]
+    assert argv[argv.index("-p") + 1] == "/cleanup-merged-branches feat/slice-9-x"
     assert argv[argv.index("--model") + 1] == FLEET_MODEL
     assert argv[argv.index("--effort") + 1] == FLEET_EFFORT
     assert runner.calls[-1][1] == Path("/repo")
 
 
-def test_cleanup_injects_an_explicit_model_and_effort() -> None:
+def test_cleanup_injects_an_explicit_skill_model_and_effort() -> None:
     runner = _RecordingCleanupRunner()
-    cleaner = ClaudeCleanup(Path("/repo"), runner, model="claude-haiku-4-5", effort="low")
+    cleaner = ClaudeCleanup(
+        Path("/repo"), runner, model="claude-haiku-4-5", effort="low", cleanup_skill="/tidy"
+    )
     assert cleaner.cleanup("feat/slice-9-x") is True
     argv: list[str] = runner.calls[-1][0]
+    assert argv[argv.index("-p") + 1] == "/tidy feat/slice-9-x"
     assert argv[argv.index("--model") + 1] == "claude-haiku-4-5"
     assert argv[argv.index("--effort") + 1] == "low"
 

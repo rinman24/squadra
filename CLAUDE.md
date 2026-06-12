@@ -12,8 +12,11 @@ See `README.md` for how the fleet works and how to run it.
 - Python ≥ 3.11, **pure standard library** at runtime (no third-party deps).
 - Build: **uv + Hatchling**, PEP 621 `[project]`, **src layout** (`src/flotilla/`).
 - Tooling: **ruff** (lint) + **pyright (strict)** + **pytest**, all via `uv run`.
-- Console scripts: `flotilla` (fleetctl dispatcher), `flotilla-supervisor`,
-  `flotilla-status`.
+- Console scripts: `flotilla` — the unified argparse CLI
+  (`init`/`tick`/`start`/`stop`/`status`/`log` + `flotilla slice
+  {init|update|heartbeat|show}`); `flotilla-status` is kept as a **deprecated
+  alias** until the coupled gswa PR lands. `python -m flotilla.supervisor` and
+  `python -m flotilla.status` remain as internal module entry points.
 
 ## Layout
 
@@ -21,20 +24,25 @@ See `README.md` for how the fleet works and how to run it.
 src/flotilla/
 ├── __init__.py
 ├── constants.py        # env-tunable fleet constants (single source of truth)
-├── status.py           # per-slice status.json convention + CLI (flotilla-status)
-├── supervisor.py       # the deterministic, token-free tick (flotilla-supervisor)
-├── cli.py              # `flotilla` — thin shim that execs the packaged fleetctl.sh
+├── domain.py           # provider-neutral model: Lifecycle, WorkItem, CommentEvent, Tags
+├── config.py           # FlotillaConfig + tomllib loader (defaults < toml < env < flag)
+├── board.py            # BoardAccess seam + AzCliAdo adapter + provider registry
+├── engines.py          # pure claim/reap/finalize/naming decisions (no I/O)
+├── status.py           # per-slice status.json convention + ops (`flotilla slice`)
+├── supervisor.py       # the deterministic, token-free tick (python -m flotilla.supervisor)
+├── cli.py              # unified argparse `flotilla` — the API / composition root
 ├── _resources.py       # resolve packaged shell glue via importlib.resources (+chmod +x)
 └── _scripts/           # PACKAGE DATA: runner-wrap.sh, fleet-tick.sh,
                         #   fleet-autostart.sh, fleetctl.sh, fleet-cron.example
-tests/                  # unit tests + tests/scripts/run-runner-wrap-tests.sh (hermetic)
+tests/                  # unit tests + BoardAccess contract suite +
+                        #   tests/scripts/run-runner-wrap-tests.sh (hermetic)
 ```
 
 ## Hard invariants
 
 - **Packaged-script resolution.** Anything that invokes the shell glue (the
-  supervisor's `TmuxLauncher`, the `flotilla` dispatcher, the tick entry point)
-  MUST resolve it via `flotilla._resources.resolve_script(...)`
+  supervisor's `TmuxLauncher`, the `flotilla` CLI's ticker subcommands, the tick
+  entry point) MUST resolve it via `flotilla._resources.resolve_script(...)`
   (`importlib.resources.files("flotilla")/"_scripts"`, `chmod +x` on resolve) —
   **never** a path relative to `FLEET_HOME`. The package is not the working repo.
 - **`FLEET_HOME`** = the repo the fleet operates on (default: cwd). No hardcoded
@@ -45,13 +53,6 @@ tests/                  # unit tests + tests/scripts/run-runner-wrap-tests.sh (h
   errors. Modern syntax: `X | None`, `list[X]`, `-> None` always explicit.
 - **No silent permission/behavior broadening** in the fleet's claim/reap/finalize
   logic — it is security-sensitive board automation.
-
-## Out of scope (deferred — do NOT start without an explicit decision)
-
-Pluggable board provider beyond `AzCliAdo`; configure-not-customize of skill
-names / paths / state model; a unified argparse-native `flotilla` CLI that folds
-the supervisor/status operations in; generalizing the runner skill; an ADO
-Artifacts feed; PyPI publication.
 
 ## Validation (before hand-off)
 

@@ -1,45 +1,50 @@
 """Fleet supervisor tick — ADR-0007 decision 1, addendum §§1–5.
 
 A deterministic, stateless, token-free scheduled script (no LLM). Each tick
-reconstructs its entire view from ADO truth and runs three ordered passes
+reconstructs its entire view from board truth and runs three ordered passes
 under one lock (addendum §5) — finalize and reap before claim, so the cap
 accounting is fresh:
 
-1. **finalize** — a slice whose Issue is ``Done`` and whose PR has completed
-   gets the existing ``/cleanup-merged-branches`` skill run headlessly for its
-   branch, its ``fleet:*`` tags dropped, and its status set to ``done``.
+1. **finalize** — a slice whose item is ``DONE`` and whose PR has completed
+   gets the configured cleanup skill run headlessly for its branch, its fleet
+   tags dropped, and its status set to ``done``.
 2. **reap** (watchdog) — a claimed slice whose heartbeat is stale (10 min) and
    whose runner process is confirmed dead is requeued: worktree archived for
-   inspection, ``Doing → To Do``, ``fleet:claimed`` dropped; the next claim
-   retries from a fresh worktree with attempt+1, and exhausted retries
-   escalate to ``fleet:failed`` instead. A failed park (``parked_state=failed``
-   plus a dead runner pid) is requeued immediately — positive failure
-   evidence, no staleness wait — while deliberate parks are never reaped.
-3. **claim** — unblocked + unclaimed ``To Do`` Issues are claimed up to the
-   cap (``To Do → Doing`` + tag ``fleet:claimed`` + a stamped comment;
-   ``System.State`` arbitrates) and one runner pane is launched per slice.
+   inspection, ``ACTIVE → QUEUED``, the claimed tag dropped; the next claim
+   retries from a fresh worktree with attempt+1, and exhausted retries escalate
+   to the failed tag instead. A failed park (``parked_state=failed`` plus a dead
+   runner pid) is requeued immediately — positive failure evidence, no staleness
+   wait — while deliberate parks are never reaped.
+3. **claim** — unblocked + unclaimed ``QUEUED`` items are claimed up to the cap
+   (``QUEUED → ACTIVE`` + the claimed tag + a stamped comment; the board state
+   arbitrates) and one runner pane is launched per slice.
+
+The supervisor and these passes are **provider-blind**: they speak the neutral
+``Lifecycle`` state and emit structured ``CommentEvent`` values; the
+``BoardAccess`` adapter (chosen by the provider registry) maps to native states
+and renders the markup. State names, tag prefix, base branch, and skill names
+are configuration.
 
 Finalize and claim depend on a working ``claude`` (the headless cleanup skill
 and the runner itself), so a tick with such work pending first preflights
 claude auth with a throwaway prompt. When the probe fails — dead auth and a
-transient API outage read identically — the tick degrades to the reap pass
-only (az + git) and retries next tick; idle and saturated ticks never probe.
+transient API outage read identically — the tick degrades to the reap pass only
+(board + git) and retries next tick; idle and saturated ticks never probe.
 
 Overlapping ticks serialize via a non-blocking ``flock`` on
 ``<fleet-root>/supervisor.lock`` — the losing tick exits cleanly without
-touching ADO.
+touching the board.
 
 A tick can be a **dry run** (``--dry-run`` / ``FLEET_DRY_RUN=1``): the full
-finalize/reap/claim read+plan logic runs and reports what a real tick WOULD
-do, but every side effect — ADO writes, runner launches, claude spawns
-(cleanup and the auth probe), git, worktree moves, local status/marker
-writes — is suppressed at the ``TickSeams`` boundary (``dry_run_seams``), so
-the tick physically cannot mutate. ``FLEET_MAX_RUNNERS=0`` is *not* a safe
-smoke: it only zeroes the claim budget, while finalize and reap still mutate
-ADO. Use a dry run for that.
+finalize/reap/claim read+plan logic runs and reports what a real tick WOULD do,
+but every side effect — board writes, runner launches, claude spawns (cleanup
+and the auth probe), git, worktree moves, local status/marker writes — is
+suppressed at the ``TickSeams`` boundary (``dry_run_seams``), so the tick
+physically cannot mutate. ``FLEET_MAX_RUNNERS=0`` is *not* a safe smoke: it only
+zeroes the claim budget, while finalize and reap still mutate. Use a dry run.
 
-Run one tick: ``python -m flotilla.supervisor`` (normally via ``flotilla
-tick`` from a ticker loop or cron; see the flotilla README).
+Run one tick: ``python -m flotilla.supervisor`` (normally via ``flotilla tick``
+from a ticker loop or cron; see the flotilla README).
 """
 
 import argparse
@@ -57,31 +62,36 @@ import sys
 from typing import Final, Protocol
 
 from flotilla._resources import resolve_script
-from flotilla.board import AzCliAdo, BoardAccess
-from flotilla.config import SupervisorConfig, config_from_env
+from flotilla.board import BoardAccess, BoardValidationError, build_board
+from flotilla.config import (
+    DEFAULT_CLEANUP_SKILL,
+    FlotillaConfig,
+    load_config,
+)
 from flotilla.constants import (
     FLEET_DRY_RUN,
     FLEET_EFFORT,
     FLEET_MODEL,
     HEARTBEAT_INTERVAL_SECONDS,
-    STALENESS_THRESHOLD_SECONDS,
     SUPERVISOR_LOCK_FILENAME,
-    TAG_CLAIMED,
-    TAG_FAILED,
 )
 from flotilla.domain import (
+    Claimed,
     ClaimOutcome,
+    CommentEvent,
+    Escalated,
+    Finalized,
     FinalizeOutcome,
-    IssueLinks,
-    IssueRef,
+    Lifecycle,
+    Reaped,
     ReapOutcome,
+    RolledBack,
+    Tags,
+    WorkItem,
+    WorkItemLinks,
 )
 from flotilla.engines import is_failed_park, is_parked, slice_branch
 from flotilla.status import FleetStatus, StatusUpdate, load_or_none, update
-
-STATE_TODO: Final[str] = "To Do"
-STATE_DOING: Final[str] = "Doing"
-STATE_DONE: Final[str] = "Done"
 
 CLAIMED_AT_FILENAME: Final[str] = "claimed-at"
 RUNNER_PID_FILENAME: Final[str] = "runner.pid"
@@ -90,7 +100,7 @@ RUNNER_PID_FILENAME: Final[str] = "runner.pid"
 class Launcher(Protocol):
     """Starts one runner per claimed slice (tmux-backed in prod)."""
 
-    def launch(self, issue_id: int, branch: str, attempt: int) -> bool:
+    def launch(self, item_id: int, branch: str, attempt: int) -> bool:
         """Start a runner; return False when the launch failed."""
         ...
 
@@ -164,13 +174,11 @@ def _claude_auth_ok(
     return completed.returncode == 0 and "READY" in completed.stdout
 
 
-def _archive_worktree(
-    worktree: Path, issue_id: int, attempt: int, config: SupervisorConfig
-) -> None:
+def _archive_worktree(worktree: Path, item_id: int, attempt: int, config: FlotillaConfig) -> None:
     """Move the dead worktree under the slice's archive/ for inspection."""
     if not worktree.is_dir():
         return
-    archive_dir: Path = config.fleet_root / str(issue_id) / "archive"
+    archive_dir: Path = config.fleet_root / str(item_id) / "archive"
     archive_dir.mkdir(parents=True, exist_ok=True)
     destination: Path = archive_dir / f"attempt-{attempt}"
     counter: int = 2
@@ -180,9 +188,9 @@ def _archive_worktree(
     shutil.move(str(worktree), str(destination))
 
 
-def _write_claimed_at(issue_id: int, fleet_root: Path, timestamp: str) -> None:
+def _write_claimed_at(item_id: int, fleet_root: Path, timestamp: str) -> None:
     """Record the claim time so the reap pass can age claims that never started."""
-    directory: Path = fleet_root / str(issue_id)
+    directory: Path = fleet_root / str(item_id)
     directory.mkdir(parents=True, exist_ok=True)
     (directory / CLAIMED_AT_FILENAME).write_text(timestamp + "\n", encoding="utf-8")
 
@@ -206,7 +214,7 @@ class TickSeams:
     pid_alive: Callable[[int], bool] = field(default=_pid_alive)
     run_git: Callable[[Sequence[str]], int] = field(default=_run_quiet)
     auth_ok: Callable[[], bool] = field(default=_claude_auth_ok)
-    archive_worktree: Callable[[Path, int, int, SupervisorConfig], None] = field(
+    archive_worktree: Callable[[Path, int, int, FlotillaConfig], None] = field(
         default=_archive_worktree
     )
     update_status: Callable[[int, StatusUpdate, Path], object] = field(default=update)
@@ -229,7 +237,7 @@ def supervisor_lock(fleet_root: Path) -> Generator[bool, None, None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def run_tick(seams: TickSeams, config: SupervisorConfig) -> int:
+def run_tick(seams: TickSeams, config: FlotillaConfig) -> int:
     """Run one serialized supervisor tick (auth preflight, finalize → reap → claim)."""
     with supervisor_lock(config.fleet_root) as acquired:
         if not acquired:
@@ -258,7 +266,7 @@ def run_tick(seams: TickSeams, config: SupervisorConfig) -> int:
     return 0
 
 
-def _reap_and_log(seams: TickSeams, config: SupervisorConfig) -> None:
+def _reap_and_log(seams: TickSeams, config: FlotillaConfig) -> None:
     """Run the reap pass and emit its outcome log line."""
     reaped: ReapOutcome = reap_pass(seams, config)
     _log(
@@ -267,68 +275,67 @@ def _reap_and_log(seams: TickSeams, config: SupervisorConfig) -> None:
     )
 
 
-def _claude_work_pending(ado: BoardAccess, config: SupervisorConfig) -> bool:
+def _claude_work_pending(ado: BoardAccess, config: FlotillaConfig) -> bool:
     """Report whether this tick has claude-dependent work (finalize or claim).
 
     Only such a tick pays for the auth probe — idle and saturated ticks skip
     it. Claim eligibility is a cheap over-approximation on purpose (budget +
-    an untagged To Do Issue); epic/predecessor filtering stays in claim_pass.
+    an untagged queued item); parent-scope/predecessor filtering stays in
+    claim_pass.
     """
-    if any(TAG_CLAIMED in issue.tags for issue in ado.issues_in_state(STATE_DONE)):
+    claimed: str = config.tags.claimed
+    if any(claimed in item.tags for item in ado.items_in_state(Lifecycle.DONE)):
         return True
-    inflight: int = sum(
-        1 for issue in ado.issues_in_state(STATE_DOING) if TAG_CLAIMED in issue.tags
-    )
+    inflight: int = sum(1 for item in ado.items_in_state(Lifecycle.ACTIVE) if claimed in item.tags)
     if config.cap - inflight <= 0:
         return False
     return any(
-        not any(tag.startswith("fleet:") for tag in issue.tags)
-        for issue in ado.issues_in_state(STATE_TODO)
+        not any(config.tags.is_fleet_tag(tag) for tag in item.tags)
+        for item in ado.items_in_state(Lifecycle.QUEUED)
     )
 
 
-def finalize_pass(seams: TickSeams, config: SupervisorConfig) -> FinalizeOutcome:
+def finalize_pass(seams: TickSeams, config: FlotillaConfig) -> FinalizeOutcome:
     """Retire merged slices: cleanup branch/worktree, drop tags, status → done.
 
-    Merged-ness is derived from truth (a completed PR for the slice branch +
-    the Issue in Done), not from the runner's recorded mapping — the status
-    file only provides the branch fast-path (ADR-0007 decision 5).
+    Merged-ness is derived from truth (a completed PR for the slice branch + the
+    item in the done bucket), not from the runner's recorded mapping — the
+    status file only provides the branch fast-path (ADR-0007 decision 5).
     """
     ado: BoardAccess = seams.ado
     cleaner: Cleaner = seams.cleaner
+    tags: Tags = config.tags
     finalized: list[int] = []
     awaiting: list[int] = []
     failed: list[int] = []
-    for issue in sorted(ado.issues_in_state(STATE_DONE), key=lambda ref: ref.issue_id):
-        if TAG_CLAIMED not in issue.tags:
+    for item in sorted(ado.items_in_state(Lifecycle.DONE), key=lambda ref: ref.item_id):
+        if tags.claimed not in item.tags:
             continue
-        status: FleetStatus | None = load_or_none(issue.issue_id, config.fleet_root)
+        status: FleetStatus | None = load_or_none(item.item_id, config.fleet_root)
         branch: str = (
-            status.branch if status is not None else slice_branch(issue.issue_id, issue.title, 1)
+            status.branch
+            if status is not None
+            else slice_branch(item.item_id, item.title, 1, config.branch_template)
         )
         pr_url: str | None = ado.completed_pr_url(branch)
         if pr_url is None:
-            awaiting.append(issue.issue_id)
+            awaiting.append(item.item_id)
             continue
         if not cleaner.cleanup(branch):
-            _log(f"finalize: cleanup failed for #{issue.issue_id} ({branch}); will retry")
-            failed.append(issue.issue_id)
+            _log(f"finalize: cleanup failed for #{item.item_id} ({branch}); will retry")
+            failed.append(item.item_id)
             continue
-        for tag in issue.tags:
-            if tag.startswith("fleet:"):
-                ado.remove_tag(issue.issue_id, tag)
-        ado.add_comment(
-            issue.issue_id,
-            f'<p>fleet: finalized — PR completed (<a href="{pr_url}">{pr_url}</a>), '
-            f"branch <code>{branch}</code> cleaned up.</p>",
-        )
+        for tag in item.tags:
+            if tags.is_fleet_tag(tag):
+                ado.remove_tag(item.item_id, tag)
+        ado.add_comment(item.item_id, Finalized(pr_url=pr_url, branch=branch))
         if status is not None:
             seams.update_status(
-                issue.issue_id,
+                item.item_id,
                 StatusUpdate(phase="done", parked_state=None, pr_url=pr_url),
                 config.fleet_root,
             )
-        finalized.append(issue.issue_id)
+        finalized.append(item.item_id)
     return FinalizeOutcome(
         finalized=tuple(finalized),
         awaiting_merge=tuple(awaiting),
@@ -336,50 +343,45 @@ def finalize_pass(seams: TickSeams, config: SupervisorConfig) -> FinalizeOutcome
     )
 
 
-def reap_pass(
-    seams: TickSeams, config: SupervisorConfig, now: datetime | None = None
-) -> ReapOutcome:
+def reap_pass(seams: TickSeams, config: FlotillaConfig, now: datetime | None = None) -> ReapOutcome:
     """Requeue claimed slices whose runner is stale *and* confirmed dead."""
     moment: datetime = now if now is not None else datetime.now(UTC)
+    tags: Tags = config.tags
     reaped: list[int] = []
     escalated: list[int] = []
     alive: list[int] = []
     parked: list[int] = []
-    for issue in sorted(seams.ado.issues_in_state(STATE_DOING), key=lambda ref: ref.issue_id):
-        if TAG_CLAIMED not in issue.tags:
-            continue  # a human's Doing item — invisible to the fleet
-        status: FleetStatus | None = load_or_none(issue.issue_id, config.fleet_root)
-        if is_parked(issue, status):
-            parked.append(issue.issue_id)
+    for item in sorted(seams.ado.items_in_state(Lifecycle.ACTIVE), key=lambda ref: ref.item_id):
+        if tags.claimed not in item.tags:
+            continue  # a human's active item — invisible to the fleet
+        status: FleetStatus | None = load_or_none(item.item_id, config.fleet_root)
+        if is_parked(item, status, tags):
+            parked.append(item.item_id)
             continue
         failed_park: bool = is_failed_park(status)
         if not failed_park:
-            age: float | None = _liveness_age_seconds(issue.issue_id, status, config, moment)
-            if age is not None and age <= STALENESS_THRESHOLD_SECONDS:
+            age: float | None = _liveness_age_seconds(item.item_id, status, config, moment)
+            if age is not None and age <= config.staleness_threshold_seconds:
                 continue  # heartbeat fresh enough
-        if _runner_alive(seams, issue.issue_id, config):
-            alive.append(issue.issue_id)
+        if _runner_alive(seams, item.item_id, config):
+            alive.append(item.item_id)
             continue
         evidence: str = (
             "runner parked failed and process dead"
             if failed_park
             else "heartbeat stale and runner process dead"
         )
-        _reap_one(seams, config, issue, status, evidence)
+        _reap_one(seams, config, item, status, evidence)
         attempt: int = status.attempt if status is not None else 1
         if attempt >= config.max_attempts:
-            _escalate_exhausted(seams.ado, issue.issue_id, attempt + 1, config.max_attempts)
-            seams.ado.remove_tag(issue.issue_id, TAG_CLAIMED)
-            escalated.append(issue.issue_id)
+            _escalate_exhausted(seams.ado, item.item_id, attempt + 1, config.max_attempts, tags)
+            seams.ado.remove_tag(item.item_id, tags.claimed)
+            escalated.append(item.item_id)
         else:
-            seams.ado.remove_tag(issue.issue_id, TAG_CLAIMED)
-            seams.ado.set_state(issue.issue_id, STATE_TODO)
-            seams.ado.add_comment(
-                issue.issue_id,
-                f"<p>fleet: reaped — {evidence} (attempt {attempt}); "
-                f"worktree archived, requeued for retry.</p>",
-            )
-            reaped.append(issue.issue_id)
+            seams.ado.remove_tag(item.item_id, tags.claimed)
+            seams.ado.set_state(item.item_id, Lifecycle.QUEUED)
+            seams.ado.add_comment(item.item_id, Reaped(evidence=evidence, attempt=attempt))
+            reaped.append(item.item_id)
     return ReapOutcome(
         reaped=tuple(reaped),
         escalated=tuple(escalated),
@@ -389,14 +391,14 @@ def reap_pass(
 
 
 def _liveness_age_seconds(
-    issue_id: int, status: FleetStatus | None, config: SupervisorConfig, now: datetime
+    item_id: int, status: FleetStatus | None, config: FlotillaConfig, now: datetime
 ) -> float | None:
     """Age of the best liveness evidence; ``None`` when there is none at all."""
     raw: str | None = None
     if status is not None:
         raw = status.last_heartbeat
     else:
-        marker: Path = config.fleet_root / str(issue_id) / CLAIMED_AT_FILENAME
+        marker: Path = config.fleet_root / str(item_id) / CLAIMED_AT_FILENAME
         if marker.is_file():
             raw = marker.read_text(encoding="utf-8").strip()
     if raw is None:
@@ -408,9 +410,9 @@ def _liveness_age_seconds(
     return (now - stamped).total_seconds()
 
 
-def _runner_alive(seams: TickSeams, issue_id: int, config: SupervisorConfig) -> bool:
+def _runner_alive(seams: TickSeams, item_id: int, config: FlotillaConfig) -> bool:
     """Confirm via the pid sidecar whether the runner process still exists."""
-    pid_file: Path = config.fleet_root / str(issue_id) / RUNNER_PID_FILENAME
+    pid_file: Path = config.fleet_root / str(item_id) / RUNNER_PID_FILENAME
     if not pid_file.is_file():
         return False
     raw: str = pid_file.read_text(encoding="utf-8").strip()
@@ -421,18 +423,18 @@ def _runner_alive(seams: TickSeams, issue_id: int, config: SupervisorConfig) -> 
 
 def _reap_one(
     seams: TickSeams,
-    config: SupervisorConfig,
-    issue: IssueRef,
+    config: FlotillaConfig,
+    item: WorkItem,
     status: FleetStatus | None,
     evidence: str,
 ) -> None:
     """Archive the dead attempt's worktree and record the reap in the status."""
     attempt: int = status.attempt if status is not None else 1
     if status is not None:
-        seams.archive_worktree(Path(status.worktree), issue.issue_id, attempt, config)
+        seams.archive_worktree(Path(status.worktree), item.item_id, attempt, config)
         seams.run_git(["git", "-C", str(config.fleet_home), "worktree", "prune"])
         seams.update_status(
-            issue.issue_id,
+            item.item_id,
             StatusUpdate(
                 phase="parked",
                 parked_state="failed",
@@ -442,11 +444,12 @@ def _reap_one(
         )
 
 
-def claim_pass(seams: TickSeams, config: SupervisorConfig) -> ClaimOutcome:
+def claim_pass(seams: TickSeams, config: FlotillaConfig) -> ClaimOutcome:
     """Claim unblocked, unclaimed slices up to the cap and launch their runners."""
     ado: BoardAccess = seams.ado
+    tags: Tags = config.tags
     inflight: tuple[int, ...] = tuple(
-        issue.issue_id for issue in ado.issues_in_state(STATE_DOING) if TAG_CLAIMED in issue.tags
+        item.item_id for item in ado.items_in_state(Lifecycle.ACTIVE) if tags.claimed in item.tags
     )
     budget: int = config.cap - len(inflight)
     claimed: list[int] = []
@@ -455,32 +458,33 @@ def claim_pass(seams: TickSeams, config: SupervisorConfig) -> ClaimOutcome:
     rolled_back: list[int] = []
 
     if budget > 0:
-        candidates: list[IssueRef] = sorted(
-            ado.issues_in_state(STATE_TODO), key=lambda issue: issue.issue_id
+        candidates: list[WorkItem] = sorted(
+            ado.items_in_state(Lifecycle.QUEUED), key=lambda item: item.item_id
         )
-        for issue in candidates:
+        for item in candidates:
             if budget == 0:
                 break
-            if any(tag.startswith("fleet:") for tag in issue.tags):
+            if any(tags.is_fleet_tag(tag) for tag in item.tags):
                 continue
-            links: IssueLinks = ado.issue_links(issue.issue_id)
-            if config.epic_ids and links.parent_id not in config.epic_ids:
+            links: WorkItemLinks = ado.item_links(item.item_id)
+            if config.parent_scope_ids and links.parent_id not in config.parent_scope_ids:
                 continue
             if not all(
-                ado.issue_state(predecessor) == STATE_DONE for predecessor in links.predecessor_ids
+                ado.item_state(predecessor) == Lifecycle.DONE
+                for predecessor in links.predecessor_ids
             ):
-                blocked.append(issue.issue_id)
+                blocked.append(item.item_id)
                 continue
-            attempt: int = _next_attempt(issue.issue_id, config.fleet_root)
+            attempt: int = _next_attempt(item.item_id, config.fleet_root)
             if attempt > config.max_attempts:
-                _escalate_exhausted(ado, issue.issue_id, attempt, config.max_attempts)
-                escalated.append(issue.issue_id)
+                _escalate_exhausted(ado, item.item_id, attempt, config.max_attempts, tags)
+                escalated.append(item.item_id)
                 continue
-            if _claim_and_launch(seams, config, issue, attempt):
-                claimed.append(issue.issue_id)
+            if _claim_and_launch(seams, config, item, attempt):
+                claimed.append(item.item_id)
                 budget -= 1
             else:
-                rolled_back.append(issue.issue_id)
+                rolled_back.append(item.item_id)
 
     return ClaimOutcome(
         inflight=inflight,
@@ -491,48 +495,39 @@ def claim_pass(seams: TickSeams, config: SupervisorConfig) -> ClaimOutcome:
     )
 
 
-def _next_attempt(issue_id: int, fleet_root: Path) -> int:
+def _next_attempt(item_id: int, fleet_root: Path) -> int:
     """1 for a first claim; previous attempt + 1 when a status file exists."""
-    previous = load_or_none(issue_id, fleet_root)
+    previous = load_or_none(item_id, fleet_root)
     return 1 if previous is None else previous.attempt + 1
 
 
 def _claim_and_launch(
     seams: TickSeams,
-    config: SupervisorConfig,
-    issue: IssueRef,
+    config: FlotillaConfig,
+    item: WorkItem,
     attempt: int,
 ) -> bool:
     """Run the claim protocol for one slice; roll back if the launch fails."""
     ado: BoardAccess = seams.ado
-    branch: str = slice_branch(issue.issue_id, issue.title, attempt)
+    branch: str = slice_branch(item.item_id, item.title, attempt, config.branch_template)
     now: str = _utcnow_iso()
-    ado.set_state(issue.issue_id, STATE_DOING)
-    ado.add_tag(issue.issue_id, TAG_CLAIMED)
-    ado.add_comment(
-        issue.issue_id,
-        f"<p>fleet: claimed by supervisor — runner "
-        f"<code>runner-{issue.issue_id}-a{attempt}</code>, branch "
-        f"<code>{branch}</code>, {now}.</p>",
-    )
-    seams.write_claimed_at(issue.issue_id, config.fleet_root, now)
-    if seams.launcher.launch(issue.issue_id, branch, attempt):
+    runner_id: str = f"runner-{item.item_id}-a{attempt}"
+    ado.set_state(item.item_id, Lifecycle.ACTIVE)
+    ado.add_tag(item.item_id, config.tags.claimed)
+    ado.add_comment(item.item_id, Claimed(runner_id=runner_id, branch=branch, when=now))
+    seams.write_claimed_at(item.item_id, config.fleet_root, now)
+    if seams.launcher.launch(item.item_id, branch, attempt):
         return True
-    ado.remove_tag(issue.issue_id, TAG_CLAIMED)
-    ado.set_state(issue.issue_id, STATE_TODO)
-    ado.add_comment(issue.issue_id, "<p>fleet: runner launch failed — claim rolled back.</p>")
+    ado.remove_tag(item.item_id, config.tags.claimed)
+    ado.set_state(item.item_id, Lifecycle.QUEUED)
+    ado.add_comment(item.item_id, RolledBack(reason="runner launch failed"))
     return False
 
 
-def _escalate_exhausted(ado: BoardAccess, issue_id: int, attempt: int, cap: int) -> None:
+def _escalate_exhausted(ado: BoardAccess, item_id: int, attempt: int, cap: int, tags: Tags) -> None:
     """Tag a slice whose transient retries are exhausted (addendum §4)."""
-    ado.add_tag(issue_id, TAG_FAILED)
-    ado.add_comment(
-        issue_id,
-        f"<p>fleet: retry cap exhausted (next attempt would be {attempt}, cap {cap}) "
-        f"— escalated to <code>{TAG_FAILED}</code>. Triage via the status file, then "
-        f"remove the tag (and the fleet status dir for a clean restart) to requeue.</p>",
-    )
+    ado.add_tag(item_id, tags.failed)
+    ado.add_comment(item_id, Escalated(attempt=attempt, cap=cap))
 
 
 def _utcnow_iso() -> str:
@@ -579,7 +574,7 @@ class TmuxLauncher:
         self._effort = effort
         self._python = python_executable
 
-    def launch(self, issue_id: int, branch: str, attempt: int) -> bool:
+    def launch(self, item_id: int, branch: str, attempt: int) -> bool:
         """Start the slice's runner pane; return False if tmux refuses."""
         wrap: Path = resolve_script("runner-wrap.sh")
         command: str = (
@@ -590,7 +585,7 @@ class TmuxLauncher:
             f"{shlex.quote(str(self._heartbeat_interval_seconds))} "
             f"FLEET_MODEL={shlex.quote(self._model)} "
             f"FLEET_EFFORT={shlex.quote(self._effort)} "
-            f"{shlex.quote(str(wrap))} {issue_id} {shlex.quote(branch)} {attempt}"
+            f"{shlex.quote(str(wrap))} {item_id} {shlex.quote(branch)} {attempt}"
         )
         if self._run(["tmux", "has-session", "-t", "fleet"]) != 0:
             return (
@@ -604,7 +599,7 @@ class TmuxLauncher:
 
 
 class ClaudeCleanup:
-    """Run the existing ``/cleanup-merged-branches`` skill headlessly per branch.
+    """Run the configured cleanup skill headlessly per branch (``/cleanup-merged-branches``).
 
     The skill derives merged-ness via patch-equivalence and drives the
     existing worktree hooks (ADR-0007 decision 5); its Step 3b sweep is
@@ -618,12 +613,14 @@ class ClaudeCleanup:
         *,
         model: str = FLEET_MODEL,
         effort: str = FLEET_EFFORT,
+        cleanup_skill: str = DEFAULT_CLEANUP_SKILL,
     ) -> None:
-        """Bind the cleaner to the repo root and a command runner."""
+        """Bind the cleaner to the repo root, a command runner, and the cleanup skill."""
         self._fleet_home = fleet_home
         self._run = run
         self._model = model
         self._effort = effort
+        self._cleanup_skill = cleanup_skill
 
     def cleanup(self, branch: str) -> bool:
         """Clean one merged branch; return False when the session failed."""
@@ -632,7 +629,7 @@ class ClaudeCleanup:
                 [
                     "claude",
                     "-p",
-                    f"/cleanup-merged-branches {branch}",
+                    f"{self._cleanup_skill} {branch}",
                     "--dangerously-skip-permissions",
                     "--model",
                     self._model,
@@ -648,59 +645,63 @@ class ClaudeCleanup:
 # --- dry-run boundary ----------------------------------------------------------
 
 
-class ReadOnlyAdoClient:
+class ReadOnlyBoard:
     """``BoardAccess`` decorator that physically cannot write to the board.
 
     Reads delegate to the wrapped client; every write logs the action a real
     tick WOULD have performed and does nothing. Dry-run safety is this
     boundary, not a flag threaded through the passes — a pass (present or
-    future) that reaches ``seams.ado`` with a write cannot mutate ADO while
-    dry-run is active, because the write never leaves this class.
+    future) that reaches ``seams.ado`` with a write cannot mutate the board
+    while dry-run is active, because the write never leaves this class.
     """
 
     def __init__(self, inner: BoardAccess) -> None:
         """Wrap ``inner``, passing its reads through and absorbing its writes."""
         self._inner = inner
 
-    def issues_in_state(self, state: str) -> tuple[IssueRef, ...]:
+    def items_in_state(self, state: Lifecycle) -> tuple[WorkItem, ...]:
         """Pass the read through to the wrapped client."""
-        return self._inner.issues_in_state(state)
+        return self._inner.items_in_state(state)
 
     def completed_pr_url(self, branch: str) -> str | None:
         """Pass the read through to the wrapped client."""
         return self._inner.completed_pr_url(branch)
 
-    def issue_links(self, issue_id: int) -> IssueLinks:
+    def item_links(self, item_id: int) -> WorkItemLinks:
         """Pass the read through to the wrapped client."""
-        return self._inner.issue_links(issue_id)
+        return self._inner.item_links(item_id)
 
-    def issue_state(self, issue_id: int) -> str:
+    def item_state(self, item_id: int) -> Lifecycle:
         """Pass the read through to the wrapped client."""
-        return self._inner.issue_state(issue_id)
+        return self._inner.item_state(item_id)
 
-    def set_state(self, issue_id: int, state: str) -> None:
+    def validate_config(self) -> None:
+        """Pass the validation read through (a live-board read, no mutation)."""
+        self._inner.validate_config()
+
+    def set_state(self, item_id: int, state: Lifecycle) -> None:
         """Absorb the write, logging the would-be state transition."""
-        _log(f"[dry-run] WOULD move #{issue_id} to '{state}'")
+        _log(f"[dry-run] WOULD move #{item_id} to {state.value}")
 
-    def add_tag(self, issue_id: int, tag: str) -> None:
+    def add_tag(self, item_id: int, tag: str) -> None:
         """Absorb the write, logging the would-be tag addition."""
-        _log(f"[dry-run] WOULD add tag '{tag}' to #{issue_id}")
+        _log(f"[dry-run] WOULD add tag '{tag}' to #{item_id}")
 
-    def remove_tag(self, issue_id: int, tag: str) -> None:
+    def remove_tag(self, item_id: int, tag: str) -> None:
         """Absorb the write, logging the would-be tag removal."""
-        _log(f"[dry-run] WOULD remove tag '{tag}' from #{issue_id}")
+        _log(f"[dry-run] WOULD remove tag '{tag}' from #{item_id}")
 
-    def add_comment(self, issue_id: int, html: str) -> None:
-        """Absorb the write, logging the would-be discussion comment."""
-        _log(f"[dry-run] WOULD comment on #{issue_id}: {html}")
+    def add_comment(self, item_id: int, event: CommentEvent) -> None:
+        """Absorb the write, logging the would-be discussion event."""
+        _log(f"[dry-run] WOULD comment on #{item_id}: {event}")
 
 
 class DryRunLauncher:
     """``Launcher`` stand-in: reports the runner it would start, starts nothing."""
 
-    def launch(self, issue_id: int, branch: str, attempt: int) -> bool:
+    def launch(self, item_id: int, branch: str, attempt: int) -> bool:
         """Log the would-be runner pane and report success."""
-        _log(f"[dry-run] WOULD launch runner for #{issue_id} (branch {branch}, attempt {attempt})")
+        _log(f"[dry-run] WOULD launch runner for #{item_id} (branch {branch}, attempt {attempt})")
         return True
 
 
@@ -709,7 +710,7 @@ class DryRunCleaner:
 
     def cleanup(self, branch: str) -> bool:
         """Log the would-be headless cleanup session and report success."""
-        _log(f"[dry-run] WOULD run /cleanup-merged-branches for {branch}")
+        _log(f"[dry-run] WOULD run the cleanup skill for {branch}")
         return True
 
 
@@ -726,36 +727,36 @@ def _dry_run_git(args: Sequence[str]) -> int:
 
 
 def _dry_run_archive_worktree(
-    worktree: Path, issue_id: int, attempt: int, _config: SupervisorConfig
+    worktree: Path, item_id: int, attempt: int, _config: FlotillaConfig
 ) -> None:
     """Absorb the worktree archive move, logging it."""
-    _log(f"[dry-run] WOULD archive worktree {worktree} of #{issue_id} (attempt {attempt})")
+    _log(f"[dry-run] WOULD archive worktree {worktree} of #{item_id} (attempt {attempt})")
 
 
-def _dry_run_update_status(issue_id: int, _changes: StatusUpdate, _fleet_root: Path) -> None:
+def _dry_run_update_status(item_id: int, _changes: StatusUpdate, _fleet_root: Path) -> None:
     """Absorb the status-file write, logging it."""
-    _log(f"[dry-run] WOULD update the status file of #{issue_id}")
+    _log(f"[dry-run] WOULD update the status file of #{item_id}")
 
 
-def _dry_run_write_claimed_at(issue_id: int, _fleet_root: Path, _timestamp: str) -> None:
+def _dry_run_write_claimed_at(item_id: int, _fleet_root: Path, _timestamp: str) -> None:
     """Absorb the claimed-at marker write, logging it."""
-    _log(f"[dry-run] WOULD write the claimed-at marker of #{issue_id}")
+    _log(f"[dry-run] WOULD write the claimed-at marker of #{item_id}")
 
 
 def dry_run_seams(seams: TickSeams) -> TickSeams:
     """Wrap every side-effecting seam so the tick cannot mutate anything.
 
     Reads pass through — the tick still runs the full finalize/reap/claim
-    read+plan logic and reports the would-be actions — but every write (ADO,
+    read+plan logic and reports the would-be actions — but every write (board,
     tmux panes, claude spawns including the auth probe, git, worktree moves,
     local status/marker files) becomes a logged ``[dry-run] WOULD …`` no-op.
-    ``pid_alive`` stays real: it is a pure read (signal 0) and the reap plan
-    is meaningless without it. The tick lock and the supervisor log are still
+    ``pid_alive`` stays real: it is a pure read (signal 0) and the reap plan is
+    meaningless without it. The tick lock and the supervisor log are still
     written — they are coordination artifacts, not fleet state.
     """
     return replace(
         seams,
-        ado=ReadOnlyAdoClient(seams.ado),
+        ado=ReadOnlyBoard(seams.ado),
         launcher=DryRunLauncher(),
         cleaner=DryRunCleaner(),
         run_git=_dry_run_git,
@@ -766,17 +767,28 @@ def dry_run_seams(seams: TickSeams) -> TickSeams:
     )
 
 
-def build_seams(config: SupervisorConfig, *, dry_run: bool = False) -> TickSeams:
+def build_seams(config: FlotillaConfig, *, dry_run: bool = False) -> TickSeams:
     """Build the production seams; with ``dry_run``, wrap them so nothing can mutate."""
     seams = TickSeams(
-        ado=AzCliAdo(),
-        launcher=TmuxLauncher(config.fleet_home, config.fleet_root),
-        cleaner=ClaudeCleanup(config.fleet_home),
+        ado=build_board(config),
+        launcher=TmuxLauncher(
+            config.fleet_home,
+            config.fleet_root,
+            heartbeat_interval_seconds=config.heartbeat_interval_seconds,
+            model=config.model,
+            effort=config.effort,
+        ),
+        cleaner=ClaudeCleanup(
+            config.fleet_home,
+            model=config.model,
+            effort=config.effort,
+            cleanup_skill=config.cleanup_skill,
+        ),
     )
     if not dry_run:
         return seams
     _log(
-        "DRY-RUN tick: reads and planning only — every ADO write, runner launch, "
+        "DRY-RUN tick: reads and planning only — every board write, runner launch, "
         "claude spawn, and local fleet-state write is suppressed and logged as "
         "'[dry-run] WOULD …'"
     )
@@ -784,13 +796,14 @@ def build_seams(config: SupervisorConfig, *, dry_run: bool = False) -> TickSeams
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run one supervisor tick against the real ADO board and tmux."""
+    """Run one supervisor tick against the configured board and tmux."""
     parser = argparse.ArgumentParser(
-        prog="fleet-supervisor",
-        description="One AFK-fleet supervisor tick (ADR-0007).",
+        prog="flotilla-supervisor",
+        description="One AFK-fleet supervisor tick (ADR-0007 / ADR-0001).",
     )
     parser.add_argument("--fleet-root", type=Path, default=None)
     parser.add_argument("--fleet-home", type=Path, default=None)
+    parser.add_argument("--provider", default=None, help="override the board provider")
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -799,14 +812,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         "FLEET_DRY_RUN=1 is equivalent",
     )
     args: argparse.Namespace = parser.parse_args(argv)
-    config: SupervisorConfig = config_from_env(args.fleet_root, args.fleet_home)
+    config: FlotillaConfig = load_config(
+        fleet_root=args.fleet_root, fleet_home=args.fleet_home, provider=args.provider
+    )
     dry_run: bool = bool(args.dry_run) or FLEET_DRY_RUN
     seams: TickSeams = build_seams(config, dry_run=dry_run)
     try:
+        seams.ado.validate_config()
         return run_tick(seams, config)
+    except BoardValidationError as exc:
+        print(f"supervisor: board configuration invalid: {exc}", file=sys.stderr)
+        return 1
     except subprocess.CalledProcessError as exc:
         stderr: str = exc.stderr if isinstance(exc.stderr, str) else ""
-        print(f"supervisor: az/tmux call failed: {exc} {stderr}", file=sys.stderr)
+        print(f"supervisor: board/tmux call failed: {exc} {stderr}", file=sys.stderr)
         return 1
 
 
