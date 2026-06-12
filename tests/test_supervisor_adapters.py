@@ -7,6 +7,7 @@ The board adapter (``AzCliAdo``) lives in :mod:`flotilla.board` and is covered b
 from collections.abc import Sequence
 from pathlib import Path
 
+from flotilla.config import DEFAULT_QA_SKILL, DEFAULT_RUNNER_SKILL, DEFAULT_TDD_SKILL
 from flotilla.constants import FLEET_EFFORT, FLEET_MODEL, HEARTBEAT_INTERVAL_SECONDS
 from flotilla.supervisor import ClaudeCleanup, TmuxLauncher
 
@@ -79,6 +80,33 @@ def test_launcher_injects_an_explicit_model_and_effort_into_the_pane_env(
     command: str = runner.calls[-1][-1]
     assert "FLEET_MODEL=claude-sonnet-4-6 " in command
     assert "FLEET_EFFORT=medium " in command
+
+
+def test_launcher_defaults_the_skill_names_to_the_config_defaults(fleet_root: Path) -> None:
+    runner = _RecordingTmuxRunner({"has-session": 1})
+    launcher = TmuxLauncher(Path("/repo"), fleet_root, runner)
+    assert launcher.launch(60, "feat/slice-60-a", 1) is True
+    command: str = runner.calls[-1][-1]
+    assert f"FLEET_RUNNER_SKILL={DEFAULT_RUNNER_SKILL} " in command
+    assert f"FLEET_TDD_SKILL={DEFAULT_TDD_SKILL} " in command
+    assert f"FLEET_QA_SKILL={DEFAULT_QA_SKILL} " in command
+
+
+def test_launcher_injects_explicit_skill_names_into_the_pane_env(fleet_root: Path) -> None:
+    runner = _RecordingTmuxRunner({"has-session": 1})
+    launcher = TmuxLauncher(
+        Path("/repo"),
+        fleet_root,
+        runner,
+        runner_skill="/run-slice",
+        tdd_skill="/red-green",
+        qa_skill="/review",
+    )
+    assert launcher.launch(61, "feat/slice-61-b", 1) is True
+    command: str = runner.calls[-1][-1]
+    assert "FLEET_RUNNER_SKILL=/run-slice " in command
+    assert "FLEET_TDD_SKILL=/red-green " in command
+    assert "FLEET_QA_SKILL=/review " in command
 
 
 def test_launcher_injects_the_python_interpreter_into_the_pane_env(fleet_root: Path) -> None:
