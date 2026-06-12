@@ -112,7 +112,12 @@ assert "park: runner.pid written" grep -qE '^[0-9]+$' "$ROOT1/41/runner.pid"
 refute "park: no pane-id without TMUX_PANE" [ -f "$ROOT1/41/pane-id" ]
 assert "park: runner.log written" grep -q 'runner-41-a1' "$ROOT1/41/runner.log"
 assert "park: prompt names the skill and inputs" \
-  grep -q '/afk-slice-runner issue-id=41 branch=feat/slice-41-x attempt=1' "$TMP/claude-args"
+  grep -q '/afk-slice-runner issue-id=41 branch=feat/slice-41-x attempt=1 tdd-skill=/tdd qa-skill=/qa' \
+    "$TMP/claude-args"
+assert "park: tdd/qa skills default from flotilla.config" \
+  grep -q 'tdd-skill=/tdd qa-skill=/qa' "$TMP/claude-args"
+assert "park: runner skill defaults from flotilla.config" \
+  grep -q '/afk-slice-runner issue-id=' "$TMP/claude-args"
 assert "park: permissions skipped for headless run" \
   grep -q -- '--dangerously-skip-permissions' "$TMP/claude-args"
 CONSTANTS_MODEL=$("$PYTHON" -c 'from flotilla.constants import FLEET_MODEL; print(FLEET_MODEL)')
@@ -185,6 +190,19 @@ assert "model-override: --model uses the env value" \
   grep -qx -- 'claude-sonnet-4-6' "$TMP/claude-args"
 assert "model-override: --effort uses the env value" \
   grep -qx -- 'medium' "$TMP/claude-args"
+
+# --- skill overrides: FLEET_*_SKILL win over the flotilla.config defaults --------
+
+ROOT8="$TMP/fleet8"
+FLEET_ROOT=$ROOT8 FLEET_CLAUDE_CMD="$TMP/bin/claude-park" \
+  FLEET_RUNNER_SKILL=/my-runner FLEET_TDD_SKILL=/my-tdd FLEET_QA_SKILL=/my-qa \
+  bash "$WRAP" 41 feat/slice-41-x 1 >/dev/null 2>&1
+assert "skill-override: wrapper exits 0" [ "$?" -eq 0 ]
+assert "skill-override: prompt uses the env runner/tdd/qa skill names" \
+  grep -q '/my-runner issue-id=41 branch=feat/slice-41-x attempt=1 tdd-skill=/my-tdd qa-skill=/my-qa' \
+    "$TMP/claude-args"
+refute "skill-override: default skill names absent when overridden" \
+  grep -q '/afk-slice-runner' "$TMP/claude-args"
 
 # --- summary -----------------------------------------------------------------
 

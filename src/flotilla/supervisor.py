@@ -65,6 +65,9 @@ from flotilla._resources import resolve_script
 from flotilla.board import BoardAccess, BoardValidationError, build_board
 from flotilla.config import (
     DEFAULT_CLEANUP_SKILL,
+    DEFAULT_QA_SKILL,
+    DEFAULT_RUNNER_SKILL,
+    DEFAULT_TDD_SKILL,
     FlotillaConfig,
     load_config,
 )
@@ -563,6 +566,9 @@ class TmuxLauncher:
         heartbeat_interval_seconds: int = HEARTBEAT_INTERVAL_SECONDS,
         model: str = FLEET_MODEL,
         effort: str = FLEET_EFFORT,
+        runner_skill: str = DEFAULT_RUNNER_SKILL,
+        tdd_skill: str = DEFAULT_TDD_SKILL,
+        qa_skill: str = DEFAULT_QA_SKILL,
         python_executable: str = sys.executable,
     ) -> None:
         """Bind the launcher to the repo root, fleet root, and a command runner."""
@@ -572,10 +578,18 @@ class TmuxLauncher:
         self._heartbeat_interval_seconds = heartbeat_interval_seconds
         self._model = model
         self._effort = effort
+        self._runner_skill = runner_skill
+        self._tdd_skill = tdd_skill
+        self._qa_skill = qa_skill
         self._python = python_executable
 
     def launch(self, item_id: int, branch: str, attempt: int) -> bool:
-        """Start the slice's runner pane; return False if tmux refuses."""
+        """Start the slice's runner pane; return False if tmux refuses.
+
+        The configured skill names are threaded into the pane env so the runner
+        skill is invoked by its configured name and receives the tdd/qa skill
+        names as prompt arguments (the wrapper stops hardcoding ``/afk-slice-runner``).
+        """
         wrap: Path = resolve_script("runner-wrap.sh")
         command: str = (
             f"FLEET_HOME={shlex.quote(str(self._fleet_home))} "
@@ -585,6 +599,9 @@ class TmuxLauncher:
             f"{shlex.quote(str(self._heartbeat_interval_seconds))} "
             f"FLEET_MODEL={shlex.quote(self._model)} "
             f"FLEET_EFFORT={shlex.quote(self._effort)} "
+            f"FLEET_RUNNER_SKILL={shlex.quote(self._runner_skill)} "
+            f"FLEET_TDD_SKILL={shlex.quote(self._tdd_skill)} "
+            f"FLEET_QA_SKILL={shlex.quote(self._qa_skill)} "
             f"{shlex.quote(str(wrap))} {item_id} {shlex.quote(branch)} {attempt}"
         )
         if self._run(["tmux", "has-session", "-t", "fleet"]) != 0:
@@ -777,6 +794,9 @@ def build_seams(config: FlotillaConfig, *, dry_run: bool = False) -> TickSeams:
             heartbeat_interval_seconds=config.heartbeat_interval_seconds,
             model=config.model,
             effort=config.effort,
+            runner_skill=config.runner_skill,
+            tdd_skill=config.tdd_skill,
+            qa_skill=config.qa_skill,
         ),
         cleaner=ClaudeCleanup(
             config.fleet_home,

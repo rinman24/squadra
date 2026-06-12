@@ -4,7 +4,7 @@
 # Thin deterministic shell around one slice runner. It seeds status.json, owns
 # the heartbeat loop (liveness = "process alive", independent of whatever long
 # tool call the agent is in), records pid/pane sidecars for the watchdog,
-# invokes the headless Claude session on /afk-slice-runner, and backstops an
+# invokes the headless Claude session on the configured runner skill, and backstops an
 # unexpected exit by stamping parked_state=failed. The supervisor launches one
 # of these per claimed slice into its own detached-tmux pane.
 #
@@ -25,6 +25,12 @@
 #                                     in flotilla.constants)
 #   FLEET_EFFORT                      claude --effort for the runner (default: FLEET_EFFORT
 #                                     in flotilla.constants)
+#   FLEET_RUNNER_SKILL                slice-runner skill name (default: DEFAULT_RUNNER_SKILL
+#                                     in flotilla.config)
+#   FLEET_TDD_SKILL                   tdd skill passed to the runner (default: DEFAULT_TDD_SKILL
+#                                     in flotilla.config)
+#   FLEET_QA_SKILL                    qa skill passed to the runner (default: DEFAULT_QA_SKILL
+#                                     in flotilla.config)
 #   FLEET_PYTHON                      interpreter for the status CLI (default: python3)
 #   FLEET_CLAUDE_CMD                  claude binary (stubbed in tests)
 
@@ -49,20 +55,30 @@ CLAUDE_CMD=${FLEET_CLAUDE_CMD:-claude}
 INTERVAL=${FLEET_HEARTBEAT_INTERVAL_SECONDS:-}
 MODEL=${FLEET_MODEL:-}
 EFFORT=${FLEET_EFFORT:-}
-# Defaults live only in flotilla.constants (single source of truth); fetch them
-# in one shot for any knob the environment did not supply. In the normal
-# supervisor-driven path the launcher passes all three, so this never runs.
-if [ -z "$INTERVAL" ] || [ -z "$MODEL" ] || [ -z "$EFFORT" ]; then
+RUNNER_SKILL=${FLEET_RUNNER_SKILL:-}
+TDD_SKILL=${FLEET_TDD_SKILL:-}
+QA_SKILL=${FLEET_QA_SKILL:-}
+# Defaults are the single source of truth — INTERVAL/MODEL/EFFORT from
+# flotilla.constants, the skill names from flotilla.config. Fetch them in one
+# shot for any knob the environment did not supply. In the normal
+# supervisor-driven path the launcher passes them all, so this never runs.
+if [ -z "$INTERVAL" ] || [ -z "$MODEL" ] || [ -z "$EFFORT" ] || \
+   [ -z "$RUNNER_SKILL" ] || [ -z "$TDD_SKILL" ] || [ -z "$QA_SKILL" ]; then
   defaults=$("$PYTHON" -c \
     'from flotilla.constants import HEARTBEAT_INTERVAL_SECONDS as h, FLEET_MODEL as m, FLEET_EFFORT as e
-print(h); print(m); print(e)') \
+from flotilla.config import DEFAULT_RUNNER_SKILL as r, DEFAULT_TDD_SKILL as t, DEFAULT_QA_SKILL as q
+print(h); print(m); print(e); print(r); print(t); print(q)') \
     || exit 70
-  { read -r d_interval; read -r d_model; read -r d_effort; } <<EOF
+  { read -r d_interval; read -r d_model; read -r d_effort
+    read -r d_runner; read -r d_tdd; read -r d_qa; } <<EOF
 $defaults
 EOF
   INTERVAL=${INTERVAL:-$d_interval}
   MODEL=${MODEL:-$d_model}
   EFFORT=${EFFORT:-$d_effort}
+  RUNNER_SKILL=${RUNNER_SKILL:-$d_runner}
+  TDD_SKILL=${TDD_SKILL:-$d_tdd}
+  QA_SKILL=${QA_SKILL:-$d_qa}
 fi
 
 SLICE_DIR=$FLEET_ROOT/$ISSUE_ID
@@ -110,7 +126,7 @@ echo "fleet: runner $RUNNER_ID starting (issue #$ISSUE_ID, branch $BRANCH, attem
 cd "$FLEET_HOME" || exit 70
 # Pin the compute tier explicitly so the runner never silently inherits an
 # interactive session's default model/effort (flotilla.constants is the source).
-CLAUDE_ARGS=(-p "/afk-slice-runner issue-id=$ISSUE_ID branch=$BRANCH attempt=$ATTEMPT"
+CLAUDE_ARGS=(-p "$RUNNER_SKILL issue-id=$ISSUE_ID branch=$BRANCH attempt=$ATTEMPT tdd-skill=$TDD_SKILL qa-skill=$QA_SKILL"
              --dangerously-skip-permissions)
 [ -n "$MODEL" ] && CLAUDE_ARGS+=(--model "$MODEL")
 [ -n "$EFFORT" ] && CLAUDE_ARGS+=(--effort "$EFFORT")

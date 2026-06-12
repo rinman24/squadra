@@ -40,11 +40,15 @@ def test_importing_cli_does_not_import_supervisor() -> None:
     assert proc.returncode == 0, proc.stderr
 
 
-def test_init_writes_flotilla_toml(tmp_path: Path) -> None:
+def test_init_writes_flotilla_toml_and_skill_templates(tmp_path: Path) -> None:
     rc: int = cli.main(["init", "--fleet-home", str(tmp_path)])
     assert rc == 0
     config_path: Path = tmp_path / "flotilla.toml"
     assert config_path.is_file()
+    # init delegates to flotilla.scaffold, which also drops the consumer-owned
+    # runner/cleanup skill templates alongside the config.
+    assert (tmp_path / "runner-skill.md").is_file()
+    assert (tmp_path / "cleanup-skill.md").is_file()
 
     parsed: dict[str, object] = tomllib.loads(config_path.read_text(encoding="utf-8"))
     board: dict[str, object] = _table(parsed, "board")
@@ -70,13 +74,14 @@ def test_init_provider_flag_lands_in_toml(tmp_path: Path) -> None:
     assert _table(parsed, "board")["provider"] == "github"
 
 
-def test_init_refuses_overwrite_without_force(tmp_path: Path) -> None:
+def test_init_skips_existing_without_force(tmp_path: Path) -> None:
     config_path: Path = tmp_path / "flotilla.toml"
     config_path.write_text("# pre-existing\n", encoding="utf-8")
 
+    # Skipping an existing file is re-runnable, not an error (the scaffolder's
+    # contract): rc is 0 and the original content is left untouched.
     rc: int = cli.main(["init", "--fleet-home", str(tmp_path)])
-    assert rc != 0
-    # The original content is untouched.
+    assert rc == 0
     assert config_path.read_text(encoding="utf-8") == "# pre-existing\n"
 
 
