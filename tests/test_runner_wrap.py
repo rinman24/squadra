@@ -24,6 +24,5 @@ def test_runner_wrap() -> None:
         env={**os.environ, "FLEET_PYTHON": sys.executable},
     )
     assert result.returncode == 0, (
-        f"runner-wrap tests failed (exit {result.returncode}):\n"
-        f"{result.stdout}\n{result.stderr}"
+        f"runner-wrap tests failed (exit {result.returncode}):\n{result.stdout}\n{result.stderr}"
     )

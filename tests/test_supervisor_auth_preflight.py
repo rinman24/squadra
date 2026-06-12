@@ -32,8 +32,12 @@ _MUTATING_CALLS: Final = ("set_state", "add_tag", "remove_tag", "add_comment")
 # The probe is pinned to the fleet model so a bad FLEET_MODEL fails the
 # preflight rather than every claimed runner; no --effort (it does no reasoning).
 _PROBE_COMMAND: Final = [
-    "claude", "-p", "reply READY", "--dangerously-skip-permissions",
-    "--model", FLEET_MODEL,
+    "claude",
+    "-p",
+    "reply READY",
+    "--dangerously-skip-permissions",
+    "--model",
+    FLEET_MODEL,
 ]
 
 

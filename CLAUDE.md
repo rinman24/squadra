@@ -56,9 +56,10 @@ Artifacts feed; PyPI publication.
 ## Validation (before hand-off)
 
 ```bash
-uv run ruff check .     # 0 errors
-uv run pyright          # strict, 0 errors
-uv run pytest           # unit + hermetic shell tests
+uv run ruff check .            # 0 errors
+uv run ruff format --check .   # no reformats pending
+uv run pyright                 # strict, 0 errors
+uv run pytest                  # unit + hermetic shell tests
 ```
 
 The hermetic shell test (`tests/scripts/run-runner-wrap-tests.sh`) needs `bash`;

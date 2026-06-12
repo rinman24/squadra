@@ -109,7 +109,8 @@ All addendum constants live in `flotilla/constants.py` and are env-tunable
 | Fleet home (target repo) | current working directory | `FLEET_HOME` |
 | Fleet root | `$FLEET_HOME/.claude/fleet` | `FLEET_ROOT` |
 | Interpreter for the fleet | the supervisor's `sys.executable` (shell default `python3`) | `FLEET_PYTHON` |
-| Max parallel runners | 2 | `FLEET_MAX_RUNNERS` |
+| Max parallel runners (the *claim budget* — 0 stops new claims only, it is not a safety lever) | 2 | `FLEET_MAX_RUNNERS` |
+| Dry-run tick (plan + report, suppress every side effect) | off | `FLEET_DRY_RUN` |
 | Heartbeat interval | 60s | `FLEET_HEARTBEAT_INTERVAL_SECONDS` |
 | Staleness threshold | 600s | `FLEET_STALENESS_THRESHOLD_SECONDS` |
 | Max attempts | 3 | `FLEET_MAX_ATTEMPTS` |
@@ -220,6 +221,17 @@ to `.claude/fleet/<issue-id>/archive/attempt-N/`, records the reap, drops
 `fleet:claimed`, and moves `Doing → To Do`; the next claim retries with
 attempt+1, and exhausted retries escalate to `fleet:failed` instead.
 
+**Dry run** — `flotilla tick --dry-run` (or `FLEET_DRY_RUN=1`, or
+`flotilla-supervisor --dry-run`) runs the same three passes' read+plan logic
+and reports the would-be actions, with every side effect suppressed at the
+`TickSeams` boundary (`dry_run_seams`): board writes become logged
+`[dry-run] WOULD …` no-ops, no runner pane launches, no `claude` is spawned
+(the cleanup pass and the auth preflight included), no worktree is archived,
+no local status/marker file is written. Safety is the wrapped boundary, not a
+flag inside the passes, so a future pass cannot forget to honor it. Only the
+tick lock and the supervisor log are still written — coordination artifacts,
+not fleet state.
+
 Scoping: `FLEET_EPIC_IDS` (comma-separated Epic ids, optional) restricts claiming
 to slices under those Epics. Empty (the default) means every unblocked `To Do`
 Issue in the project is eligible.
@@ -229,10 +241,17 @@ Issue in the project is eligible.
 Nothing starts the fleet automatically. Scope claiming with `FLEET_EPIC_IDS`
 before enabling. Two levers compose:
 
-- **One tick by hand** (the safest first step): `flotilla tick` — logs to
-  `$FLEET_ROOT/supervisor.log`. For a read-only smoke tick that mutates nothing,
-  run `FLEET_MAX_RUNNERS=0 flotilla tick`: it still authenticates to ADO and runs
-  the query/finalize/reap passes, but the claim pass launches nothing.
+- **A dry run first** (the safest first step): `flotilla tick --dry-run` (or
+  `FLEET_DRY_RUN=1`) runs the full finalize/reap/claim read+plan logic and logs
+  every action a real tick WOULD take, but cannot mutate — ADO writes, runner
+  launches, claude spawns (cleanup + the auth probe), and local fleet-state
+  writes are all suppressed at the seams. Ticks log to
+  `$FLEET_ROOT/supervisor.log`, so review the plan with `flotilla log`.
+- **One tick by hand**: `flotilla tick` — logs to `$FLEET_ROOT/supervisor.log`.
+  Note that `FLEET_MAX_RUNNERS=0` is **not** a read-only tick: it only zeroes
+  the *claim budget*; finalize and reap still mutate ADO (drop `fleet:*` tags,
+  comment PR links, run the headless cleanup, move `Doing → To Do`). For a tick
+  that cannot mutate, use `--dry-run`.
 - **Start / stop / status / log on demand**:
   `flotilla {start|stop|status|log}`. `start` launches a detached `fleet-ticker`
   tmux session whose loop fires one supervisor tick every

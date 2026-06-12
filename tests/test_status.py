@@ -90,9 +90,7 @@ def test_update_can_park_and_unpark(fleet_root: Path, default_status: FleetStatu
     assert resumed.pr_url == "https://pr/1"
 
 
-def test_parked_phase_requires_parked_state(
-    fleet_root: Path, default_status: FleetStatus
-) -> None:
+def test_parked_phase_requires_parked_state(fleet_root: Path, default_status: FleetStatus) -> None:
     write(default_status, fleet_root)
     with pytest.raises(FleetStatusError, match="requires a parked_state"):
         update(41, StatusUpdate(phase="parked"), fleet_root)
@@ -114,8 +112,7 @@ def test_stamp_heartbeat_touches_only_last_heartbeat(
     loaded: FleetStatus = load(41, fleet_root)
     assert loaded.last_heartbeat == "2026-06-10T13:00:00+00:00"
     assert (
-        dataclasses.replace(loaded, last_heartbeat=default_status.last_heartbeat)
-        == default_status
+        dataclasses.replace(loaded, last_heartbeat=default_status.last_heartbeat) == default_status
     )
 
 
@@ -161,9 +158,7 @@ def test_invalid_attempt_rejected(
         write(make_status(attempt=0), fleet_root)
 
 
-def test_interleaved_writers_lose_no_updates(
-    fleet_root: Path, default_status: FleetStatus
-) -> None:
+def test_interleaved_writers_lose_no_updates(fleet_root: Path, default_status: FleetStatus) -> None:
     write(default_status, fleet_root)
 
     def heartbeats() -> None:

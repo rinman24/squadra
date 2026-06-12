@@ -17,8 +17,11 @@
 #   flotilla stop     stop the ticker if running
 #   flotilla status   report whether the ticker is running + tail the log
 #   flotilla tick     run one supervisor tick in the foreground (extra args
-#                     pass through to the supervisor, e.g. FLEET_MAX_RUNNERS=0
-#                     flotilla tick for a read-only smoke tick)
+#                     pass through to the supervisor; `flotilla tick --dry-run`
+#                     is the safe smoke — it plans and reports every would-be
+#                     action but cannot mutate. FLEET_MAX_RUNNERS=0 is NOT
+#                     read-only: it only zeroes the claim budget, while
+#                     finalize and reap still mutate ADO)
 #   flotilla log      tail the supervisor log (default last 40 lines); -f to
 #                     follow live (tail -f), -n N for a custom line count
 #
@@ -127,7 +130,8 @@ usage: flotilla {start|stop|status|tick|log} [args...]
   start    start the detached '$SESSION' ticker if not already running
   stop     stop the '$SESSION' ticker if running
   status   report whether the ticker is running and tail the supervisor log
-  tick     run one supervisor tick in the foreground (args pass through)
+  tick     run one supervisor tick in the foreground (args pass through;
+           --dry-run plans and reports every would-be action, mutates nothing)
   log      tail the supervisor log; -f to follow live, -n N for N lines
 EOF
   exit 2

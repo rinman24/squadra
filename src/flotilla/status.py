@@ -240,8 +240,7 @@ def _validate(status: FleetStatus) -> None:
         raise FleetStatusError("phase 'parked' requires a parked_state")
     if status.phase != "parked" and status.parked_state is not None:
         raise FleetStatusError(
-            f"parked_state {status.parked_state!r} requires phase 'parked', "
-            f"got {status.phase!r}"
+            f"parked_state {status.parked_state!r} requires phase 'parked', got {status.phase!r}"
         )
     if status.attempt < 1:
         raise FleetStatusError(f"attempt must be >= 1, got {status.attempt}")
@@ -449,7 +448,9 @@ def _changes_from_args(args: argparse.Namespace) -> StatusUpdate:
         parked_state = None if args.parked_state == "none" else _as_parked_state(args.parked_state)
     pr_url: str | _UnsetType = UNSET if args.pr_url is None else args.pr_url
     last_error: str | _UnsetType = UNSET if args.last_error is None else args.last_error
-    return StatusUpdate(phase=phase, parked_state=parked_state, pr_url=pr_url, last_error=last_error)
+    return StatusUpdate(
+        phase=phase, parked_state=parked_state, pr_url=pr_url, last_error=last_error
+    )
 
 
 def _is_noop(changes: StatusUpdate) -> bool:
