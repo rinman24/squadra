@@ -1,7 +1,7 @@
 """Unit tests for the tick's lazy claude-auth preflight (Task #98).
 
 A tick with pending claude-dependent work (finalize or claim) probes ``claude``
-auth first; a failed probe degrades the tick to reap-only (az + git) so no
+auth first; a failed probe degrades the tick to reap-only (board + git) so no
 board state is mutated by passes that would need a live claude. Idle and
 saturated ticks never probe.
 """
@@ -14,10 +14,11 @@ from typing import Final
 
 import pytest
 
+from flotilla.config import FlotillaConfig
 from flotilla.constants import FLEET_MODEL
+from flotilla.domain import Lifecycle, Reaped
 from flotilla.status import FleetStatus, write
 from flotilla.supervisor import (
-    SupervisorConfig,
     TickSeams,
     _claude_auth_ok,  # pyright: ignore[reportPrivateUsage]
     run_tick,
@@ -25,7 +26,7 @@ from flotilla.supervisor import (
 from tests.helpers.fleet_fakes import FakeBoard, FakeCleaner, FakeIssue, FakeLauncher
 
 # fleet_root, make_status, fake_board, make_issue, fake_launcher, fake_cleaner,
-# make_seams, make_supervisor_config are provided by tests/conftest.py
+# make_seams, make_config are provided by tests/conftest.py
 
 _ANCIENT: str = "2020-01-01T00:00:00+00:00"  # stale for any real clock (run_tick uses now())
 _MUTATING_CALLS: Final = ("set_state", "add_tag", "remove_tag", "add_comment")
@@ -53,7 +54,7 @@ def _fresh_heartbeat() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def _mutations(board: FakeBoard) -> list[tuple[str, int, str]]:
+def _mutations(board: FakeBoard) -> list[tuple[str, int, object]]:
     return [call for call in board.calls if call[0] in _MUTATING_CALLS]
 
 
@@ -169,24 +170,24 @@ def test_dead_auth_tick_mutates_no_board_state_when_nothing_is_reapable(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_supervisor_config: Callable[..., SupervisorConfig],
+    make_config: Callable[..., FlotillaConfig],
     make_probe: Callable[[bool], _RecordingProbe],
 ) -> None:
-    # Pending finalize work (Done + claimed + merged PR) AND pending claim work
-    # (budget 1, untagged To Do candidate); the only Doing slice is fresh.
-    make_issue(40, title="feat: merged", state="Done", tags=["fleet:claimed"])
+    # Pending finalize work (done + claimed + merged PR) AND pending claim work
+    # (budget 1, untagged queued candidate); the only active slice is fresh.
+    make_issue(40, title="feat: merged", state=Lifecycle.DONE, tags=["fleet:claimed"])
     fake_board.completed_prs["feat/slice-40-merged"] = "https://pr/40"
-    make_issue(41, title="feat: example", state="Doing", tags=["fleet:claimed"])
+    make_issue(41, title="feat: example", state=Lifecycle.ACTIVE, tags=["fleet:claimed"])
     write(make_status(phase="tdd", last_heartbeat=_fresh_heartbeat()), fleet_root)
     make_issue(50, title="feat: fresh slice")
     probe: _RecordingProbe = make_probe(False)
     seams: TickSeams = make_seams(pid_alive=_never_alive, auth_ok=probe)
-    assert run_tick(seams, make_supervisor_config()) == 0
+    assert run_tick(seams, make_config()) == 0
     assert probe.calls == 1
     assert _mutations(fake_board) == []
     assert fake_launcher.launches == []
     assert fake_cleaner.cleaned == []
-    assert ("issues_in_state", 0, "Doing") in fake_board.calls  # reap still ran
+    assert ("items_in_state", 0, Lifecycle.ACTIVE) in fake_board.calls  # reap still ran
 
 
 def test_dead_auth_tick_still_reaps_a_dead_runner(
@@ -198,12 +199,12 @@ def test_dead_auth_tick_still_reaps_a_dead_runner(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_supervisor_config: Callable[..., SupervisorConfig],
+    make_config: Callable[..., FlotillaConfig],
     make_probe: Callable[[bool], _RecordingProbe],
 ) -> None:
-    make_issue(40, title="feat: merged", state="Done", tags=["fleet:claimed"])
+    make_issue(40, title="feat: merged", state=Lifecycle.DONE, tags=["fleet:claimed"])
     fake_board.completed_prs["feat/slice-40-merged"] = "https://pr/40"
-    make_issue(41, title="feat: example", state="Doing", tags=["fleet:claimed"])
+    make_issue(41, title="feat: example", state=Lifecycle.ACTIVE, tags=["fleet:claimed"])
     write(
         make_status(phase="tdd", last_heartbeat=_ANCIENT, worktree=str(tmp_path / "gone")),
         fleet_root,
@@ -211,26 +212,26 @@ def test_dead_auth_tick_still_reaps_a_dead_runner(
     make_issue(50, title="feat: fresh slice")
     probe: _RecordingProbe = make_probe(False)
     seams: TickSeams = make_seams(pid_alive=_never_alive, run_git=_noop_git, auth_ok=probe)
-    assert run_tick(seams, make_supervisor_config()) == 0
-    # Reap (az + git only) still requeued the dead runner...
-    assert fake_board.issue_state(41) == "To Do"
+    assert run_tick(seams, make_config()) == 0
+    # Reap (board + git only) still requeued the dead runner...
+    assert fake_board.item_state(41) == Lifecycle.QUEUED
     assert "fleet:claimed" not in fake_board.issues[41].tags
-    assert any("reaped" in comment for comment in fake_board.comments[41])
+    assert any(isinstance(event, Reaped) for event in fake_board.comments[41])
     # ...while the claude-dependent passes were skipped untouched.
     assert fake_cleaner.cleaned == []
     assert fake_launcher.launches == []
-    assert fake_board.issue_state(40) == "Done"
+    assert fake_board.item_state(40) == Lifecycle.DONE
     assert "fleet:claimed" in fake_board.issues[40].tags
 
 
 def test_idle_tick_never_invokes_the_probe(
     make_seams: Callable[..., TickSeams],
-    make_supervisor_config: Callable[..., SupervisorConfig],
+    make_config: Callable[..., FlotillaConfig],
     make_probe: Callable[[bool], _RecordingProbe],
 ) -> None:
     probe: _RecordingProbe = make_probe(False)
     seams: TickSeams = make_seams(auth_ok=probe)
-    assert run_tick(seams, make_supervisor_config()) == 0
+    assert run_tick(seams, make_config()) == 0
     assert probe.calls == 0
 
 
@@ -239,14 +240,14 @@ def test_saturated_tick_never_invokes_the_probe(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_supervisor_config: Callable[..., SupervisorConfig],
+    make_config: Callable[..., FlotillaConfig],
     make_probe: Callable[[bool], _RecordingProbe],
 ) -> None:
     # Cap 2, two fresh claimed runners in flight: zero claim budget, nothing
-    # to finalize — a To Do candidate alone must not trigger the probe.
-    make_issue(41, state="Doing", tags=["fleet:claimed"])
+    # to finalize — a queued candidate alone must not trigger the probe.
+    make_issue(41, state=Lifecycle.ACTIVE, tags=["fleet:claimed"])
     write(make_status(last_heartbeat=_fresh_heartbeat()), fleet_root)
-    make_issue(42, state="Doing", tags=["fleet:claimed"])
+    make_issue(42, state=Lifecycle.ACTIVE, tags=["fleet:claimed"])
     write(
         make_status(issue_id=42, runner_id="runner-42-a1", last_heartbeat=_fresh_heartbeat()),
         fleet_root,
@@ -254,7 +255,7 @@ def test_saturated_tick_never_invokes_the_probe(
     make_issue(50, title="feat: fresh slice")
     probe: _RecordingProbe = make_probe(False)
     seams: TickSeams = make_seams(pid_alive=_never_alive, auth_ok=probe)
-    assert run_tick(seams, make_supervisor_config()) == 0
+    assert run_tick(seams, make_config()) == 0
     assert probe.calls == 0
 
 
@@ -267,14 +268,14 @@ def test_passing_probe_runs_finalize_then_reap_then_claim_unchanged(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_supervisor_config: Callable[..., SupervisorConfig],
+    make_config: Callable[..., FlotillaConfig],
     make_probe: Callable[[bool], _RecordingProbe],
 ) -> None:
     # Mirrors the existing ordering test: with the probe passing, the tick
     # finalizes the merged slice, reaps the dead one, then claims both.
-    make_issue(40, title="feat: merged", state="Done", tags=["fleet:claimed"])
+    make_issue(40, title="feat: merged", state=Lifecycle.DONE, tags=["fleet:claimed"])
     fake_board.completed_prs["feat/slice-40-merged"] = "https://pr/40"
-    make_issue(41, title="feat: example", state="Doing", tags=["fleet:claimed"])
+    make_issue(41, title="feat: example", state=Lifecycle.ACTIVE, tags=["fleet:claimed"])
     write(
         make_status(phase="tdd", last_heartbeat=_ANCIENT, worktree=str(tmp_path / "gone")),
         fleet_root,
@@ -282,7 +283,7 @@ def test_passing_probe_runs_finalize_then_reap_then_claim_unchanged(
     make_issue(50, title="feat: fresh slice")
     probe: _RecordingProbe = make_probe(True)
     seams: TickSeams = make_seams(pid_alive=_never_alive, run_git=_noop_git, auth_ok=probe)
-    assert run_tick(seams, make_supervisor_config()) == 0
+    assert run_tick(seams, make_config()) == 0
     assert probe.calls == 1
     assert fake_cleaner.cleaned == ["feat/slice-40-merged"]
     assert fake_launcher.launches == [
@@ -295,12 +296,12 @@ def test_dead_auth_emits_one_log_line_naming_the_skipped_passes(
     capsys: pytest.CaptureFixture[str],
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_supervisor_config: Callable[..., SupervisorConfig],
+    make_config: Callable[..., FlotillaConfig],
     make_probe: Callable[[bool], _RecordingProbe],
 ) -> None:
     make_issue(50, title="feat: fresh slice")  # pending claim work
     seams: TickSeams = make_seams(auth_ok=make_probe(False))
-    assert run_tick(seams, make_supervisor_config()) == 0
+    assert run_tick(seams, make_config()) == 0
     out: str = capsys.readouterr().out
     auth_lines: list[str] = [line for line in out.splitlines() if "auth-unavailable" in line]
     assert len(auth_lines) == 1

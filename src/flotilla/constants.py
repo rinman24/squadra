@@ -89,15 +89,32 @@ MAX_ATTEMPTS: int = _int_from_env("FLEET_MAX_ATTEMPTS", 3)
 FLEET_MODEL: str = _str_from_env("FLEET_MODEL", "claude-opus-4-8")
 FLEET_EFFORT: str = _str_from_env("FLEET_EFFORT", "high")
 
-# ADO tag vocabulary. System.State arbitrates claims; fleet:claimed
-# distinguishes a fleet-claimed Issue from a human's manual move to Doing.
-# Parked sub-states are tags because the Basic process has only three states
-# (addendum preamble, §2).
-TAG_CLAIMED: str = "fleet:claimed"
-TAG_FAILED: str = "fleet:failed"
-TAG_NEEDS_DECISION: str = "fleet:needs-decision"
-TAG_QA_READY: str = "fleet:qa-ready"
-TAG_AWAITING_PR_APPROVAL: str = "fleet:awaiting-pr-approval"
+# Board tag vocabulary. Tags carry a configurable namespace PREFIX (default
+# below; override via flotilla.toml ``[board].tag_prefix`` / ``FLEET_TAG_PREFIX``).
+# The five SUFFIXES are fixed canonical vocabulary across every provider, and
+# detection stays prefix-based (``startswith``). System.State arbitrates claims;
+# the ``claimed`` suffix distinguishes a fleet-claimed item from a human's manual
+# move to the active column. Parked sub-states are tags because ADO's Basic
+# process has only three states (addendum preamble, §2). The fully-qualified
+# tags are assembled by :class:`flotilla.domain.Tags`.
+DEFAULT_TAG_PREFIX: str = "fleet:"
+
+TAG_SUFFIX_CLAIMED: str = "claimed"
+TAG_SUFFIX_FAILED: str = "failed"
+TAG_SUFFIX_NEEDS_DECISION: str = "needs-decision"
+TAG_SUFFIX_QA_READY: str = "qa-ready"
+TAG_SUFFIX_AWAITING_PR_APPROVAL: str = "awaiting-pr-approval"
+
+# Suffixes whose presence marks a *deliberate* park (the slice is never reaped).
+# ``failed`` is included: a tagged ``<prefix>failed`` item is already escalated
+# and terminal (never auto-retried). An untagged ``parked_state="failed"``
+# status, by contrast, is positive failure evidence and reap-eligible.
+PARKED_TAG_SUFFIXES: tuple[str, ...] = (
+    TAG_SUFFIX_NEEDS_DECISION,
+    TAG_SUFFIX_QA_READY,
+    TAG_SUFFIX_AWAITING_PR_APPROVAL,
+    TAG_SUFFIX_FAILED,
+)
 
 # Overlapping supervisor ticks serialize on this lock (addendum §2).
 SUPERVISOR_LOCK_FILENAME: str = "supervisor.lock"

@@ -1,7 +1,7 @@
 # ADR-0001 — Provider-agnostic `BoardAccess` seam (configure-not-customize)
 
-- Status: **Proposed (draft)** — resolved via `/grill-me` 2026-06-12; finalized by the
-  implementation PR (PR2 below).
+- Status: **Accepted** — resolved via `/grill-me` 2026-06-12; implemented by PR2
+  (the seam + ADO adapter + layered config + unified CLI + contract-test suite).
 - Date: 2026-06-12
 - Context origin: the fleet's original design.
 - Detail: [docs/design/board-provider-seam.md](../design/board-provider-seam.md).

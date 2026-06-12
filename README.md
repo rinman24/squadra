@@ -33,13 +33,51 @@ uv sync                      # create .venv, install flotilla + dev tools
 uv pip install -e /path/to/flotilla
 ```
 
-Three console scripts are installed:
+A single unified `flotilla` CLI is installed (the API / composition root):
 
 | Command | Role |
 |---|---|
-| `flotilla {start\|stop\|status\|tick\|log}` | the hands-on ticker control (the `fleetctl` dispatcher) |
-| `flotilla-supervisor` | one supervisor tick (`python -m flotilla.supervisor`) |
-| `flotilla-status` | the per-slice status-file CLI (`python -m flotilla.status`) |
+| `flotilla init [--provider P] [--check]` | scaffold an annotated `flotilla.toml`; `--check` validates it against the live board |
+| `flotilla tick [--dry-run]` | run one supervisor tick in-process |
+| `flotilla {start\|stop\|status\|log}` | hands-on ticker control (shells to the packaged `fleetctl.sh`) |
+| `flotilla slice {init\|update\|heartbeat\|show}` | the per-slice status-file ops (used by the runner wrapper) |
+
+`python -m flotilla.supervisor` (one tick) and `python -m flotilla.status` (the
+status-file CLI) remain as internal module entry points. The `flotilla-status`
+console script is kept as a **deprecated alias** for `flotilla slice` until the
+coupled app PR migrates off it.
+
+## Configuration (`flotilla.toml`)
+
+flotilla is provider-agnostic and configured by a layered scheme —
+`defaults < flotilla.toml < FLEET_* env < CLI flag`. Only the un-defaultable is
+required: the board `provider` (defaults to `ado`) and `[board.states]` (inferred
+for ADO-Basic's `To Do/Doing/Done`, required otherwise). `flotilla init`
+scaffolds a complete annotated file:
+
+```toml
+[board]
+provider         = "ado"          # ado (more adapters tracked as follow-ups)
+base_branch      = "main"
+tag_prefix       = "fleet:"       # the namespace prefix for fleet-owned tags/labels
+parent_scope_ids = []             # optional parent-link claim filter (empty = whole project)
+
+[board.states]                    # required unless provider is ADO-Basic; many-native→one allowed
+queued = ["To Do"]
+active = ["Doing"]
+done   = ["Done"]
+
+[pipeline]
+branch_template = "feat/slice-{id}-{slug}"   # flotilla owns the -a{attempt} retry suffix
+runner_skill    = "/afk-slice-runner"
+cleanup_skill   = "/cleanup-merged-branches"
+```
+
+Misconfiguration fails loud: `validate_config()` resolves the configured state
+names against the live board at `flotilla init --check` and at each tick's
+startup. Core (supervisor + engines) is provider-blind — it speaks a neutral
+`Lifecycle` (QUEUED/ACTIVE/DONE) and emits structured comment events that the
+chosen adapter maps to native states and renders to native markup.
 
 ## Status file + heartbeat convention
 
@@ -84,20 +122,21 @@ never see partial JSON; interleaved writers never lose fields.
 Shell callers (the runner wrapper, skills) use the status CLI:
 
 ```bash
-flotilla-status init \
+flotilla slice init \
   --issue-id 41 --runner-id runner-41-a1 \
   --branch feat/slice-41-example --worktree "$FLEET_HOME/.claude/worktrees/feat+slice-41-example"
 
-flotilla-status update --issue-id 41 --phase tdd
-flotilla-status update --issue-id 41 \
+flotilla slice update --issue-id 41 --phase tdd
+flotilla slice update --issue-id 41 \
   --phase parked --parked-state awaiting-pr-approval --pr-url <url>
-flotilla-status update --issue-id 41 --phase tdd --parked-state none
-flotilla-status heartbeat --issue-id 41
-flotilla-status show --issue-id 41
+flotilla slice update --issue-id 41 --phase tdd --parked-state none
+flotilla slice heartbeat --issue-id 41
+flotilla slice show --issue-id 41
 ```
 
 `--fleet-root` overrides the location (used by tests; defaults to
-`$FLEET_HOME/.claude/fleet`). `python -m flotilla.status …` is equivalent.
+`$FLEET_HOME/.claude/fleet`). `python -m flotilla.status …` is equivalent, as is
+the deprecated `flotilla-status …` alias.
 
 ## Constants
 
@@ -222,7 +261,7 @@ to `.claude/fleet/<issue-id>/archive/attempt-N/`, records the reap, drops
 attempt+1, and exhausted retries escalate to `fleet:failed` instead.
 
 **Dry run** — `flotilla tick --dry-run` (or `FLEET_DRY_RUN=1`, or
-`flotilla-supervisor --dry-run`) runs the same three passes' read+plan logic
+`python -m flotilla.supervisor --dry-run`) runs the same three passes' read+plan logic
 and reports the would-be actions, with every side effect suppressed at the
 `TickSeams` boundary (`dry_run_seams`): board writes become logged
 `[dry-run] WOULD …` no-ops, no runner pane launches, no `claude` is spawned
@@ -232,9 +271,10 @@ flag inside the passes, so a future pass cannot forget to honor it. Only the
 tick lock and the supervisor log are still written — coordination artifacts,
 not fleet state.
 
-Scoping: `FLEET_EPIC_IDS` (comma-separated Epic ids, optional) restricts claiming
-to slices under those Epics. Empty (the default) means every unblocked `To Do`
-Issue in the project is eligible.
+Scoping: `[board].parent_scope_ids` in `flotilla.toml` (or the legacy
+`FLEET_EPIC_IDS` env override, comma-separated) restricts claiming to slices
+under those parents. Empty (the default) means every unblocked queued item in the
+project is eligible.
 
 ## Activation (manual, opt-in)
 
