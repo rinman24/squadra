@@ -62,7 +62,7 @@ import sys
 from typing import Final, Protocol
 
 from flotilla._resources import resolve_script
-from flotilla.board import BoardAccess, BoardValidationError, build_board
+from flotilla.board import BoardAccess, BoardValidationError, TagWriteError, build_board
 from flotilla.config import (
     DEFAULT_CLEANUP_SKILL,
     DEFAULT_QA_SKILL,
@@ -842,6 +842,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_tick(seams, config)
     except BoardValidationError as exc:
         print(f"supervisor: board configuration invalid: {exc}", file=sys.stderr)
+        return 1
+    except TagWriteError as exc:
+        print(f"supervisor: tag write failed verification: {exc}", file=sys.stderr)
         return 1
     except subprocess.CalledProcessError as exc:
         stderr: str = exc.stderr if isinstance(exc.stderr, str) else ""
