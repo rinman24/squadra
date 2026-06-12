@@ -5,12 +5,13 @@ into one surface (ADR-0001 decision 3), superseding ADR-0007's thin
 ``fleetctl.sh``-execing shim and the separate ``flotilla-supervisor`` /
 ``flotilla-status`` console scripts:
 
-- ``flotilla init`` — scaffold an annotated ``flotilla.toml`` and optionally
-  validate it against the live board (``--check``).
+- ``flotilla init`` — scaffold an annotated ``flotilla.toml`` plus the
+  consumer-owned runner/cleanup skill templates (via :mod:`flotilla.scaffold`),
+  and optionally validate the config against the live board (``--check``).
 - ``flotilla tick`` — run one supervisor tick in-process (no shell). The
-  supervisor is imported lazily inside the handler so importing this module
-  (e.g. for ``flotilla init`` / ``flotilla slice``) never drags the supervisor
-  in — important while that module is mid-migration.
+  supervisor (and, transitively, the board adapter) is imported lazily inside
+  the handler so importing this module for ``flotilla init`` / ``flotilla slice``
+  stays lean and free of the heavyweight tick dependencies.
 - ``flotilla start | stop | status | log`` — tmux ticker control; these shell to
   the packaged ``fleetctl.sh`` resolved from the installed package data, with
   ``FLEET_PYTHON`` defaulted to this interpreter so each tick / runner reaches
@@ -27,24 +28,10 @@ from collections.abc import Sequence
 import os
 from pathlib import Path
 import sys
-from textwrap import dedent
 
-from flotilla import status
+from flotilla import scaffold, status
 from flotilla._resources import resolve_script
-from flotilla.config import (
-    CONFIG_FILENAME,
-    DEFAULT_BASE_BRANCH,
-    DEFAULT_BRANCH_TEMPLATE,
-    DEFAULT_CLEANUP_SKILL,
-    DEFAULT_PROVIDER,
-    DEFAULT_QA_SKILL,
-    DEFAULT_RUNNER_SKILL,
-    DEFAULT_TAG_PREFIX,
-    DEFAULT_TDD_SKILL,
-    DEFAULT_WORKTREE_DIR,
-    ConfigError,
-    load_config,
-)
+from flotilla.config import DEFAULT_PROVIDER, ConfigError, load_config
 
 _FLEETCTL_SUBCOMMANDS: tuple[str, ...] = ("start", "stop", "status", "log")
 _SLICE_SUBCOMMANDS: tuple[str, ...] = ("init", "update", "heartbeat", "show")
@@ -104,7 +91,9 @@ def _build_parser() -> tuple[argparse.ArgumentParser, frozenset[str]]:
     )
     subparsers = parser.add_subparsers(dest="command")
 
-    init_parser = subparsers.add_parser("init", help="scaffold an annotated flotilla.toml")
+    init_parser = subparsers.add_parser(
+        "init", help="scaffold flotilla.toml + the runner/cleanup skill templates"
+    )
     init_parser.add_argument(
         "--provider",
         default=DEFAULT_PROVIDER,
@@ -117,7 +106,7 @@ def _build_parser() -> tuple[argparse.ArgumentParser, frozenset[str]]:
         help="repo flotilla operates on; flotilla.toml is written here (default: cwd)",
     )
     init_parser.add_argument(
-        "--force", action="store_true", help="overwrite an existing flotilla.toml"
+        "--force", action="store_true", help="overwrite existing files instead of skipping them"
     )
     init_parser.add_argument(
         "--check",
@@ -134,7 +123,12 @@ def _build_parser() -> tuple[argparse.ArgumentParser, frozenset[str]]:
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
-    """Scaffold ``flotilla.toml`` and, with ``--check``, validate it.
+    """Scaffold ``flotilla.toml`` + skill templates and, with ``--check``, validate.
+
+    Delegates the scaffolding to :func:`flotilla.scaffold.init_project` (the
+    additive module that owns the annotated ``flotilla.toml`` + the consumer-owned
+    runner/cleanup skill templates). Existing files are skipped (re-runnable),
+    not an error, unless ``--force`` overwrites them.
 
     Parameters
     ----------
@@ -145,28 +139,22 @@ def _cmd_init(args: argparse.Namespace) -> int:
     Returns
     -------
     int
-        ``0`` on success; non-zero on a refused overwrite or a failed check.
+        ``0`` on success; non-zero only on a failed ``--check``.
     """
     provider: str = args.provider
     fleet_home: Path = args.fleet_home if args.fleet_home is not None else Path.cwd()
-    target: Path = fleet_home / CONFIG_FILENAME
 
-    if target.exists() and not args.force:
-        print(
-            f"flotilla: {target} already exists; pass --force to overwrite",
-            file=sys.stderr,
-        )
-        return 1
-
-    if not target.exists() or args.force:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(_scaffold_toml(provider), encoding="utf-8")
-        print(f"flotilla: wrote {target}")
-        print(
-            "next steps: review the scaffolded flotilla.toml (set provider / "
-            "[board.states] / parent_scope_ids), then run `flotilla init --check` "
-            "to validate it against your board, and `flotilla start` to run the ticker."
-        )
+    results: dict[str, bool] = scaffold.init_project(
+        fleet_home, provider=provider, force=args.force
+    )
+    for name, written in results.items():
+        status_word: str = "wrote" if written else "skipped (exists; use --force)"
+        print(f"flotilla: {status_word} {fleet_home / name}")
+    print(
+        "next steps: review flotilla.toml + the scaffolded skill templates (set "
+        "provider / [board.states] / parent_scope_ids), then run `flotilla init "
+        "--check` to validate against your board and `flotilla start` to run the ticker."
+    )
 
     if args.check:
         return _check_config(fleet_home, provider)
@@ -193,8 +181,9 @@ def _check_config(fleet_home: Path, provider: str) -> int:
 def _cmd_tick(extra: Sequence[str]) -> int:
     """Run one supervisor tick in-process, forwarding ``extra`` to the supervisor.
 
-    The supervisor is imported lazily here (never at module load) because it is
-    under active migration; importing :mod:`flotilla.cli` must not pull it in.
+    The supervisor is imported lazily here (never at module load) so importing
+    :mod:`flotilla.cli` for ``init``/``slice`` stays free of the tick's board
+    adapter + tmux dependencies.
     """
     from flotilla import supervisor  # noqa: PLC0415
 
@@ -233,40 +222,6 @@ def _cmd_slice(args: argparse.Namespace, extra: Sequence[str]) -> int:
         )
         return 2
     return status.main(list(extra))
-
-
-def _scaffold_toml(provider: str) -> str:
-    """Render an annotated ``flotilla.toml`` with every key at its default.
-
-    The ``[board.states]`` table is shown commented out: ADO-Basic infers its
-    states, and any other provider must declare them (mirrors the design note's
-    Configuration section).
-    """
-    return dedent(
-        f"""\
-        # flotilla.toml — fleet configuration (defaults < flotilla.toml < FLEET_* env < CLI flag).
-        # Generated by `flotilla init`; every key below is shown at its default value.
-
-        [board]
-        provider         = "{provider}"   # ado | github | gitlab (required)
-        base_branch      = "{DEFAULT_BASE_BRANCH}"   # PR target branch
-        tag_prefix       = "{DEFAULT_TAG_PREFIX}"   # fleet tag namespace prefix
-        parent_scope_ids = []   # optional; empty = whole project (was FLEET_EPIC_IDS)
-
-        # [board.states]   # required unless provider is ADO-Basic; many native names -> one bucket
-        # queued = ["To Do"]
-        # active = ["Doing"]
-        # done   = ["Done"]
-
-        [pipeline]
-        branch_template = "{DEFAULT_BRANCH_TEMPLATE}"   # flotilla owns the -a{{attempt}} retry suffix
-        worktree_dir    = "{DEFAULT_WORKTREE_DIR}"   # per-slice worktrees, relative to FLEET_HOME
-        runner_skill    = "{DEFAULT_RUNNER_SKILL}"   # slice runner skill name
-        tdd_skill       = "{DEFAULT_TDD_SKILL}"   # TDD gate skill name
-        qa_skill        = "{DEFAULT_QA_SKILL}"   # QA gate skill name
-        cleanup_skill   = "{DEFAULT_CLEANUP_SKILL}"   # merged-branch cleanup skill name
-        """
-    )
 
 
 if __name__ == "__main__":
