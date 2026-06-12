@@ -1,8 +1,8 @@
 """Regression tests for the dry-run tick: it physically cannot mutate.
 
 The 2026-06-11 incident this guards against: a ``FLEET_MAX_RUNNERS=0`` tick
-billed as a "read-only smoke" finalized two already-Done Issues, because the
-cap only zeroes the *claim* budget — finalize and reap still mutate ADO. The
+billed as a "read-only smoke" finalized two already-done items, because the cap
+only zeroes the *claim* budget — finalize and reap still mutate the board. The
 fix is a boundary, not a flag: ``dry_run_seams`` wraps every side-effecting
 seam, so a dry-run tick with finalize-, reap- AND claim-eligible work performs
 zero writes anywhere while still reporting every would-be action. Any future
@@ -16,14 +16,15 @@ from pathlib import Path
 import pytest
 
 from flotilla import supervisor
+from flotilla.board import AzCliAdo
+from flotilla.config import FlotillaConfig
+from flotilla.domain import Lifecycle
 from flotilla.status import FleetStatus, load, write
 from flotilla.supervisor import (
-    AzCliAdo,
     ClaudeCleanup,
     DryRunCleaner,
     DryRunLauncher,
-    ReadOnlyAdoClient,
-    SupervisorConfig,
+    ReadOnlyBoard,
     TickSeams,
     TmuxLauncher,
     build_seams,
@@ -33,7 +34,7 @@ from flotilla.supervisor import (
 from tests.helpers.fleet_fakes import FakeBoard, FakeCleaner, FakeIssue, FakeLauncher
 
 # fleet_root, make_status, fake_board, make_issue, fake_launcher, fake_cleaner,
-# make_seams, make_supervisor_config are provided by tests/conftest.py
+# make_seams, make_config are provided by tests/conftest.py
 
 _ANCIENT: str = "2020-01-01T00:00:00+00:00"  # stale for any real clock (run_tick uses now())
 
@@ -53,27 +54,27 @@ def test_dry_run_tick_mutates_nothing_and_reports_every_would_be_action(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_supervisor_config: Callable[..., SupervisorConfig],
+    make_config: Callable[..., FlotillaConfig],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # Seed work for all three passes:
-    # #40 finalize-eligible (Done + fleet:claimed + completed PR),
-    make_issue(40, title="feat: merged", state="Done", tags=["fleet:claimed"])
+    # #40 finalize-eligible (done + fleet:claimed + completed PR),
+    make_issue(40, title="feat: merged", state=Lifecycle.DONE, tags=["fleet:claimed"])
     fake_board.completed_prs["feat/slice-40-merged"] = "https://pr/40"
-    # #41 reap-eligible (Doing + fleet:claimed, ancient heartbeat, dead pid,
+    # #41 reap-eligible (active + fleet:claimed, ancient heartbeat, dead pid,
     # a real worktree directory tempting the archiver),
-    make_issue(41, title="feat: example", state="Doing", tags=["fleet:claimed"])
+    make_issue(41, title="feat: example", state=Lifecycle.ACTIVE, tags=["fleet:claimed"])
     worktree: Path = tmp_path / "worktrees" / "feat+slice-41-example"
     worktree.mkdir(parents=True)
     (worktree / "scratch.txt").write_text("evidence")
     write(make_status(phase="tdd", last_heartbeat=_ANCIENT, worktree=str(worktree)), fleet_root)
-    # #50 claim-eligible (To Do, untagged, unblocked).
+    # #50 claim-eligible (queued, untagged, unblocked).
     make_issue(50, title="feat: fresh slice")
     issues_before = copy.deepcopy(fake_board.issues)
     status_before: FleetStatus = load(41, fleet_root)
 
     seams: TickSeams = dry_run_seams(make_seams(pid_alive=_never_alive))
-    assert run_tick(seams, make_supervisor_config()) == 0
+    assert run_tick(seams, make_config()) == 0
 
     # Zero board mutations: no state change, no tag add/remove, no comment.
     assert [call for call in fake_board.calls if call[0] in _MUTATING_CALLS] == []
@@ -89,17 +90,17 @@ def test_dry_run_tick_mutates_nothing_and_reports_every_would_be_action(
 
     # The would-be actions are still planned and reported.
     out: str = capsys.readouterr().out
-    assert "WOULD run /cleanup-merged-branches for feat/slice-40-merged" in out
+    assert "WOULD run the cleanup skill for feat/slice-40-merged" in out
     assert "WOULD remove tag 'fleet:claimed' from #40" in out
     assert "WOULD comment on #40" in out
     assert "finalize pass: finalized=[40]" in out
     assert "WOULD archive worktree" in out
-    assert "WOULD move #41 to 'To Do'" in out
+    assert "WOULD move #41 to queued" in out
     assert "reap pass: reaped=[41]" in out
-    assert "WOULD move #50 to 'Doing'" in out
+    assert "WOULD move #50 to active" in out
     assert "WOULD add tag 'fleet:claimed' to #50" in out
     assert "WOULD launch runner for #50" in out
-    # The unmutated board still shows #41 in Doing, so the dry-run claim plan
+    # The unmutated board still shows #41 active, so the dry-run claim plan
     # counts it inflight (cap 2 -> budget 1): #50 is the one claim reported.
     assert "claim pass: inflight=[41] claimed=[50]" in out
 
@@ -108,35 +109,35 @@ def test_dry_run_tick_skips_the_auth_probe_but_still_runs_all_passes(
     fake_board: FakeBoard,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_supervisor_config: Callable[..., SupervisorConfig],
+    make_config: Callable[..., FlotillaConfig],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # Claude-dependent work pending (a claimable To Do Issue) normally
-    # triggers the auth preflight; in dry-run even the probe is a side effect
-    # (a spawned `claude -p`), so it must be skipped-and-logged instead.
+    # Claude-dependent work pending (a claimable queued item) normally triggers
+    # the auth preflight; in dry-run even the probe is a side effect (a spawned
+    # `claude -p`), so it must be skipped-and-logged instead.
     make_issue(50, title="feat: fresh slice")
 
     def _probe_must_not_run() -> bool:
         raise AssertionError("dry-run must never invoke the real auth probe")
 
     seams: TickSeams = dry_run_seams(make_seams(auth_ok=_probe_must_not_run))
-    assert run_tick(seams, make_supervisor_config()) == 0
+    assert run_tick(seams, make_config()) == 0
     out: str = capsys.readouterr().out
     assert "WOULD run the claude auth preflight" in out
     assert "claim pass: inflight=[] claimed=[50]" in out
 
 
 def test_build_seams_wraps_every_side_effecting_seam_in_dry_run(
-    make_supervisor_config: Callable[..., SupervisorConfig],
+    make_config: Callable[..., FlotillaConfig],
 ) -> None:
-    config: SupervisorConfig = make_supervisor_config()
+    config: FlotillaConfig = make_config()
     real: TickSeams = build_seams(config)
     assert isinstance(real.ado, AzCliAdo)
     assert isinstance(real.launcher, TmuxLauncher)
     assert isinstance(real.cleaner, ClaudeCleanup)
 
     dry: TickSeams = build_seams(config, dry_run=True)
-    assert isinstance(dry.ado, ReadOnlyAdoClient)
+    assert isinstance(dry.ado, ReadOnlyBoard)
     assert isinstance(dry.launcher, DryRunLauncher)
     assert isinstance(dry.cleaner, DryRunCleaner)
     # The wrapped collaborators must differ from the production defaults for
@@ -149,17 +150,17 @@ def test_build_seams_wraps_every_side_effecting_seam_in_dry_run(
     assert dry.pid_alive is real.pid_alive
 
 
-def test_read_only_ado_client_passes_reads_through(
+def test_read_only_board_passes_reads_through(
     fake_board: FakeBoard,
     make_issue: Callable[..., FakeIssue],
 ) -> None:
-    make_issue(40, title="feat: merged", state="Done", tags=["fleet:claimed"])
+    make_issue(40, title="feat: merged", state=Lifecycle.DONE, tags=["fleet:claimed"])
     fake_board.completed_prs["feat/slice-40-merged"] = "https://pr/40"
-    client = ReadOnlyAdoClient(fake_board)
-    assert [ref.issue_id for ref in client.issues_in_state("Done")] == [40]
-    assert client.issue_state(40) == "Done"
+    client = ReadOnlyBoard(fake_board)
+    assert [ref.item_id for ref in client.items_in_state(Lifecycle.DONE)] == [40]
+    assert client.item_state(40) == Lifecycle.DONE
     assert client.completed_pr_url("feat/slice-40-merged") == "https://pr/40"
-    assert client.issue_links(40).parent_id is None
+    assert client.item_links(40).parent_id is None
 
 
 def test_main_engages_dry_run_from_the_flag_and_the_env(
@@ -168,7 +169,7 @@ def test_main_engages_dry_run_from_the_flag_and_the_env(
 ) -> None:
     seen: list[bool] = []
 
-    def _spy_build_seams(config: SupervisorConfig, *, dry_run: bool = False) -> TickSeams:
+    def _spy_build_seams(config: FlotillaConfig, *, dry_run: bool = False) -> TickSeams:
         seen.append(dry_run)
         raise SystemExit(0)  # never reach the real tick
 
