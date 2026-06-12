@@ -54,7 +54,10 @@ def test_issues_in_state_queries_via_rest_and_parses_tags() -> None:
     batch_resp: str = json.dumps(
         {
             "value": [
-                {"id": 69, "fields": {"System.Title": "feat: status", "System.Tags": "fleet:claimed; x"}},
+                {
+                    "id": 69,
+                    "fields": {"System.Title": "feat: status", "System.Tags": "fleet:claimed; x"},
+                },
                 {"id": 70, "fields": {"System.Title": "feat: runner"}},
             ]
         }
@@ -159,9 +162,7 @@ def test_launcher_injects_an_explicit_heartbeat_interval_into_the_pane_env(
     fleet_root: Path,
 ) -> None:
     runner = _RecordingTmuxRunner({"has-session": 1})
-    launcher = TmuxLauncher(
-        Path("/repo"), fleet_root, runner, heartbeat_interval_seconds=7
-    )
+    launcher = TmuxLauncher(Path("/repo"), fleet_root, runner, heartbeat_interval_seconds=7)
     assert launcher.launch(46, "feat/slice-46-u", 1) is True
     command: str = runner.calls[-1][-1]
     assert "FLEET_HEARTBEAT_INTERVAL_SECONDS=7 " in command

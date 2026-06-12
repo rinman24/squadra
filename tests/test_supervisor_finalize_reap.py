@@ -50,6 +50,7 @@ def test_finalize_retires_a_merged_done_slice(
     fake_cleaner: FakeCleaner,
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
+    make_seams: Callable[..., TickSeams],
     make_supervisor_config: Callable[..., SupervisorConfig],
 ) -> None:
     make_issue(
@@ -57,9 +58,7 @@ def test_finalize_retires_a_merged_done_slice(
     )
     write(make_status(phase="parked", parked_state="awaiting-pr-approval"), fleet_root)
     fake_board.completed_prs["feat/slice-41-example"] = "https://pr/41"
-    outcome: FinalizeOutcome = finalize_pass(
-        fake_board, fake_cleaner, make_supervisor_config()
-    )
+    outcome: FinalizeOutcome = finalize_pass(make_seams(), make_supervisor_config())
     assert outcome.finalized == (41,)
     assert fake_cleaner.cleaned == ["feat/slice-41-example"]
     assert fake_board.issues[41].tags == ["regular-tag"]
@@ -76,13 +75,12 @@ def test_finalize_waits_for_the_pr_to_merge(
     fake_cleaner: FakeCleaner,
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
+    make_seams: Callable[..., TickSeams],
     make_supervisor_config: Callable[..., SupervisorConfig],
 ) -> None:
     make_issue(41, state="Done", tags=["fleet:claimed"])
     write(make_status(phase="parked", parked_state="awaiting-pr-approval"), fleet_root)
-    outcome: FinalizeOutcome = finalize_pass(
-        fake_board, fake_cleaner, make_supervisor_config()
-    )
+    outcome: FinalizeOutcome = finalize_pass(make_seams(), make_supervisor_config())
     assert outcome.awaiting_merge == (41,)
     assert fake_cleaner.cleaned == []
     assert "fleet:claimed" in fake_board.issues[41].tags
@@ -92,12 +90,11 @@ def test_finalize_ignores_done_slices_the_fleet_never_claimed(
     fake_board: FakeBoard,
     fake_cleaner: FakeCleaner,
     make_issue: Callable[..., FakeIssue],
+    make_seams: Callable[..., TickSeams],
     make_supervisor_config: Callable[..., SupervisorConfig],
 ) -> None:
     make_issue(9, state="Done")  # a human-delivered slice
-    outcome: FinalizeOutcome = finalize_pass(
-        fake_board, fake_cleaner, make_supervisor_config()
-    )
+    outcome: FinalizeOutcome = finalize_pass(make_seams(), make_supervisor_config())
     assert outcome == FinalizeOutcome(finalized=(), awaiting_merge=(), cleanup_failed=())
     assert fake_cleaner.cleaned == []
 
@@ -108,15 +105,14 @@ def test_finalize_cleanup_failure_is_retried_next_tick(
     fake_cleaner: FakeCleaner,
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
+    make_seams: Callable[..., TickSeams],
     make_supervisor_config: Callable[..., SupervisorConfig],
 ) -> None:
     make_issue(41, state="Done", tags=["fleet:claimed"])
     write(make_status(phase="parked", parked_state="awaiting-pr-approval"), fleet_root)
     fake_board.completed_prs["feat/slice-41-example"] = "https://pr/41"
     fake_cleaner.fail_for.add("feat/slice-41-example")
-    outcome: FinalizeOutcome = finalize_pass(
-        fake_board, fake_cleaner, make_supervisor_config()
-    )
+    outcome: FinalizeOutcome = finalize_pass(make_seams(), make_supervisor_config())
     assert outcome.cleanup_failed == (41,)
     assert "fleet:claimed" in fake_board.issues[41].tags  # untouched -> retried
     assert load(41, fleet_root).phase == "parked"
@@ -126,13 +122,12 @@ def test_finalize_derives_the_branch_when_no_status_file_exists(
     fake_board: FakeBoard,
     fake_cleaner: FakeCleaner,
     make_issue: Callable[..., FakeIssue],
+    make_seams: Callable[..., TickSeams],
     make_supervisor_config: Callable[..., SupervisorConfig],
 ) -> None:
     make_issue(41, title="feat: example", state="Done", tags=["fleet:claimed"])
     fake_board.completed_prs["feat/slice-41-example"] = "https://pr/41"
-    outcome: FinalizeOutcome = finalize_pass(
-        fake_board, fake_cleaner, make_supervisor_config()
-    )
+    outcome: FinalizeOutcome = finalize_pass(make_seams(), make_supervisor_config())
     assert outcome.finalized == (41,)
     assert fake_cleaner.cleaned == ["feat/slice-41-example"]
 
@@ -150,9 +145,7 @@ def test_reap_requeues_a_stale_dead_runner_and_archives_the_worktree(
     worktree: Path = tmp_path / "worktrees" / "feat+slice-41-example"
     worktree.mkdir(parents=True)
     (worktree / "scratch.txt").write_text("evidence")
-    write(
-        make_status(phase="tdd", last_heartbeat=_STALE, worktree=str(worktree)), fleet_root
-    )
+    write(make_status(phase="tdd", last_heartbeat=_STALE, worktree=str(worktree)), fleet_root)
     (fleet_root / "41" / "runner.pid").write_text("99999\n")
     git_runner = _RecordingGitRunner()
     seams: TickSeams = make_seams(pid_alive=_never_alive, run_git=git_runner)
@@ -348,9 +341,7 @@ def test_reap_skips_a_deliberate_park_with_tag_even_when_stale_and_dead(
 ) -> None:
     make_issue(41, state="Doing", tags=["fleet:claimed", "fleet:awaiting-pr-approval"])
     write(
-        make_status(
-            phase="parked", parked_state="awaiting-pr-approval", last_heartbeat=_STALE
-        ),
+        make_status(phase="parked", parked_state="awaiting-pr-approval", last_heartbeat=_STALE),
         fleet_root,
     )
     seams: TickSeams = make_seams(pid_alive=_never_alive)
@@ -416,12 +407,12 @@ def test_tick_runs_finalize_then_reap_then_claim(
     make_issue(40, title="feat: merged", state="Done", tags=["fleet:claimed"])
     fake_board.completed_prs["feat/slice-40-merged"] = "https://pr/40"
     make_issue(41, title="feat: example", state="Doing", tags=["fleet:claimed"])
-    write(make_status(phase="tdd", last_heartbeat=_ANCIENT, worktree=str(tmp_path / "gone")),
-          fleet_root)
-    make_issue(50, title="feat: fresh slice")
-    seams: TickSeams = make_seams(
-        pid_alive=_never_alive, run_git=_RecordingGitRunner()
+    write(
+        make_status(phase="tdd", last_heartbeat=_ANCIENT, worktree=str(tmp_path / "gone")),
+        fleet_root,
     )
+    make_issue(50, title="feat: fresh slice")
+    seams: TickSeams = make_seams(pid_alive=_never_alive, run_git=_RecordingGitRunner())
     assert run_tick(seams, make_supervisor_config()) == 0
     assert fake_cleaner.cleaned == ["feat/slice-40-merged"]
     assert fake_launcher.launches == [

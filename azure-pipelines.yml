@@ -40,6 +40,11 @@ jobs:
 
     - script: |
         set -euo pipefail
+        uv run ruff format --check .
+      displayName: Ruff (format)
+
+    - script: |
+        set -euo pipefail
         uv run pyright
       displayName: Pyright (strict)
 
