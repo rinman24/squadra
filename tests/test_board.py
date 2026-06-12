@@ -1,21 +1,27 @@
 """Unit tests for flotilla.board — the AzCliAdo adapter, rendering, and validation.
 
-All az I/O is canned: a recording stub matches stdout by argv-fragment, records
-every call, and reads back any ``--in-file`` payload, so the tests run with no
-real az / network / ADO. They exercise the provider-neutral seam directly
-(Lifecycle mapping, op:replace tag writes, comment rendering, config validation)
-without importing the supervisor (mid-migration) or its conftest fixtures.
+All I/O is canned: a recording az stub matches stdout by argv-fragment, records
+every call, and reads back any ``--in-file`` payload; a coupled curl stub
+records the REST tag writes and reflects each patched value into the az stub's
+``work-item show`` response so the adapter's post-write read-back sees the new
+board state. The tests run with no real az / curl / network / ADO. They
+exercise the provider-neutral seam directly (Lifecycle mapping, REST op:replace
+tag writes + read-back, comment rendering, config validation) without importing
+the supervisor (mid-migration) or its conftest fixtures.
 """
 
+import base64
 from collections.abc import Sequence
 import json
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from flotilla.board import (
     AzCliAdo,
     BoardValidationError,
+    TagWriteError,
     render_ado_html,
 )
 from flotilla.domain import (
@@ -64,66 +70,198 @@ class _RecordingAzRunner:
         return "{}"
 
 
-def _adapter(runner: _RecordingAzRunner, *, base_branch: str = "main") -> AzCliAdo:
+class _RecordingCurlRunner:
+    """Records curl argv, auth configs, and JSON-Patch bodies; applies writes.
+
+    Each call reads back the ``-K`` auth config and ``--data @file`` payload
+    (both are adapter-owned temp files deleted right after the call) and —
+    unless built with ``apply_writes=False`` (a silently-dropped write) —
+    reflects the patched tag value into the az stub's ``work-item show``
+    response, so the adapter's post-write read-back sees the new board state.
+    ``readback`` overrides that reflected value to simulate server-side tag
+    normalization. An empty value clears the field entirely, as live ADO does.
+    """
+
+    def __init__(
+        self,
+        az: _RecordingAzRunner,
+        *,
+        apply_writes: bool = True,
+        readback: str | None = None,
+    ) -> None:
+        """Couple the curl stub to the az stub whose show response it updates."""
+        self._az = az
+        self._apply_writes = apply_writes
+        self._readback = readback
+        self.calls: list[list[str]] = []
+        self.bodies: list[str] = []
+        self.auth_configs: list[str] = []
+
+    def __call__(self, args: Sequence[str]) -> str:
+        """Record the call; reflect the written value into the az show response."""
+        arglist: list[str] = list(args)
+        self.calls.append(arglist)
+        cfg: str = arglist[arglist.index("-K") + 1]
+        self.auth_configs.append(Path(cfg).read_text(encoding="utf-8"))
+        data: str = arglist[arglist.index("--data") + 1]
+        body: str = Path(data.removeprefix("@")).read_text(encoding="utf-8")
+        self.bodies.append(body)
+        if not self._apply_writes:
+            return "{}"
+        value: str = self._readback if self._readback is not None else _patched_value(body)
+        fields: dict[str, str] = {"System.Tags": value} if value else {}
+        self._az.responses["work-item show"] = json.dumps({"fields": fields})
+        return "{}"
+
+
+def _patched_value(body: str) -> str:
+    """Extract the written tag string from a recorded JSON-Patch body."""
+    patch: object = json.loads(body)
+    assert isinstance(patch, list)
+    ops: list[object] = cast("list[object]", patch)
+    assert len(ops) == 1
+    op: object = ops[0]
+    assert isinstance(op, dict)
+    value: object = cast("dict[str, object]", op).get("value")
+    assert isinstance(value, str)
+    return value
+
+
+def _adapter(
+    runner: _RecordingAzRunner,
+    *,
+    http_run: _RecordingCurlRunner | None = None,
+    organization: str | None = "https://dev.azure.com/acme",
+    base_branch: str = "main",
+) -> AzCliAdo:
     return AzCliAdo(
         runner,
         project="example-project",
+        http_run=http_run if http_run is not None else _RecordingCurlRunner(runner),
+        organization=organization,
         states=_STATES,
         base_branch=base_branch,
         tags=_TAGS,
     )
 
 
-# --- op:replace tag writes ----------------------------------------------------
+@pytest.fixture
+def pat_env(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Set a known PAT so the REST tag write can build its auth header."""
+    monkeypatch.setenv("AZURE_DEVOPS_EXT_PAT", "scratch-pat")
+    return "scratch-pat"
 
 
-def test_add_tag_writes_op_replace_json_patch_on_an_already_tagged_item() -> None:
+# --- REST op:replace tag writes -------------------------------------------------
+
+
+def test_add_tag_patches_tags_via_rest_on_an_already_tagged_item(pat_env: str) -> None:
     show: str = json.dumps({"fields": {"System.Tags": "alpha; beta"}})
     runner = _RecordingAzRunner({"work-item show": show})
-    _adapter(runner).add_tag(70, "fleet:claimed")
+    curl = _RecordingCurlRunner(runner)
+    _adapter(runner, http_run=curl).add_tag(70, "fleet:claimed")
 
-    # The write goes through `az devops invoke` PATCH wit/workitems by id.
-    write: list[str] = runner.calls[-1]
-    assert write[:2] == ["devops", "invoke"]
-    assert "workitems" in write
-    assert write[write.index("--http-method") + 1] == "PATCH"
-    assert write[write.index("--route-parameters") + 1] == "id=70"
-    assert "wit" in write
+    # The write is a direct REST PATCH by id (az cannot route this call).
+    [write] = curl.calls
+    assert write[write.index("-X") + 1] == "PATCH"
+    assert write[-1] == "https://dev.azure.com/acme/_apis/wit/workitems/70?api-version=7.1"
+    assert "Content-Type: application/json-patch+json" in write
 
     # The body is the op:replace JSON-Patch carrying the full new tag string.
-    body: object = json.loads(runner.in_files[-1])
+    body: object = json.loads(curl.bodies[-1])
     assert body == [
         {"op": "replace", "path": "/fields/System.Tags", "value": "alpha; beta; fleet:claimed"}
     ]
 
 
-def test_add_tag_is_idempotent_when_the_tag_is_already_present() -> None:
+def test_tag_write_keeps_the_pat_out_of_argv(pat_env: str) -> None:
+    show: str = json.dumps({"fields": {"System.Tags": "alpha"}})
+    runner = _RecordingAzRunner({"work-item show": show})
+    curl = _RecordingCurlRunner(runner)
+    _adapter(runner, http_run=curl).add_tag(70, "fleet:claimed")
+
+    # Auth travels in the curl config file, never on the command line.
+    token: str = base64.b64encode(f":{pat_env}".encode()).decode()
+    assert curl.auth_configs == [f'header = "Authorization: Basic {token}"\n']
+    assert all(pat_env not in arg and token not in arg for arg in curl.calls[-1])
+
+
+def test_tag_write_raises_without_a_pat(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AZURE_DEVOPS_EXT_PAT", raising=False)
+    show: str = json.dumps({"fields": {"System.Tags": "alpha"}})
+    runner = _RecordingAzRunner({"work-item show": show})
+    curl = _RecordingCurlRunner(runner)
+    with pytest.raises(RuntimeError, match="AZURE_DEVOPS_EXT_PAT"):
+        _adapter(runner, http_run=curl).add_tag(70, "fleet:claimed")
+    assert curl.calls == []
+
+
+def test_add_tag_is_idempotent_when_the_tag_is_already_present(pat_env: str) -> None:
     show: str = json.dumps({"fields": {"System.Tags": "fleet:claimed; beta"}})
     runner = _RecordingAzRunner({"work-item show": show})
-    _adapter(runner).add_tag(70, "fleet:claimed")
-    # Only the read happened; no write (no devops invoke, no in-file payload).
-    assert all("invoke" not in call for call in runner.calls)
-    assert runner.in_files == []
+    curl = _RecordingCurlRunner(runner)
+    _adapter(runner, http_run=curl).add_tag(70, "fleet:claimed")
+    # Only the read happened; no REST write went out.
+    assert curl.calls == []
 
 
-def test_remove_tag_drops_the_tag_via_op_replace() -> None:
+def test_remove_tag_drops_the_tag_via_op_replace(pat_env: str) -> None:
     show: str = json.dumps({"fields": {"System.Tags": "alpha; fleet:claimed; beta"}})
     runner = _RecordingAzRunner({"work-item show": show})
-    _adapter(runner).remove_tag(70, "fleet:claimed")
+    curl = _RecordingCurlRunner(runner)
+    _adapter(runner, http_run=curl).remove_tag(70, "fleet:claimed")
 
-    write: list[str] = runner.calls[-1]
-    assert write[:2] == ["devops", "invoke"]
-    assert write[write.index("--http-method") + 1] == "PATCH"
-    body: object = json.loads(runner.in_files[-1])
+    [write] = curl.calls
+    assert write[write.index("-X") + 1] == "PATCH"
+    body: object = json.loads(curl.bodies[-1])
     assert body == [{"op": "replace", "path": "/fields/System.Tags", "value": "alpha; beta"}]
 
 
-def test_remove_tag_is_a_noop_when_the_tag_is_absent() -> None:
+def test_remove_tag_is_a_noop_when_the_tag_is_absent(pat_env: str) -> None:
     show: str = json.dumps({"fields": {"System.Tags": "alpha; beta"}})
     runner = _RecordingAzRunner({"work-item show": show})
-    _adapter(runner).remove_tag(70, "fleet:claimed")
-    assert all("invoke" not in call for call in runner.calls)
-    assert runner.in_files == []
+    curl = _RecordingCurlRunner(runner)
+    _adapter(runner, http_run=curl).remove_tag(70, "fleet:claimed")
+    assert curl.calls == []
+
+
+def test_removing_the_last_tag_clears_the_field_without_a_false_alarm(pat_env: str) -> None:
+    # Live ADO drops System.Tags entirely on an empty replace; the read-back
+    # must treat the absent field as "no tags" and not raise.
+    show: str = json.dumps({"fields": {"System.Tags": "fleet:claimed"}})
+    runner = _RecordingAzRunner({"work-item show": show})
+    curl = _RecordingCurlRunner(runner)
+    _adapter(runner, http_run=curl).remove_tag(70, "fleet:claimed")
+    body: object = json.loads(curl.bodies[-1])
+    assert body == [{"op": "replace", "path": "/fields/System.Tags", "value": ""}]
+
+
+def test_tag_write_read_back_divergence_raises(pat_env: str) -> None:
+    # The transport "succeeds" but the board never takes the write — the
+    # original #93 silent-drop failure mode must now be loud.
+    show: str = json.dumps({"fields": {"System.Tags": "alpha; beta"}})
+    runner = _RecordingAzRunner({"work-item show": show})
+    curl = _RecordingCurlRunner(runner, apply_writes=False)
+    with pytest.raises(TagWriteError, match="work item 70"):
+        _adapter(runner, http_run=curl).add_tag(70, "fleet:claimed")
+
+
+def test_tag_write_read_back_tolerates_server_side_normalization(pat_env: str) -> None:
+    # ADO may reorder tags and normalize case; neither is a divergence.
+    show: str = json.dumps({"fields": {"System.Tags": "alpha; beta"}})
+    runner = _RecordingAzRunner({"work-item show": show})
+    curl = _RecordingCurlRunner(runner, readback="Fleet:Claimed; BETA; Alpha")
+    _adapter(runner, http_run=curl).add_tag(70, "fleet:claimed")  # must not raise
+
+
+def test_tag_write_resolves_the_org_url_from_az_defaults(pat_env: str) -> None:
+    show: str = json.dumps({"fields": {"System.Tags": "alpha"}})
+    configure: str = "organization = https://dev.azure.com/acme/\nproject = example-project\n"
+    runner = _RecordingAzRunner({"work-item show": show, "configure --list": configure})
+    curl = _RecordingCurlRunner(runner)
+    _adapter(runner, http_run=curl, organization=None).add_tag(70, "fleet:claimed")
+    # Trailing slash stripped; resolved org used for the REST URL.
+    assert curl.calls[-1][-1] == "https://dev.azure.com/acme/_apis/wit/workitems/70?api-version=7.1"
 
 
 # --- Lifecycle mapping --------------------------------------------------------
