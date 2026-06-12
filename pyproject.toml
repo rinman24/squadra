@@ -10,8 +10,7 @@ dependencies = []
 
 [project.scripts]
 flotilla = "flotilla.cli:main"
-flotilla-supervisor = "flotilla.supervisor:main"
-flotilla-status = "flotilla.status:main"
+flotilla-status = "flotilla.cli:deprecated_status_main"
 
 [build-system]
 requires = ["hatchling"]
