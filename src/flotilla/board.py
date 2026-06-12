@@ -10,6 +10,7 @@ is the hardcoded provider registry (the composition-root seam) — name maps to 
 adapter factory.
 """
 
+import base64
 from collections.abc import Callable, Mapping, Sequence
 import json
 import os
@@ -37,6 +38,10 @@ _PARENT_REL: Final[str] = "System.LinkTypes.Hierarchy-Reverse"
 
 class BoardValidationError(RuntimeError):
     """Raised when the configuration does not resolve against the live board."""
+
+
+class TagWriteError(RuntimeError):
+    """Raised when a tag write does not survive its post-write read-back."""
 
 
 class BoardAccess(Protocol):
@@ -121,28 +126,54 @@ def _run_az(args: Sequence[str]) -> str:
     return result.stdout
 
 
+def _run_curl(args: Sequence[str]) -> str:
+    """Run a curl command and return stdout (raises on a non-zero exit)."""
+    result: subprocess.CompletedProcess[str] = subprocess.run(
+        ["curl", *args], capture_output=True, text=True, check=True
+    )
+    return result.stdout
+
+
+def _pat_basic_auth() -> str:
+    """Return the Basic-auth token for the ambient Azure DevOps PAT."""
+    pat: str = os.environ.get("AZURE_DEVOPS_EXT_PAT", "")
+    if not pat:
+        raise RuntimeError(
+            "fleet supervisor: AZURE_DEVOPS_EXT_PAT is not set; the REST tag write "
+            "authenticates with the same PAT the az CLI uses"
+        )
+    return base64.b64encode(f":{pat}".encode()).decode()
+
+
 class AzCliAdo:
     """``BoardAccess`` backed by the az CLI (the devbox's authenticated transport)."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - Constructor is a DI seam
         self,
         run: Callable[[Sequence[str]], str] = _run_az,
         project: str | None = None,
         *,
+        http_run: Callable[[Sequence[str]], str] = _run_curl,
+        organization: str | None = None,
         states: Mapping[Lifecycle, tuple[str, ...]] = ADO_BASIC_STATES,
         base_branch: str = "main",
         tags: Tags = Tags(),
     ) -> None:
-        """Wire the adapter to a command runner and its board configuration.
+        """Wire the adapter to its command runners and board configuration.
 
-        ``project`` names the Azure DevOps project for the REST route parameter;
-        when omitted it is resolved once from the configured az default on first
-        use. ``states`` is the Lifecycle→native-state map (set writes use the
-        first native name of a bucket); ``base_branch`` is the PR target;
-        ``tags`` is the fleet tag vocabulary used when rendering comments.
+        ``project`` names the Azure DevOps project for the REST route parameter
+        and ``organization`` the org base URL for direct REST calls; when
+        omitted, each is resolved once from the configured az defaults on first
+        use. ``http_run`` runs curl for the REST tag write (the one operation
+        the az CLI cannot route — see :meth:`_write_tags`). ``states`` is the
+        Lifecycle→native-state map (set writes use the first native name of a
+        bucket); ``base_branch`` is the PR target; ``tags`` is the fleet tag
+        vocabulary used when rendering comments.
         """
         self._run = run
+        self._http_run = http_run
         self._project = project
+        self._organization = organization
         self._states = states
         self._base_branch = base_branch
         self._tags = tags
@@ -176,8 +207,14 @@ class AzCliAdo:
     def _resolve_project(self) -> str:
         """Return the project for REST routes, resolving the az default once."""
         if self._project is None:
-            self._project = _configured_project(self._run)
+            self._project = _configured_default(self._run, "project")
         return self._project
+
+    def _resolve_organization(self) -> str:
+        """Return the org base URL for REST calls, resolving the az default once."""
+        if self._organization is None:
+            self._organization = _configured_default(self._run, "organization").rstrip("/")
+        return self._organization
 
     def _invoke_json(self, resource: str, body: dict[str, object]) -> str:
         """POST ``body`` to a project-scoped ``wit`` REST resource.
@@ -199,14 +236,14 @@ class AzCliAdo:
         *,
         http_method: str,
         route_parameters: Sequence[str],
-        output: str = "json",
     ) -> str:
         """Invoke a ``wit`` REST resource via ``az devops invoke``.
 
         ``az devops invoke`` reads its request payload from ``--in-file`` only,
-        so ``body`` is serialized to a temp file (removed in ``finally``). The
-        method, route parameters, and output format are caller-supplied so the
-        same machinery serves the POST reads and the PATCH op:replace tag write.
+        so ``body`` is serialized to a temp file (removed in ``finally``). POST
+        reads only: PATCH by id is unroutable through ``az devops invoke`` (see
+        :meth:`_write_tags`), which is why the tag write does not come through
+        here.
         """
         with tempfile.NamedTemporaryFile(
             "w", suffix=".json", delete=False, encoding="utf-8"
@@ -231,7 +268,7 @@ class AzCliAdo:
                     "--api-version",
                     "7.1",
                     "-o",
-                    output,
+                    "json",
                 ]
             )
         finally:
@@ -388,25 +425,61 @@ class AzCliAdo:
         return [part.strip() for part in raw.split(";") if part.strip()]
 
     def _write_tags(self, item_id: int, tags: list[str]) -> None:
-        """Replace System.Tags wholesale via a JSON-Patch op:replace.
+        """Replace System.Tags wholesale via a REST op:replace, then verify.
 
-        The ``az boards work-item update --fields`` path is unreliable for the
-        multi-value, semicolon-laden Tags string on an already-tagged item: it
-        applies add/merge semantics rather than a clean replace. Issuing an
-        explicit ``op: replace`` of ``/fields/System.Tags`` through ``az devops
-        invoke`` (PATCH ``wit/workitems`` by id) sets the field to exactly the
-        joined value, so a removed tag is genuinely dropped.
+        Neither az path can do this. ``az boards work-item update --fields``
+        applies add/merge semantics to the multi-value, semicolon-laden Tags
+        string rather than a clean replace, and ``az devops invoke`` cannot
+        PATCH ``wit/workitems`` by id at all — the CLI resolves the resource to
+        the create route (``workitems/${type}``) and dies with ``KeyError:
+        'type'`` (verified live 2026-06-12). The write therefore goes straight
+        to the REST API via curl, authenticated with the same
+        ``AZURE_DEVOPS_EXT_PAT`` the az CLI uses, passed through a curl config
+        file so the secret never appears in argv.
+
+        The post-write read-back guards the original silent-drop failure mode:
+        the tags are re-read and any divergence from the intended set (order-
+        and case-insensitive — ADO normalizes both) raises ``TagWriteError``.
         """
+        auth: str = _pat_basic_auth()
         patch: list[dict[str, str]] = [
             {"op": "replace", "path": "/fields/System.Tags", "value": "; ".join(tags)}
         ]
-        self._invoke(
-            "workitems",
-            patch,
-            http_method="PATCH",
-            route_parameters=[f"id={item_id}"],
-            output="none",
-        )
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".json", delete=False, encoding="utf-8"
+        ) as handle:
+            json.dump(patch, handle)
+            body_file: str = handle.name
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".cfg", delete=False, encoding="utf-8"
+        ) as handle:
+            handle.write(f'header = "Authorization: Basic {auth}"\n')
+            auth_file: str = handle.name
+        try:
+            self._http_run(
+                [
+                    "-sS",
+                    "--fail-with-body",
+                    "-K",
+                    auth_file,
+                    "-X",
+                    "PATCH",
+                    "-H",
+                    "Content-Type: application/json-patch+json",
+                    "--data",
+                    f"@{body_file}",
+                    f"{self._resolve_organization()}/_apis/wit/workitems/{item_id}?api-version=7.1",
+                ]
+            )
+        finally:
+            os.unlink(body_file)
+            os.unlink(auth_file)
+        written: list[str] = self._current_tags(item_id)
+        if {tag.casefold() for tag in written} != {tag.casefold() for tag in tags}:
+            raise TagWriteError(
+                f"tag write to work item {item_id} did not stick: intended "
+                f"{sorted(tags)!r}, board now has {sorted(written)!r}"
+            )
 
 
 # --- provider registry (composition-root seam) --------------------------------
@@ -461,18 +534,18 @@ def _wiql_ids(payload: str) -> list[int]:
     return ids
 
 
-def _configured_project(run: Callable[[Sequence[str]], str]) -> str:
-    """Read the default Azure DevOps project from az configuration."""
+def _configured_default(run: Callable[[Sequence[str]], str], key: str) -> str:
+    """Read one default (``project`` / ``organization``) from az configuration."""
     out: str = run(["devops", "configure", "--list"])
     for line in out.splitlines():
-        key, sep, value = line.partition("=")
-        if sep and key.strip() == "project":
-            project: str = value.strip()
-            if project:
-                return project
+        name, sep, value = line.partition("=")
+        if sep and name.strip() == key:
+            resolved: str = value.strip()
+            if resolved:
+                return resolved
     raise RuntimeError(
-        "fleet supervisor: no default Azure DevOps project configured; "
-        "set one with `az devops configure --defaults project=<name>`"
+        f"fleet supervisor: no default Azure DevOps {key} configured; "
+        f"set one with `az devops configure --defaults {key}=<value>`"
     )
 
 
