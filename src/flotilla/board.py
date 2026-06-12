@@ -180,10 +180,33 @@ class AzCliAdo:
         return self._project
 
     def _invoke_json(self, resource: str, body: dict[str, object]) -> str:
-        """POST ``body`` to a ``wit`` REST resource via ``az devops invoke``.
+        """POST ``body`` to a project-scoped ``wit`` REST resource.
 
-        The body is written to a temp file because ``az devops invoke`` reads
-        its payload from ``--in-file`` only; the file is removed afterwards.
+        Thin wrapper over :meth:`_invoke` that scopes the call to the resolved
+        project and returns JSON — the shape the WIQL / batch reads expect.
+        """
+        return self._invoke(
+            resource,
+            body,
+            http_method="POST",
+            route_parameters=[f"project={self._resolve_project()}"],
+        )
+
+    def _invoke(
+        self,
+        resource: str,
+        body: object,
+        *,
+        http_method: str,
+        route_parameters: Sequence[str],
+        output: str = "json",
+    ) -> str:
+        """Invoke a ``wit`` REST resource via ``az devops invoke``.
+
+        ``az devops invoke`` reads its request payload from ``--in-file`` only,
+        so ``body`` is serialized to a temp file (removed in ``finally``). The
+        method, route parameters, and output format are caller-supplied so the
+        same machinery serves the POST reads and the PATCH op:replace tag write.
         """
         with tempfile.NamedTemporaryFile(
             "w", suffix=".json", delete=False, encoding="utf-8"
@@ -200,15 +223,15 @@ class AzCliAdo:
                     "--resource",
                     resource,
                     "--route-parameters",
-                    f"project={self._resolve_project()}",
+                    *route_parameters,
                     "--http-method",
-                    "POST",
+                    http_method,
                     "--in-file",
                     in_file,
                     "--api-version",
                     "7.1",
                     "-o",
-                    "json",
+                    output,
                 ]
             )
         finally:
@@ -365,18 +388,24 @@ class AzCliAdo:
         return [part.strip() for part in raw.split(";") if part.strip()]
 
     def _write_tags(self, item_id: int, tags: list[str]) -> None:
-        self._run(
-            [
-                "boards",
-                "work-item",
-                "update",
-                "--id",
-                str(item_id),
-                "--fields",
-                f"System.Tags={'; '.join(tags)}",
-                "-o",
-                "none",
-            ]
+        """Replace System.Tags wholesale via a JSON-Patch op:replace.
+
+        The ``az boards work-item update --fields`` path is unreliable for the
+        multi-value, semicolon-laden Tags string on an already-tagged item: it
+        applies add/merge semantics rather than a clean replace. Issuing an
+        explicit ``op: replace`` of ``/fields/System.Tags`` through ``az devops
+        invoke`` (PATCH ``wit/workitems`` by id) sets the field to exactly the
+        joined value, so a removed tag is genuinely dropped.
+        """
+        patch: list[dict[str, str]] = [
+            {"op": "replace", "path": "/fields/System.Tags", "value": "; ".join(tags)}
+        ]
+        self._invoke(
+            "workitems",
+            patch,
+            http_method="PATCH",
+            route_parameters=[f"id={item_id}"],
+            output="none",
         )
 
 
