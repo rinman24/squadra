@@ -29,6 +29,15 @@ Overlapping ticks serialize via a non-blocking ``flock`` on
 ``<fleet-root>/supervisor.lock`` — the losing tick exits cleanly without
 touching ADO.
 
+A tick can be a **dry run** (``--dry-run`` / ``FLEET_DRY_RUN=1``): the full
+finalize/reap/claim read+plan logic runs and reports what a real tick WOULD
+do, but every side effect — ADO writes, runner launches, claude spawns
+(cleanup and the auth probe), git, worktree moves, local status/marker
+writes — is suppressed at the ``TickSeams`` boundary (``dry_run_seams``), so
+the tick physically cannot mutate. ``FLEET_MAX_RUNNERS=0`` is *not* a safe
+smoke: it only zeroes the claim budget, while finalize and reap still mutate
+ADO. Use a dry run for that.
+
 Run one tick: ``python -m flotilla.supervisor`` (normally via ``flotilla
 tick`` from a ticker loop or cron; see the flotilla README).
 """
@@ -36,7 +45,7 @@ tick`` from a ticker loop or cron; see the flotilla README).
 import argparse
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 import fcntl
 import json
@@ -52,6 +61,7 @@ from typing import Final, Protocol, cast
 
 from flotilla._resources import resolve_script
 from flotilla.constants import (
+    FLEET_DRY_RUN,
     FLEET_EFFORT,
     FLEET_MAX_RUNNERS,
     FLEET_MODEL,
@@ -263,9 +273,39 @@ def _claude_auth_ok(
     return completed.returncode == 0 and "READY" in completed.stdout
 
 
+def _archive_worktree(worktree: Path, issue_id: int, attempt: int, config: SupervisorConfig) -> None:
+    """Move the dead worktree under the slice's archive/ for inspection."""
+    if not worktree.is_dir():
+        return
+    archive_dir: Path = config.fleet_root / str(issue_id) / "archive"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    destination: Path = archive_dir / f"attempt-{attempt}"
+    counter: int = 2
+    while destination.exists():
+        destination = archive_dir / f"attempt-{attempt}-{counter}"
+        counter += 1
+    shutil.move(str(worktree), str(destination))
+
+
+def _write_claimed_at(issue_id: int, fleet_root: Path, timestamp: str) -> None:
+    """Record the claim time so the reap pass can age claims that never started."""
+    directory: Path = fleet_root / str(issue_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / CLAIMED_AT_FILENAME).write_text(timestamp + "\n", encoding="utf-8")
+
+
 @dataclass(frozen=True, slots=True)
 class TickSeams:
-    """The tick's side-effect seams, injectable for tests."""
+    """The tick's side-effect seams, injectable for tests.
+
+    Every side effect a tick can perform flows through one of these fields —
+    board writes via ``ado``, runner panes via ``launcher``, headless claude
+    cleanups via ``cleaner``, git via ``run_git``, the auth probe via
+    ``auth_ok``, and the local fleet-state writes via ``archive_worktree`` /
+    ``update_status`` / ``write_claimed_at``. Keeping this exhaustive is what
+    makes ``dry_run_seams`` a write-blocking boundary rather than a flag:
+    never add a side effect to a pass without routing it through a seam.
+    """
 
     ado: AdoClient
     launcher: Launcher
@@ -273,6 +313,11 @@ class TickSeams:
     pid_alive: Callable[[int], bool] = field(default=_pid_alive)
     run_git: Callable[[Sequence[str]], int] = field(default=_run_quiet)
     auth_ok: Callable[[], bool] = field(default=_claude_auth_ok)
+    archive_worktree: Callable[[Path, int, int, SupervisorConfig], None] = field(
+        default=_archive_worktree
+    )
+    update_status: Callable[[int, StatusUpdate, Path], object] = field(default=update)
+    write_claimed_at: Callable[[int, Path, str], None] = field(default=_write_claimed_at)
 
 
 def config_from_env(
@@ -323,14 +368,14 @@ def run_tick(seams: TickSeams, config: SupervisorConfig) -> int:
             )
             _reap_and_log(seams, config)
             return 0
-        finalized: FinalizeOutcome = finalize_pass(seams.ado, seams.cleaner, config)
+        finalized: FinalizeOutcome = finalize_pass(seams, config)
         _log(
             f"finalize pass: finalized={list(finalized.finalized)} "
             f"awaiting_merge={list(finalized.awaiting_merge)} "
             f"cleanup_failed={list(finalized.cleanup_failed)}"
         )
         _reap_and_log(seams, config)
-        outcome: ClaimOutcome = claim_pass(seams.ado, seams.launcher, config)
+        outcome: ClaimOutcome = claim_pass(seams, config)
         _log(
             f"claim pass: inflight={list(outcome.inflight)} "
             f"claimed={list(outcome.claimed)} blocked={list(outcome.skipped_blocked)} "
@@ -368,13 +413,15 @@ def _claude_work_pending(ado: AdoClient, config: SupervisorConfig) -> bool:
     )
 
 
-def finalize_pass(ado: AdoClient, cleaner: Cleaner, config: SupervisorConfig) -> FinalizeOutcome:
+def finalize_pass(seams: TickSeams, config: SupervisorConfig) -> FinalizeOutcome:
     """Retire merged slices: cleanup branch/worktree, drop tags, status → done.
 
     Merged-ness is derived from truth (a completed PR for the slice branch +
     the Issue in Done), not from the runner's recorded mapping — the status
     file only provides the branch fast-path (ADR-0007 decision 5).
     """
+    ado: AdoClient = seams.ado
+    cleaner: Cleaner = seams.cleaner
     finalized: list[int] = []
     awaiting: list[int] = []
     failed: list[int] = []
@@ -402,7 +449,7 @@ def finalize_pass(ado: AdoClient, cleaner: Cleaner, config: SupervisorConfig) ->
             f"branch <code>{branch}</code> cleaned up.</p>",
         )
         if status is not None:
-            update(
+            seams.update_status(
                 issue.issue_id,
                 StatusUpdate(phase="done", parked_state=None, pr_url=pr_url),
                 config.fleet_root,
@@ -534,9 +581,9 @@ def _reap_one(
     """Archive the dead attempt's worktree and record the reap in the status."""
     attempt: int = status.attempt if status is not None else 1
     if status is not None:
-        _archive_worktree(Path(status.worktree), issue.issue_id, attempt, config)
+        seams.archive_worktree(Path(status.worktree), issue.issue_id, attempt, config)
         seams.run_git(["git", "-C", str(config.fleet_home), "worktree", "prune"])
-        update(
+        seams.update_status(
             issue.issue_id,
             StatusUpdate(
                 phase="parked",
@@ -547,22 +594,9 @@ def _reap_one(
         )
 
 
-def _archive_worktree(worktree: Path, issue_id: int, attempt: int, config: SupervisorConfig) -> None:
-    """Move the dead worktree under the slice's archive/ for inspection."""
-    if not worktree.is_dir():
-        return
-    archive_dir: Path = config.fleet_root / str(issue_id) / "archive"
-    archive_dir.mkdir(parents=True, exist_ok=True)
-    destination: Path = archive_dir / f"attempt-{attempt}"
-    counter: int = 2
-    while destination.exists():
-        destination = archive_dir / f"attempt-{attempt}-{counter}"
-        counter += 1
-    shutil.move(str(worktree), str(destination))
-
-
-def claim_pass(ado: AdoClient, launcher: Launcher, config: SupervisorConfig) -> ClaimOutcome:
+def claim_pass(seams: TickSeams, config: SupervisorConfig) -> ClaimOutcome:
     """Claim unblocked, unclaimed slices up to the cap and launch their runners."""
+    ado: AdoClient = seams.ado
     inflight: tuple[int, ...] = tuple(
         issue.issue_id
         for issue in ado.issues_in_state(STATE_DOING)
@@ -597,7 +631,7 @@ def claim_pass(ado: AdoClient, launcher: Launcher, config: SupervisorConfig) -> 
                 _escalate_exhausted(ado, issue.issue_id, attempt, config.max_attempts)
                 escalated.append(issue.issue_id)
                 continue
-            if _claim_and_launch(ado, launcher, config, issue, attempt):
+            if _claim_and_launch(seams, config, issue, attempt):
                 claimed.append(issue.issue_id)
                 budget -= 1
             else:
@@ -629,13 +663,13 @@ def _next_attempt(issue_id: int, fleet_root: Path) -> int:
 
 
 def _claim_and_launch(
-    ado: AdoClient,
-    launcher: Launcher,
+    seams: TickSeams,
     config: SupervisorConfig,
     issue: IssueRef,
     attempt: int,
 ) -> bool:
     """Run the claim protocol for one slice; roll back if the launch fails."""
+    ado: AdoClient = seams.ado
     branch: str = slice_branch(issue.issue_id, issue.title, attempt)
     now: str = _utcnow_iso()
     ado.set_state(issue.issue_id, STATE_DOING)
@@ -646,8 +680,8 @@ def _claim_and_launch(
         f"<code>runner-{issue.issue_id}-a{attempt}</code>, branch "
         f"<code>{branch}</code>, {now}.</p>",
     )
-    _write_claimed_at(issue.issue_id, config.fleet_root, now)
-    if launcher.launch(issue.issue_id, branch, attempt):
+    seams.write_claimed_at(issue.issue_id, config.fleet_root, now)
+    if seams.launcher.launch(issue.issue_id, branch, attempt):
         return True
     ado.remove_tag(issue.issue_id, TAG_CLAIMED)
     ado.set_state(issue.issue_id, STATE_TODO)
@@ -664,13 +698,6 @@ def _escalate_exhausted(ado: AdoClient, issue_id: int, attempt: int, cap: int) -
         f"— escalated to <code>{TAG_FAILED}</code>. Triage via the status file, then "
         f"remove the tag (and the fleet status dir for a clean restart) to requeue.</p>",
     )
-
-
-def _write_claimed_at(issue_id: int, fleet_root: Path, timestamp: str) -> None:
-    """Record the claim time so the reap pass can age claims that never started."""
-    directory: Path = fleet_root / str(issue_id)
-    directory.mkdir(parents=True, exist_ok=True)
-    (directory / CLAIMED_AT_FILENAME).write_text(timestamp + "\n", encoding="utf-8")
 
 
 def _utcnow_iso() -> str:
@@ -1050,6 +1077,147 @@ class ClaudeCleanup:
         )
 
 
+# --- dry-run boundary ----------------------------------------------------------
+
+
+class ReadOnlyAdoClient:
+    """``AdoClient`` decorator that physically cannot write to the board.
+
+    Reads delegate to the wrapped client; every write logs the action a real
+    tick WOULD have performed and does nothing. Dry-run safety is this
+    boundary, not a flag threaded through the passes — a pass (present or
+    future) that reaches ``seams.ado`` with a write cannot mutate ADO while
+    dry-run is active, because the write never leaves this class.
+    """
+
+    def __init__(self, inner: AdoClient) -> None:
+        """Wrap ``inner``, passing its reads through and absorbing its writes."""
+        self._inner = inner
+
+    def issues_in_state(self, state: str) -> tuple[IssueRef, ...]:
+        """Pass the read through to the wrapped client."""
+        return self._inner.issues_in_state(state)
+
+    def completed_pr_url(self, branch: str) -> str | None:
+        """Pass the read through to the wrapped client."""
+        return self._inner.completed_pr_url(branch)
+
+    def issue_links(self, issue_id: int) -> IssueLinks:
+        """Pass the read through to the wrapped client."""
+        return self._inner.issue_links(issue_id)
+
+    def issue_state(self, issue_id: int) -> str:
+        """Pass the read through to the wrapped client."""
+        return self._inner.issue_state(issue_id)
+
+    def set_state(self, issue_id: int, state: str) -> None:
+        """Absorb the write, logging the would-be state transition."""
+        _log(f"[dry-run] WOULD move #{issue_id} to '{state}'")
+
+    def add_tag(self, issue_id: int, tag: str) -> None:
+        """Absorb the write, logging the would-be tag addition."""
+        _log(f"[dry-run] WOULD add tag '{tag}' to #{issue_id}")
+
+    def remove_tag(self, issue_id: int, tag: str) -> None:
+        """Absorb the write, logging the would-be tag removal."""
+        _log(f"[dry-run] WOULD remove tag '{tag}' from #{issue_id}")
+
+    def add_comment(self, issue_id: int, html: str) -> None:
+        """Absorb the write, logging the would-be discussion comment."""
+        _log(f"[dry-run] WOULD comment on #{issue_id}: {html}")
+
+
+class DryRunLauncher:
+    """``Launcher`` stand-in: reports the runner it would start, starts nothing."""
+
+    def launch(self, issue_id: int, branch: str, attempt: int) -> bool:
+        """Log the would-be runner pane and report success."""
+        _log(
+            f"[dry-run] WOULD launch runner for #{issue_id} "
+            f"(branch {branch}, attempt {attempt})"
+        )
+        return True
+
+
+class DryRunCleaner:
+    """``Cleaner`` stand-in: reports the would-be cleanup, spawns no claude."""
+
+    def cleanup(self, branch: str) -> bool:
+        """Log the would-be headless cleanup session and report success."""
+        _log(f"[dry-run] WOULD run /cleanup-merged-branches for {branch}")
+        return True
+
+
+def _dry_run_auth_ok() -> bool:
+    """Skip the auth preflight — a spawned ``claude -p`` probe is itself a side effect."""
+    _log("[dry-run] WOULD run the claude auth preflight; assuming it passes")
+    return True
+
+
+def _dry_run_git(args: Sequence[str]) -> int:
+    """Absorb a git invocation (reap's ``worktree prune``), logging it."""
+    _log(f"[dry-run] WOULD run: {' '.join(args)}")
+    return 0
+
+
+def _dry_run_archive_worktree(
+    worktree: Path, issue_id: int, attempt: int, _config: SupervisorConfig
+) -> None:
+    """Absorb the worktree archive move, logging it."""
+    _log(f"[dry-run] WOULD archive worktree {worktree} of #{issue_id} (attempt {attempt})")
+
+
+def _dry_run_update_status(issue_id: int, _changes: StatusUpdate, _fleet_root: Path) -> None:
+    """Absorb the status-file write, logging it."""
+    _log(f"[dry-run] WOULD update the status file of #{issue_id}")
+
+
+def _dry_run_write_claimed_at(issue_id: int, _fleet_root: Path, _timestamp: str) -> None:
+    """Absorb the claimed-at marker write, logging it."""
+    _log(f"[dry-run] WOULD write the claimed-at marker of #{issue_id}")
+
+
+def dry_run_seams(seams: TickSeams) -> TickSeams:
+    """Wrap every side-effecting seam so the tick cannot mutate anything.
+
+    Reads pass through — the tick still runs the full finalize/reap/claim
+    read+plan logic and reports the would-be actions — but every write (ADO,
+    tmux panes, claude spawns including the auth probe, git, worktree moves,
+    local status/marker files) becomes a logged ``[dry-run] WOULD …`` no-op.
+    ``pid_alive`` stays real: it is a pure read (signal 0) and the reap plan
+    is meaningless without it. The tick lock and the supervisor log are still
+    written — they are coordination artifacts, not fleet state.
+    """
+    return replace(
+        seams,
+        ado=ReadOnlyAdoClient(seams.ado),
+        launcher=DryRunLauncher(),
+        cleaner=DryRunCleaner(),
+        run_git=_dry_run_git,
+        auth_ok=_dry_run_auth_ok,
+        archive_worktree=_dry_run_archive_worktree,
+        update_status=_dry_run_update_status,
+        write_claimed_at=_dry_run_write_claimed_at,
+    )
+
+
+def build_seams(config: SupervisorConfig, *, dry_run: bool = False) -> TickSeams:
+    """Build the production seams; with ``dry_run``, wrap them so nothing can mutate."""
+    seams = TickSeams(
+        ado=AzCliAdo(),
+        launcher=TmuxLauncher(config.fleet_home, config.fleet_root),
+        cleaner=ClaudeCleanup(config.fleet_home),
+    )
+    if not dry_run:
+        return seams
+    _log(
+        "DRY-RUN tick: reads and planning only — every ADO write, runner launch, "
+        "claude spawn, and local fleet-state write is suppressed and logged as "
+        "'[dry-run] WOULD …'"
+    )
+    return dry_run_seams(seams)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run one supervisor tick against the real ADO board and tmux."""
     parser = argparse.ArgumentParser(
@@ -1058,13 +1226,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--fleet-root", type=Path, default=None)
     parser.add_argument("--fleet-home", type=Path, default=None)
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="run the full tick read+plan logic but suppress every side effect "
+        "(board writes, runner launches, claude spawns, local fleet-state writes); "
+        "FLEET_DRY_RUN=1 is equivalent",
+    )
     args: argparse.Namespace = parser.parse_args(argv)
     config: SupervisorConfig = config_from_env(args.fleet_root, args.fleet_home)
-    seams = TickSeams(
-        ado=AzCliAdo(),
-        launcher=TmuxLauncher(config.fleet_home, config.fleet_root),
-        cleaner=ClaudeCleanup(config.fleet_home),
-    )
+    dry_run: bool = bool(args.dry_run) or FLEET_DRY_RUN
+    seams: TickSeams = build_seams(config, dry_run=dry_run)
     try:
         return run_tick(seams, config)
     except subprocess.CalledProcessError as exc:

@@ -27,6 +27,14 @@ def _str_from_env(name: str, default: str) -> str:
     return raw.strip()
 
 
+def _bool_from_env(name: str, default: bool) -> bool:
+    """Read a boolean override from the environment, falling back to ``default``."""
+    raw: str | None = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() not in ("0", "false", "no")
+
+
 def _fleet_home() -> Path:
     """Return the repo flotilla operates on: ``FLEET_HOME`` or the working directory.
 
@@ -48,8 +56,17 @@ FLEET_ROOT: Path = Path(os.environ.get("FLEET_ROOT") or (_fleet_home() / ".claud
 
 # Concurrency cap: 4 cores / no swap — two runners already saturate a small
 # devbox during lint/test, and all runners share one account rate limit
-# (addendum §1).
+# (addendum §1). This is the CLAIM BUDGET only — 0 stops new claims but does
+# NOT make a tick safe: finalize and reap still mutate. For a tick that
+# cannot mutate, use FLEET_DRY_RUN / `flotilla tick --dry-run`.
 FLEET_MAX_RUNNERS: int = _int_from_env("FLEET_MAX_RUNNERS", 2)
+
+# Dry run: the tick runs every pass's read+plan logic and reports the
+# would-be finalize/reap/claim actions, but every side effect — ADO writes,
+# runner launches, claude spawns (cleanup + auth probe), git, worktree moves,
+# local status/marker writes — is suppressed at the TickSeams boundary.
+# Equivalent to the `--dry-run` flag on `flotilla tick` / flotilla-supervisor.
+FLEET_DRY_RUN: bool = _bool_from_env("FLEET_DRY_RUN", False)
 
 # Liveness: the runner wrapper stamps last_heartbeat every 60s; the watchdog
 # treats a heartbeat older than 10 minutes (10× the interval, tolerant of long

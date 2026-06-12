@@ -50,6 +50,7 @@ def test_finalize_retires_a_merged_done_slice(
     fake_cleaner: FakeCleaner,
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
+    make_seams: Callable[..., TickSeams],
     make_supervisor_config: Callable[..., SupervisorConfig],
 ) -> None:
     make_issue(
@@ -57,9 +58,7 @@ def test_finalize_retires_a_merged_done_slice(
     )
     write(make_status(phase="parked", parked_state="awaiting-pr-approval"), fleet_root)
     fake_board.completed_prs["feat/slice-41-example"] = "https://pr/41"
-    outcome: FinalizeOutcome = finalize_pass(
-        fake_board, fake_cleaner, make_supervisor_config()
-    )
+    outcome: FinalizeOutcome = finalize_pass(make_seams(), make_supervisor_config())
     assert outcome.finalized == (41,)
     assert fake_cleaner.cleaned == ["feat/slice-41-example"]
     assert fake_board.issues[41].tags == ["regular-tag"]
@@ -76,13 +75,12 @@ def test_finalize_waits_for_the_pr_to_merge(
     fake_cleaner: FakeCleaner,
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
+    make_seams: Callable[..., TickSeams],
     make_supervisor_config: Callable[..., SupervisorConfig],
 ) -> None:
     make_issue(41, state="Done", tags=["fleet:claimed"])
     write(make_status(phase="parked", parked_state="awaiting-pr-approval"), fleet_root)
-    outcome: FinalizeOutcome = finalize_pass(
-        fake_board, fake_cleaner, make_supervisor_config()
-    )
+    outcome: FinalizeOutcome = finalize_pass(make_seams(), make_supervisor_config())
     assert outcome.awaiting_merge == (41,)
     assert fake_cleaner.cleaned == []
     assert "fleet:claimed" in fake_board.issues[41].tags
@@ -92,12 +90,11 @@ def test_finalize_ignores_done_slices_the_fleet_never_claimed(
     fake_board: FakeBoard,
     fake_cleaner: FakeCleaner,
     make_issue: Callable[..., FakeIssue],
+    make_seams: Callable[..., TickSeams],
     make_supervisor_config: Callable[..., SupervisorConfig],
 ) -> None:
     make_issue(9, state="Done")  # a human-delivered slice
-    outcome: FinalizeOutcome = finalize_pass(
-        fake_board, fake_cleaner, make_supervisor_config()
-    )
+    outcome: FinalizeOutcome = finalize_pass(make_seams(), make_supervisor_config())
     assert outcome == FinalizeOutcome(finalized=(), awaiting_merge=(), cleanup_failed=())
     assert fake_cleaner.cleaned == []
 
@@ -108,15 +105,14 @@ def test_finalize_cleanup_failure_is_retried_next_tick(
     fake_cleaner: FakeCleaner,
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
+    make_seams: Callable[..., TickSeams],
     make_supervisor_config: Callable[..., SupervisorConfig],
 ) -> None:
     make_issue(41, state="Done", tags=["fleet:claimed"])
     write(make_status(phase="parked", parked_state="awaiting-pr-approval"), fleet_root)
     fake_board.completed_prs["feat/slice-41-example"] = "https://pr/41"
     fake_cleaner.fail_for.add("feat/slice-41-example")
-    outcome: FinalizeOutcome = finalize_pass(
-        fake_board, fake_cleaner, make_supervisor_config()
-    )
+    outcome: FinalizeOutcome = finalize_pass(make_seams(), make_supervisor_config())
     assert outcome.cleanup_failed == (41,)
     assert "fleet:claimed" in fake_board.issues[41].tags  # untouched -> retried
     assert load(41, fleet_root).phase == "parked"
@@ -126,13 +122,12 @@ def test_finalize_derives_the_branch_when_no_status_file_exists(
     fake_board: FakeBoard,
     fake_cleaner: FakeCleaner,
     make_issue: Callable[..., FakeIssue],
+    make_seams: Callable[..., TickSeams],
     make_supervisor_config: Callable[..., SupervisorConfig],
 ) -> None:
     make_issue(41, title="feat: example", state="Done", tags=["fleet:claimed"])
     fake_board.completed_prs["feat/slice-41-example"] = "https://pr/41"
-    outcome: FinalizeOutcome = finalize_pass(
-        fake_board, fake_cleaner, make_supervisor_config()
-    )
+    outcome: FinalizeOutcome = finalize_pass(make_seams(), make_supervisor_config())
     assert outcome.finalized == (41,)
     assert fake_cleaner.cleaned == ["feat/slice-41-example"]
 
