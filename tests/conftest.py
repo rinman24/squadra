@@ -28,7 +28,10 @@ from flotilla.constants import (
 from flotilla.domain import Lifecycle, LifecycleFacts
 from flotilla.status import FleetStatus
 from flotilla.supervisor import TickSeams
-from tests.helpers.fleet_fakes import FakeBoard, FakeCleaner, FakeIssue, FakeLauncher
+from tests.helpers.cleanup_fakes import FakeCleanup
+from tests.helpers.fleet_fakes import FakeBoard, FakeIssue
+from tests.helpers.sandbox_fakes import FakeSandbox
+from tests.helpers.worktree_fakes import FakeWorktree
 
 
 @pytest.fixture
@@ -86,15 +89,21 @@ def make_issue(fake_board: FakeBoard) -> Callable[..., FakeIssue]:
 
 
 @pytest.fixture
-def fake_launcher() -> FakeLauncher:
-    """Spy launcher recording (item_id, branch, attempt) per launch."""
-    return FakeLauncher()
+def fake_sandbox() -> FakeSandbox:
+    """In-memory sandbox seam recording launch/teardown/exec; seed inspect status."""
+    return FakeSandbox()
 
 
 @pytest.fixture
-def fake_cleaner() -> FakeCleaner:
-    """Spy cleaner recording the branches it was asked to clean."""
-    return FakeCleaner()
+def fake_cleanup() -> FakeCleanup:
+    """In-memory deterministic-cleanup seam recording its finalize steps."""
+    return FakeCleanup()
+
+
+@pytest.fixture
+def fake_worktree() -> FakeWorktree:
+    """In-memory worktree seam recording create/archive/prune."""
+    return FakeWorktree()
 
 
 def _always_ok() -> bool:
@@ -104,15 +113,19 @@ def _always_ok() -> bool:
 
 @pytest.fixture
 def make_seams(
-    fake_board: FakeBoard, fake_launcher: FakeLauncher, fake_cleaner: FakeCleaner
+    fake_board: FakeBoard,
+    fake_sandbox: FakeSandbox,
+    fake_cleanup: FakeCleanup,
+    fake_worktree: FakeWorktree,
 ) -> Callable[..., TickSeams]:
     """Factory fixture — tick seams over the shared fakes (override per test)."""
 
     def _factory(**overrides: object) -> TickSeams:
         base = TickSeams(
             ado=fake_board,
-            launcher=fake_launcher,
-            cleaner=fake_cleaner,
+            sandbox=fake_sandbox,
+            cleanup=fake_cleanup,
+            worktree=fake_worktree,
             auth_ok=_always_ok,
         )
         return dataclasses.replace(base, **overrides)
