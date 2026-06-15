@@ -15,6 +15,7 @@ from a concrete board's native semantics at the boundary:
 - the per-pass outcome records returned for logging and tests.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -559,3 +560,59 @@ class ExecResult:
 
     exit_code: int
     stdout: str
+
+
+# --- manifest / slice-context vocabulary (the commit-only handoff, §§1–2) -----
+#
+# The commit-only agent and the host exchange two bind-mounted JSON files under
+# the worktree's ``.flotilla/`` (both uncommitted, gitignored): the supervisor
+# injects a read-only :class:`SliceContext` (``slice.json``) *before* launch —
+# the board reads the agent no longer performs itself — and the agent writes an
+# :class:`OutcomeManifest` (``outcome.json``) as its final act, which the
+# supervisor reads + validates *after* exit. The manifest is the *intent* half of
+# the ``(container_exit, manifest_valid, commits)`` completion triple; the
+# read/validate I/O lives in :mod:`flotilla.manifest`. These types are the
+# neutral vocabulary G2's produce-artifacts mode consumes.
+
+
+@dataclass(frozen=True, slots=True)
+class SliceTask:
+    """One Task of the slice, as the host read it for the agent's context."""
+
+    task_id: int
+    title: str
+    state: str
+
+
+@dataclass(frozen=True, slots=True)
+class SliceContext:
+    """The read-only host→agent input (``slice.json``).
+
+    The supervisor reads the slice's Issue + Tasks + predecessor states host-side
+    and injects them so the contained agent — which has no board access — has the
+    context it would otherwise have queried itself.
+    """
+
+    issue_id: int
+    title: str
+    tasks: tuple[SliceTask, ...]
+    predecessor_states: Mapping[int, str]
+
+
+@dataclass(frozen=True, slots=True)
+class OutcomeManifest:
+    """The agent→host handoff (``outcome.json``) — the *intent* of a finished run.
+
+    ``parked_state`` is the deliberate park the run resolved to (one of
+    :data:`MANIFEST_PARKED_STATES`); ``needs-decision`` routes to the no-PR
+    decision park, every other state routes to the clean handoff (push + PR + QA +
+    park). ``pr_title`` / ``pr_body`` carry the PR the supervisor opens host-side
+    (the write-tail moved off the agent); ``qa_path`` is the in-worktree path of
+    the QA plan the runner authored, recorded rather than turned into a board Task
+    by the agent.
+    """
+
+    parked_state: str
+    pr_title: str | None = None
+    pr_body: str | None = None
+    qa_path: str | None = None
