@@ -5,9 +5,12 @@ a GitHub-shaped fake, under one shared logical seed, via the parametrized
 ``board`` fixture. The deterministic ``CleanupAccess`` suite runs against BOTH
 the real :class:`flotilla.cleanup.DeterministicCleanup` (driven by a recording
 runner — no live git/docker) and an in-memory fake, via the parametrized
-``cleanup`` fixture. Fixtures live here (not in the repo-root
-``tests/conftest.py``) so the contract suites stay self-contained. Return types
-are annotated because Pyright cannot infer parametrized-fixture return types.
+``cleanup`` fixture. The ``WorktreeAccess`` suite runs against the real
+:class:`flotilla.worktree.GitWorktreeAccess` (driven by fake git runner + mover)
+and an in-memory fake, via the parametrized ``worktree`` fixture. Fixtures live
+here (not in the repo-root ``tests/conftest.py``) so the contract suites stay
+self-contained. Return types are annotated because Pyright cannot infer
+parametrized-fixture return types.
 """
 
 from collections.abc import Sequence
@@ -17,8 +20,10 @@ import pytest
 from flotilla.board import BoardAccess
 from flotilla.cleanup import CleanupAccess, DeterministicCleanup
 from flotilla.domain import Lifecycle, Tags
+from flotilla.worktree import GitWorktreeAccess, WorktreeAccess
 from tests.helpers.board_fakes import AdoShapedFakeBoard, GitHubShapedFakeBoard
 from tests.helpers.cleanup_fakes import FakeCleanup
+from tests.helpers.worktree_fakes import FakeWorktree
 
 # Shared logical seed — the same items, in the same neutral buckets, across both
 # shapes. The DONE item on the GitHub fake is seeded under its SECONDARY native
@@ -95,3 +100,16 @@ def cleanup(request: pytest.FixtureRequest) -> CleanupAccess:
     if shape == "real":
         return DeterministicCleanup(fleet_home="/repo", run=_all_succeed)
     return FakeCleanup()
+
+
+def _noop_move(_src: str, _dest: str) -> None:
+    """A move that does nothing — drives the real adapter's archive without disk I/O."""
+
+
+@pytest.fixture(params=["real", "fake"])
+def worktree(request: pytest.FixtureRequest) -> WorktreeAccess:
+    """A conforming ``WorktreeAccess`` of each shape (real adapter + in-memory fake)."""
+    shape: str = request.param
+    if shape == "real":
+        return GitWorktreeAccess(fleet_home="/repo", run=_all_succeed, move=_noop_move)
+    return FakeWorktree()
