@@ -18,6 +18,7 @@ this slice) and ``DryRunSandbox`` the write-blocking dry-run decorator (mirrorin
 """
 
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 import json
 import subprocess
 from typing import Protocol, cast
@@ -196,3 +197,53 @@ def _first_state(payload: str) -> object:
     if not isinstance(first, dict):
         return None
     return cast("dict[str, object]", first).get("State")
+
+
+# --- dry-run boundary ----------------------------------------------------------
+
+
+def _log(message: str) -> None:
+    """Emit one timestamped sandbox log line (matches the supervisor's format)."""
+    stamp: str = datetime.now(UTC).isoformat(timespec="seconds")
+    print(f"[{stamp}] sandbox: {message}")
+
+
+class DryRunSandbox:
+    """``SandboxAccess`` decorator that physically cannot mutate any sandbox.
+
+    The exact write-blocking discipline of :class:`flotilla.supervisor.ReadOnlyBoard`,
+    applied to the sandbox seam: the reads (``inspect`` / ``logs``) delegate to the
+    wrapped adapter, while the mutations (``launch`` / ``teardown`` / ``exec``) log
+    the action a real tick WOULD have performed and do nothing — the call never
+    reaches the wrapped adapter, so a dry-run tick cannot build, tear down, or exec
+    into a container. ``launch`` / ``teardown`` report success and ``exec`` returns
+    a benign empty result so the planning logic continues unperturbed (mirroring
+    :class:`flotilla.supervisor.DryRunLauncher`).
+    """
+
+    def __init__(self, inner: SandboxAccess) -> None:
+        """Wrap ``inner``, passing its reads through and absorbing its mutations."""
+        self._inner = inner
+
+    def inspect(self, spec: SandboxSpec) -> SandboxStatus:
+        """Pass the read through to the wrapped adapter."""
+        return self._inner.inspect(spec)
+
+    def logs(self, spec: SandboxSpec) -> str:
+        """Pass the read through to the wrapped adapter."""
+        return self._inner.logs(spec)
+
+    def launch(self, spec: SandboxSpec) -> bool:
+        """Absorb the mutation, logging the would-be sandbox launch."""
+        _log(f"[dry-run] WOULD launch sandbox {spec.project} for #{spec.item_id}")
+        return True
+
+    def teardown(self, spec: SandboxSpec) -> bool:
+        """Absorb the mutation, logging the would-be teardown."""
+        _log(f"[dry-run] WOULD tear down sandbox {spec.project} (compose down -v)")
+        return True
+
+    def exec(self, spec: SandboxSpec, command: tuple[str, ...]) -> ExecResult:
+        """Absorb the mutation, logging the would-be exec and returning an empty result."""
+        _log(f"[dry-run] WOULD exec {list(command)} in sandbox {spec.project}")
+        return ExecResult(exit_code=0, stdout="")

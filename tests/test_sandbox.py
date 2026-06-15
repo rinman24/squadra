@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 import subprocess
 
+import pytest
+
 from flotilla.domain import (
     ExecResult,
     SandboxAbsent,
@@ -20,7 +22,8 @@ from flotilla.domain import (
     SandboxSpec,
     SandboxStatus,
 )
-from flotilla.sandbox import ComposeSandbox, status_from_inspect
+from flotilla.sandbox import ComposeSandbox, DryRunSandbox, status_from_inspect
+from tests.helpers.sandbox_fakes import FakeSandbox
 
 
 def _spec() -> SandboxSpec:
@@ -196,3 +199,62 @@ def test_status_from_inspect_none_state_is_absent() -> None:
 def test_status_from_inspect_missing_exit_code_defaults_to_zero() -> None:
     # a non-running status with no ExitCode field still projects to an exit
     assert status_from_inspect({"Status": "dead"}) == SandboxExited(exit_code=0)
+
+
+# --- DryRunSandbox (write-blocking decorator; mirrors ReadOnlyBoard) ----------
+
+
+def test_dry_run_inspect_passes_through() -> None:
+    inner = FakeSandbox()
+    inner.seed("flotilla-slice-141", SandboxRunning())
+    sandbox = DryRunSandbox(inner)
+    assert isinstance(sandbox.inspect(_spec()), SandboxRunning)
+
+
+def test_dry_run_logs_pass_through() -> None:
+    inner = FakeSandbox()
+    inner.seed_logs("flotilla-slice-141", "agent output\n")
+    sandbox = DryRunSandbox(inner)
+    assert sandbox.logs(_spec()) == "agent output\n"
+
+
+def test_dry_run_launch_is_a_logged_noop(capsys: pytest.CaptureFixture[str]) -> None:
+    inner = FakeSandbox()
+    sandbox = DryRunSandbox(inner)
+    assert sandbox.launch(_spec()) is True  # reports success, mutates nothing
+    assert inner.launches == []  # the inner adapter was never touched
+    out: str = capsys.readouterr().out
+    assert "[dry-run] WOULD" in out
+    assert "flotilla-slice-141" in out
+
+
+def test_dry_run_teardown_is_a_logged_noop(capsys: pytest.CaptureFixture[str]) -> None:
+    inner = FakeSandbox()
+    sandbox = DryRunSandbox(inner)
+    assert sandbox.teardown(_spec()) is True
+    assert inner.teardowns == []
+    assert "[dry-run] WOULD" in capsys.readouterr().out
+
+
+def test_dry_run_exec_is_a_logged_noop(capsys: pytest.CaptureFixture[str]) -> None:
+    inner = FakeSandbox()
+    sandbox = DryRunSandbox(inner)
+    result: ExecResult = sandbox.exec(_spec(), ("rm", "-rf", "/work"))
+    assert result == ExecResult(exit_code=0, stdout="")  # benign no-op result
+    assert inner.execs == []  # the destructive exec never reached the inner adapter
+    assert "[dry-run] WOULD" in capsys.readouterr().out
+
+
+def test_dry_run_blocks_every_mutation_but_no_read(capsys: pytest.CaptureFixture[str]) -> None:
+    # the dry-run boundary blocks exactly the three mutations and no read
+    inner = FakeSandbox()
+    inner.seed("flotilla-slice-141", SandboxRunning())
+    sandbox = DryRunSandbox(inner)
+    sandbox.launch(_spec())
+    sandbox.teardown(_spec())
+    sandbox.exec(_spec(), ("true",))
+    sandbox.inspect(_spec())
+    sandbox.logs(_spec())
+    assert (inner.launches, inner.teardowns, inner.execs) == ([], [], [])
+    # the running seed was never torn down by the dry-run teardown
+    assert isinstance(inner.statuses["flotilla-slice-141"], SandboxRunning)
