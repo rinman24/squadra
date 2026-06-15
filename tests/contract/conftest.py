@@ -7,22 +7,26 @@ the real :class:`flotilla.cleanup.DeterministicCleanup` (driven by a recording
 runner — no live git/docker) and an in-memory fake, via the parametrized
 ``cleanup`` fixture. The ``WorktreeAccess`` suite runs against the real
 :class:`flotilla.worktree.GitWorktreeAccess` (driven by fake git runner + mover)
-and an in-memory fake, via the parametrized ``worktree`` fixture. Fixtures live
-here (not in the repo-root ``tests/conftest.py``) so the contract suites stay
-self-contained. Return types are annotated because Pyright cannot infer
-parametrized-fixture return types.
+and an in-memory fake, via the parametrized ``worktree`` fixture. The
+``SandboxAccess`` suite runs against a freshly-seeded in-memory
+:class:`~tests.helpers.sandbox_fakes.FakeSandbox`, via the ``sandbox`` fixture.
+Fixtures live here (not in the repo-root ``tests/conftest.py``) so the contract
+suites stay self-contained. Return types are annotated because Pyright cannot
+infer parametrized-fixture return types.
 """
 
 from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
 
 from flotilla.board import BoardAccess
 from flotilla.cleanup import CleanupAccess, DeterministicCleanup
-from flotilla.domain import Lifecycle, Tags
+from flotilla.domain import Lifecycle, SandboxSpec, Tags
 from flotilla.worktree import GitWorktreeAccess, WorktreeAccess
 from tests.helpers.board_fakes import AdoShapedFakeBoard, GitHubShapedFakeBoard
 from tests.helpers.cleanup_fakes import FakeCleanup
+from tests.helpers.sandbox_fakes import FakeSandbox
 from tests.helpers.worktree_fakes import FakeWorktree
 
 # Shared logical seed — the same items, in the same neutral buckets, across both
@@ -113,3 +117,27 @@ def worktree(request: pytest.FixtureRequest) -> WorktreeAccess:
     if shape == "real":
         return GitWorktreeAccess(fleet_home="/repo", run=_all_succeed, move=_noop_move)
     return FakeWorktree()
+
+
+# --- SandboxAccess conformance fixtures ---------------------------------------
+
+# The shared sandbox seed — one slice's per-slice ephemeral compose project.
+SANDBOX_ITEM_ID: int = 141
+SANDBOX_PROJECT: str = "flotilla-slice-141"
+
+
+@pytest.fixture
+def sandbox_spec() -> SandboxSpec:
+    """The shared per-slice sandbox spec the contract exercises."""
+    return SandboxSpec(
+        item_id=SANDBOX_ITEM_ID,
+        project=SANDBOX_PROJECT,
+        compose_file=Path("/work/.flotilla/compose.yaml"),
+        worktree=Path("/work"),
+    )
+
+
+@pytest.fixture
+def sandbox() -> FakeSandbox:
+    """A freshly-seeded conforming ``SandboxAccess`` (the in-memory fake)."""
+    return FakeSandbox()
