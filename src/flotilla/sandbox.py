@@ -17,6 +17,9 @@ this slice) and ``DryRunSandbox`` the write-blocking dry-run decorator (mirrorin
 :class:`flotilla.supervisor.ReadOnlyBoard`).
 """
 
+from collections.abc import Callable, Sequence
+import json
+import subprocess
 from typing import Protocol, cast
 
 from flotilla.domain import (
@@ -98,3 +101,98 @@ def status_from_inspect(state: object) -> SandboxStatus:
         return SandboxRunning()
     exit_code: object = fields.get("ExitCode")
     return SandboxExited(exit_code=exit_code if isinstance(exit_code, int) else 0)
+
+
+# --- compose-backed adapter ---------------------------------------------------
+
+# The command-runner seam type: a docker argv in, the completed process out. The
+# adapter needs both the exit code (launch/teardown success, exec status) and the
+# captured stdout (inspect JSON, logs, exec output), so the seam returns the
+# whole ``CompletedProcess`` (cf. the auth-probe runner in ``supervisor.py``).
+DockerRun = Callable[[Sequence[str]], "subprocess.CompletedProcess[str]"]
+
+
+def _run_docker(args: Sequence[str]) -> "subprocess.CompletedProcess[str]":
+    """Run a ``docker`` command, capturing output; never raises on a non-zero exit.
+
+    Non-zero is information the adapter needs (a failed build, a leaked teardown,
+    an exec exit status), not an exception — the engine classifies the failure
+    edge from the returned code, so ``check=False`` is deliberate.
+    """
+    return subprocess.run(["docker", *args], capture_output=True, text=True, check=False)
+
+
+class ComposeSandbox:
+    """``SandboxAccess`` backed by ``docker compose`` (the agent-as-command model).
+
+    Each call maps a :class:`~flotilla.domain.SandboxSpec` onto a project-scoped
+    ``docker compose -p <project> -f <compose_file>`` invocation (the
+    target-repo-owned ``.flotilla/`` compose, ADR-0002 §15). ``launch`` builds +
+    ``up -d`` the project (the agent service's command *is* the runner, so
+    bringing it up *is* starting the agent) and returns immediately; ``inspect``
+    derives the agent's liveness/exit from ``docker inspect`` of the agent
+    container; ``teardown`` removes the whole project with its volumes. The
+    command runner is injected (the DI seam, like ``AzCliAdo``'s ``run``) so unit
+    tests use a canned runner — no live Docker.
+    """
+
+    def __init__(self, run: DockerRun = _run_docker) -> None:
+        """Wire the adapter to its docker command runner (the test seam)."""
+        self._run = run
+
+    def _compose(self, spec: SandboxSpec) -> list[str]:
+        """Build the project-scoped ``compose`` prefix shared by every compose call."""
+        return ["compose", "-p", spec.project, "-f", str(spec.compose_file)]
+
+    def launch(self, spec: SandboxSpec) -> bool:
+        """Build + ``compose up -d`` the project; ``False`` if the build/up failed."""
+        completed = self._run([*self._compose(spec), "up", "-d", "--build"])
+        return completed.returncode == 0
+
+    def inspect(self, spec: SandboxSpec) -> SandboxStatus:
+        """Project the agent container's ``docker inspect .State`` onto a status.
+
+        Two reads: ``compose ps -q <agent>`` resolves the container id (empty →
+        :class:`~flotilla.domain.SandboxAbsent`, i.e. never launched or torn
+        down), then ``docker inspect <id>`` yields ``[0].State`` for
+        :func:`status_from_inspect`.
+        """
+        ps = self._run([*self._compose(spec), "ps", "-q", spec.agent_service])
+        container_id: str = ps.stdout.strip()
+        if not container_id:
+            return SandboxAbsent()
+        inspected = self._run(["inspect", container_id])
+        return status_from_inspect(_first_state(inspected.stdout))
+
+    def logs(self, spec: SandboxSpec) -> str:
+        """Return ``compose logs <agent>`` stdout (the contained run's output)."""
+        completed = self._run([*self._compose(spec), "logs", spec.agent_service])
+        return completed.stdout
+
+    def teardown(self, spec: SandboxSpec) -> bool:
+        """``compose down -v`` the whole project; ``False`` on a leaked teardown."""
+        completed = self._run([*self._compose(spec), "down", "-v"])
+        return completed.returncode == 0
+
+    def exec(self, spec: SandboxSpec, command: tuple[str, ...]) -> ExecResult:
+        """Run ``command`` in the running agent container (``compose exec -T``)."""
+        completed = self._run([*self._compose(spec), "exec", "-T", spec.agent_service, *command])
+        return ExecResult(exit_code=completed.returncode, stdout=completed.stdout)
+
+
+def _first_state(payload: str) -> object:
+    """Extract ``[0].State`` from a ``docker inspect`` JSON array, or ``None``.
+
+    ``docker inspect`` returns a one-element array; an empty/garbage payload (no
+    such container, or a transient blank read) yields ``None`` →
+    :class:`~flotilla.domain.SandboxAbsent`, never a crash.
+    """
+    if not payload.strip():
+        return None
+    raw: object = json.loads(payload)
+    if not isinstance(raw, list) or not raw:
+        return None
+    first: object = cast("list[object]", raw)[0]
+    if not isinstance(first, dict):
+        return None
+    return cast("dict[str, object]", first).get("State")
