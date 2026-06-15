@@ -25,7 +25,7 @@ from flotilla.constants import (
     HEARTBEAT_INTERVAL_SECONDS,
     STALENESS_THRESHOLD_SECONDS,
 )
-from flotilla.domain import Lifecycle
+from flotilla.domain import Lifecycle, LifecycleFacts
 from flotilla.status import FleetStatus
 from flotilla.supervisor import TickSeams
 from tests.helpers.fleet_fakes import FakeBoard, FakeCleaner, FakeIssue, FakeLauncher
@@ -151,5 +151,50 @@ def make_config(fleet_root: Path, tmp_path: Path) -> Callable[..., FlotillaConfi
             staleness_threshold_seconds=STALENESS_THRESHOLD_SECONDS,
         )
         return dataclasses.replace(base, **overrides)
+
+    return _factory
+
+
+@pytest.fixture
+def default_facts() -> LifecycleFacts:
+    """A benign baseline ``LifecycleFacts`` — a fleet-claimed slice mid-run.
+
+    The neutral starting point is an in-flight, fleet-claimed slice whose
+    container is running and fresh (no failure inputs, no manifest yet): the
+    :class:`~flotilla.domain.State.RUNNING` state. Each test overrides only the
+    facts it exercises via the ``make_facts`` factory.
+    """
+    return LifecycleFacts(
+        lifecycle=Lifecycle.ACTIVE,
+        is_fleet_claimed=True,
+        predecessors_done=True,
+        parked_tagged=False,
+        failed_tagged=False,
+        needs_decision_tagged=False,
+        phase="tdd",
+        parked_state=None,
+        container_present=True,
+        container_running=True,
+        container_exit_code=None,
+        heartbeat_stale=False,
+        manifest_present=False,
+        manifest_valid=False,
+        manifest_needs_decision=False,
+        commits_present=False,
+        completed_pr_url=None,
+        build_failed=False,
+        egress_denied_host=None,
+        teardown_failed=False,
+        attempt=1,
+        max_attempts=3,
+    )
+
+
+@pytest.fixture
+def make_facts(default_facts: LifecycleFacts) -> Callable[..., LifecycleFacts]:
+    """Factory fixture — call with field overrides to produce a ``LifecycleFacts``."""
+
+    def _factory(**overrides: object) -> LifecycleFacts:
+        return dataclasses.replace(default_facts, **overrides)
 
     return _factory
