@@ -17,6 +17,7 @@ from a concrete board's native semantics at the boundary:
 
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 from flotilla.constants import (
     DEFAULT_TAG_PREFIX,
@@ -477,3 +478,84 @@ class LifecycleDecision:
 
     state: State
     actions: tuple[LifecycleAction, ...]
+
+
+# --- Sandbox vocabulary (the SandboxAccess seam — ADR-0002 decisions 1 & 5) ---
+#
+# The :class:`SandboxAccess` seam (in :mod:`flotilla.sandbox`) runs one slice's
+# Claude agent as a per-slice ephemeral Docker compose project. These types are
+# the seam's neutral vocabulary: a :class:`SandboxSpec` names the project the
+# orchestrator launches; :data:`SandboxStatus` is the observed container state
+# the agent-as-command model derives the agent's liveness/exit from; and an
+# :class:`ExecResult` is the captured outcome of a one-off ``exec`` into the
+# running sandbox. The seam is provider-blind in shape (Docker is the only
+# Resource today); none of these carry Docker-native strings.
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxSpec:
+    """The per-slice ephemeral sandbox a launch targets (a compose project).
+
+    A neutral descriptor, not a Docker artifact: the adapter maps it to its own
+    ``compose -p <project> -f <compose_file>`` invocation and bind-mounts
+    ``worktree`` as the agent's ``/work``.
+
+    - ``item_id`` — the slice's board work-item id (also the launch attempt's
+      identity in logs).
+    - ``project`` — the compose project name (the unit ``teardown`` removes
+      wholesale; one project per slice attempt keeps concurrent slices isolated).
+    - ``compose_file`` — the target-repo-owned ``.flotilla/`` compose file the
+      adapter runs (target repos own the compose by convention, ADR-0002 §15).
+    - ``worktree`` — the host path bind-mounted as the agent's ``/work`` (the
+      supervisor creates it off ``origin/main`` before launch, ADR-0002 §2).
+    - ``agent_service`` — the compose service whose command *is* the runner
+      (``runner-wrap → claude``); the inspect/exec/logs target.
+    """
+
+    item_id: int
+    project: str
+    compose_file: Path
+    worktree: Path
+    agent_service: str = "agent"
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxRunning:
+    """The sandbox's agent container exists and is currently running."""
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxExited:
+    """The sandbox's agent container has exited (the agent-as-command finished).
+
+    ``exit_code`` is the container's ``.State.ExitCode`` — in the agent-as-command
+    model it *is* the agent's exit code (ADR-0002 §5): 0 is a clean run, non-zero
+    is the agent-crash failure edge.
+    """
+
+    exit_code: int
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxAbsent:
+    """No agent container exists for the sandbox (never launched, or torn down)."""
+
+
+# The closed set of observed sandbox states. ``inspect`` returns exactly one; the
+# orchestrator (F4) projects it into the ``container_running`` / ``container_exit_code``
+# facts the :class:`LifecycleEngine` reads. Modeled as a union (not an enum) so the
+# exit code travels with the ``exited`` case — the agent-as-command exit signal.
+SandboxStatus = SandboxRunning | SandboxExited | SandboxAbsent
+
+
+@dataclass(frozen=True, slots=True)
+class ExecResult:
+    """The captured outcome of one ``exec`` into a running sandbox.
+
+    ``exit_code`` is the exec'd command's exit status (not the container's);
+    ``stdout`` is its captured standard output (the attach/inspect convenience
+    path — ``flotilla attach`` → ``docker exec``, ADR-0002 §5).
+    """
+
+    exit_code: int
+    stdout: str
