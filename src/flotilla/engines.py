@@ -1,16 +1,17 @@
-"""Pure decision functions for the supervisor passes.
+"""Pure decision functions for the supervisor tick.
 
-Data in, decision out — no I/O, no board calls. Branch naming and the reap
-pass's park / failed-park eligibility predicates live here; the orchestration
-and I/O that consume them stay in ``supervisor``.
+Data in, decision out — no I/O, no board calls. Branch naming and the subsuming
+derived-state FSM live here; the orchestration and I/O that consume them stay in
+``supervisor``.
 
 :class:`LifecycleEngine` is the subsuming, derived-state FSM (ADR-0002 decision
 3): one pure ``decide(facts) -> LifecycleDecision`` that projects a slice's
 observed reality onto a :class:`~flotilla.domain.State` plus the orchestrator
-intents to execute. It folds the legacy :func:`is_parked` / :func:`is_failed_park`
-predicates into its fact-derivation as derived states; those free functions are
-kept unchanged because the live tick still consumes them until the orchestration
-cutover (F4). Nothing here is wired into the live tick yet.
+intents to execute. It subsumes the legacy finalize / reap / claim passes — and
+the old ``is_parked`` / ``is_failed_park`` predicates they used — by folding the
+deliberate-park / failed-park distinction directly into its fact-derivation
+(:func:`_is_deliberate_park` / :func:`_is_failed_park`). The F4 cutover wired this
+engine into the live tick (``flotilla.supervisor.run_tick``).
 """
 
 import re
@@ -33,10 +34,7 @@ from flotilla.domain import (
     State,
     StopContainer,
     SweepLeak,
-    Tags,
-    WorkItem,
 )
-from flotilla.status import FleetStatus
 
 
 def slice_branch(
@@ -56,36 +54,6 @@ def slice_branch(
         slug = "slice"
     suffix: str = f"-a{attempt}" if attempt > 1 else ""
     return f"{template.format(id=item_id, slug=slug)}{suffix}"
-
-
-def is_parked(item: WorkItem, status: FleetStatus | None, tags: Tags) -> bool:
-    """Report whether the runner stopped heartbeating on purpose (deliberate park).
-
-    A runner carrying any tag in ``tags.parked`` stopped heartbeating on purpose
-    — it is parked, not dead, and must never be reaped (addendum §3-4). The
-    failed tag is in that set because a *tagged* ``<prefix>failed`` slice is
-    already escalated and terminal (never auto-retried); an untagged
-    ``parked_state="failed"`` status, by contrast, is positive failure evidence
-    (a crash, OOM, dead auth, or any unhandled runner error), not a deliberate
-    stop, so the slice stays reap-eligible. A finalized slice (phase ``done``) is
-    always treated as parked — it must never be requeued.
-    """
-    if any(tag in tags.parked for tag in item.tags):
-        return True
-    if status is None:
-        return False
-    if status.phase == "done":
-        return True
-    return status.phase == "parked" and status.parked_state != "failed"
-
-
-def is_failed_park(status: FleetStatus | None) -> bool:
-    """Report whether the status records a failed park (positive failure evidence).
-
-    A failed park skips the staleness wait — the pid-aliveness check alone
-    decides whether the slice is reaped immediately.
-    """
-    return status is not None and status.phase == "parked" and status.parked_state == "failed"
 
 
 # --- LifecycleEngine: the derived-state FSM (ADR-0002 decision 3) -------------
@@ -112,8 +80,9 @@ class LifecycleEngine:
     whatever the primary lifecycle decision was, since a leak never blocks the
     slice's board lifecycle (ADR-0002 decision 6).
 
-    This engine folds the legacy :func:`is_parked` / :func:`is_failed_park`
-    predicates into its fact-derivation: a deliberate park (a parked tag, a
+    This engine folds the legacy ``is_parked`` / ``is_failed_park`` predicates
+    (now retired, ADR-0002 decision 3) into its fact-derivation
+    (:func:`_is_deliberate_park` / :func:`_is_failed_park`): a deliberate park (a parked tag, a
     ``phase=done`` status, or a ``phase=parked`` status whose ``parked_state`` is
     not ``failed``) is a quiescent in-flight state, while a failed park
     (``phase=parked`` + ``parked_state=failed``) is positive failure evidence
