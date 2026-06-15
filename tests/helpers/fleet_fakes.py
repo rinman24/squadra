@@ -1,4 +1,4 @@
-"""In-memory fakes for the AFK-fleet supervisor seams (BoardAccess, Launcher).
+"""In-memory ``BoardAccess`` fake for the AFK-fleet supervisor tick.
 
 Public so test files can annotate fixture parameters with the concrete types
 (Pyright cannot infer fixture types; see Testing Conventions in CLAUDE.md).
@@ -7,7 +7,9 @@ Instances are provided by fixtures in tests/conftest.py.
 ``FakeBoard`` implements the provider-neutral ``BoardAccess`` contract: it
 speaks :class:`~flotilla.domain.Lifecycle`, returns ``WorkItem`` records, and
 stores the structured ``CommentEvent`` objects core emits (no markup) so tests
-assert on event identity, not rendered HTML.
+assert on event identity, not rendered HTML. The sandbox / cleanup / worktree
+seams have their own fakes in ``sandbox_fakes`` / ``cleanup_fakes`` /
+``worktree_fakes`` (the F4 cutover retired the ``Launcher`` / ``Cleaner`` seams).
 """
 
 from dataclasses import dataclass, field
@@ -95,31 +97,3 @@ class FakeBoard:
     def validate_config(self) -> None:
         """Record that the startup validation ran (the fake board always passes)."""
         self.validated = True
-
-
-class FakeLauncher:
-    """Spy launcher; configurable to fail for chosen item ids."""
-
-    def __init__(self) -> None:
-        """Start with no recorded launches and no configured failures."""
-        self.launches: list[tuple[int, str, int]] = []
-        self.fail_for: set[int] = set()
-
-    def launch(self, item_id: int, branch: str, attempt: int) -> bool:
-        """Record the launch; fail when the item id is in ``fail_for``."""
-        self.launches.append((item_id, branch, attempt))
-        return item_id not in self.fail_for
-
-
-class FakeCleaner:
-    """Spy cleaner; configurable to fail for chosen branches."""
-
-    def __init__(self) -> None:
-        """Start with no recorded cleanups and no configured failures."""
-        self.cleaned: list[str] = []
-        self.fail_for: set[str] = set()
-
-    def cleanup(self, branch: str) -> bool:
-        """Record the cleanup; fail when the branch is in ``fail_for``."""
-        self.cleaned.append(branch)
-        return branch not in self.fail_for

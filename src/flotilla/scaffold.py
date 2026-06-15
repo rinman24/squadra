@@ -203,11 +203,9 @@ def _resolve_target_dir(raw: str | None) -> Path:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the standalone ``flotilla.scaffold`` CLI (the ``init`` subcommand).
 
-    HANDOFF (Session 2): fold this ``init`` subcommand into the unified argparse
-    ``flotilla`` CLI in ``cli.py`` (and have ``TmuxLauncher.launch`` inject
-    FLEET_RUNNER_SKILL/FLEET_TDD_SKILL/FLEET_QA_SKILL from the resolved
-    FlotillaConfig into the runner pane). Until then this module is the
-    standalone entry point: ``python -m flotilla.scaffold init ...``.
+    The unified ``flotilla init`` (in :mod:`flotilla.cli`) is the primary entry
+    point; this stays the direct module entry point
+    (``python -m flotilla.scaffold init ...``) for the same scaffolding.
     """
     parser = argparse.ArgumentParser(
         prog="flotilla.scaffold",

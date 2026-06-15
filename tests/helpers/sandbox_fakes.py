@@ -41,6 +41,7 @@ class FakeSandbox:
     exec_result: ExecResult = ExecResult(exit_code=0, stdout="")
     launches: list[SandboxSpec] = field(default_factory=list[SandboxSpec])
     teardowns: list[SandboxSpec] = field(default_factory=list[SandboxSpec])
+    inspects: list[str] = field(default_factory=list[str])
     execs: list[tuple[str, tuple[str, ...]]] = field(
         default_factory=list[tuple[str, tuple[str, ...]]]
     )
@@ -50,6 +51,10 @@ class FakeSandbox:
     def seed(self, project: str, status: SandboxStatus) -> None:
         """Seed a project's current observed status."""
         self.statuses[project] = status
+
+    def inspect_count_is_zero(self) -> bool:
+        """Whether the orchestrator never inspected any container this tick."""
+        return self.inspects == []
 
     def seed_logs(self, project: str, logs: str) -> None:
         """Seed a project's captured agent logs."""
@@ -66,7 +71,8 @@ class FakeSandbox:
         return True
 
     def inspect(self, spec: SandboxSpec) -> SandboxStatus:
-        """Return the project's seeded status (absent when unseeded)."""
+        """Return the project's seeded status (absent when unseeded); record the read."""
+        self.inspects.append(spec.project)
         return self.statuses.get(spec.project, SandboxAbsent())
 
     def logs(self, spec: SandboxSpec) -> str:
