@@ -375,22 +375,25 @@ levers compose:
   the *claim budget*; finalize and reap still mutate the board (drop fleet tags,
   comment PR links, run the headless cleanup, move `Doing → To Do`). For a tick
   that cannot mutate, use `--dry-run`.
-- **Start / stop / status / log on demand**:
-  `flotilla {start|stop|status|log}`. `start` launches a detached `fleet-ticker`
-  tmux session whose loop fires one supervisor tick every
-  `FLEET_TICK_INTERVAL_SECONDS` (default 180), if not already running
-  (idempotent); `stop` kills it (in-flight runners in the separate `fleet`
-  session keep going); `status` reports whether the ticker is running and tails
-  the supervisor log; `log` tails the log (`-f` to follow, `-n N` for N lines).
-  Honors `FLEET_TICKER_SESSION` and `FLEET_TICK_INTERVAL_SECONDS`.
-- **Autostart on container (re)start**: wire `flotilla/_scripts/fleet-autostart.sh`
-  into the container's compose `command`. It is a no-op unless `FLEET_AUTOSTART`
-  is truthy, and idempotently starts the `fleet-ticker` session on boot.
-- **Cron** (optional, for images that ship one): see
-  `flotilla/_scripts/fleet-cron.example` (`*/3 * * * *`).
+- **The fleet-host (production): systemd.** The dedicated fleet-host VM schedules
+  ticks with systemd, not tmux (ADR-0002 §11): a `flotilla.timer` fires a oneshot
+  `flotilla.service` running `flotilla fleet-tick`, which fetches the PAT +
+  `ANTHROPIC_API_KEY` from Key Vault via the VM managed identity, syncs the app
+  repo, and runs one tick. Render + install the units with `flotilla install-units
+  --key-vault <kv> --fleet-home <checkout> [...]`; this does **not** enable the
+  timer. Provisioning, the on-host acceptance (`goss`), and activation
+  (`systemctl enable --now flotilla.timer`) live in
+  [`docs/fleet-host/`](docs/fleet-host/SMOKE.md).
+- **Local / dev on demand: tmux.** `flotilla {start|stop|status|log}` drives a
+  detached `fleet-ticker` tmux session whose loop fires one tick every
+  `FLEET_TICK_INTERVAL_SECONDS` (default 180): `start` is idempotent, `stop` kills
+  it (in-flight runners in the separate `fleet` session keep going), `status`
+  reports + tails, `log` tails (`-f` to follow). This is for hands-on local runs;
+  the fleet-host uses systemd, above. (The boot-time `fleet-autostart.sh` / cron
+  autostart paths have been retired in favor of systemd.)
 
-Each fire is a fresh supervisor process under the same lock (the loop or cron is
-only the timer, so crash-only semantics are preserved). In-flight slice state is
+Each fire is a fresh supervisor process under the same lock (the timer is only the
+schedule, so crash-only semantics are preserved). In-flight slice state is
 reconstructed from the board plus the bind-mounted `.claude/fleet/` status files,
 so a re-started ticker resumes cleanly.
 
@@ -409,9 +412,10 @@ uv run pyright                 # strict type check
 uv run pytest                  # unit + hermetic shell tests
 ```
 
-The shell glue (`runner-wrap.sh`, `fleet-tick.sh`, `fleet-autostart.sh`,
-`fleetctl.sh`, `fleet-cron.example`) ships as package data under
-`src/flotilla/_scripts/`. Anything that needs to invoke it — the supervisor's
-tmux launcher, the `flotilla` dispatcher, the tick entry point — resolves it via
-`flotilla._resources.resolve_script(...)` (`importlib.resources` + `chmod +x`),
-never a path relative to `FLEET_HOME`.
+The shell glue (`runner-wrap.sh`, `fleet-tick.sh`, `fleetctl.sh`) ships as package
+data under `src/flotilla/_scripts/`. Anything that needs to invoke it — the
+supervisor's tmux launcher, the `flotilla` dispatcher, the tick entry point —
+resolves it via `flotilla._resources.resolve_script(...)` (`importlib.resources` +
+`chmod +x`), never a path relative to `FLEET_HOME`. The fleet-host systemd unit
+templates ship the same way under `src/flotilla/_units/` (resolved via
+`resolve_unit(...)`, rendered by `flotilla.units`).

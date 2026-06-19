@@ -1,0 +1,136 @@
+#cloud-config
+# cloud-init.fleet-host.yaml — first-boot provisioning for the flotilla fleet-host VM
+# (ADR-0002 §11). Lays down a NATIVE Docker daemon (no DooD/DinD), the Azure CLI
+# (for `az login --identity` + Key Vault reads), git, and a Python 3.11 venv, then
+# invokes the idempotent fleet-host-activate.sh to install flotilla + the systemd
+# units once the managed identity can read Key Vault.
+#
+# IMPORTANT — the exact first line MUST be `#cloud-config` (no leading blank line,
+# no BOM). When INFRA #148 hand-provisioned gswa-fleet-host, runcmd never fired
+# because the --custom-data first line was not exactly `#cloud-config`
+# (memory fleet-host-vm-provisioned). This file closes that gap and three others
+# found at that time: Python 3.11 (jammy ships 3.10), chown AFTER venv creation,
+# and installing the systemd timer.
+#
+# Docker is installed from Docker's official apt repo with a pinned signed GPG key
+# (not `get.docker.com | sh`): this host is the fleet's trust anchor (it holds the
+# PAT and the Docker socket), so no unpinned curl-pipe-to-shell on it.
+#
+# cloud-init-vs-KV ordering: the Key Vault + the identity's `get` grant may not
+# exist at first boot. fleet-host-activate.sh is IDEMPOTENT and re-runnable — if KV
+# is not yet reachable it logs and exits 0; re-run it (or let the next boot run it)
+# once the grant lands. gswa-backend is NOT cloned here: `flotilla fleet-tick`
+# clones FLEET_HOME on the first tick (memory fleet-host-needs-manual-gswa-clone).
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - python3-venv
+  - apt-transport-https
+  - gnupg
+  - lsb-release
+  - software-properties-common   # provides add-apt-repository (deadsnakes PPA below)
+
+write_files:
+  # The flotilla install commit fleet-host-activate.sh pins (bump at the F5 cutover
+  # / fleet activation — see docs/fleet-host/SMOKE.md and the gswa runtime pin).
+  - path: /opt/flotilla/PINNED_COMMIT
+    permissions: "0644"
+    content: |
+      REPLACE_WITH_FLOTILLA_CUTOVER_COMMIT
+
+  # Static fleet-host parameters consumed by fleet-host-activate.sh + the units.
+  - path: /opt/flotilla/fleet-host.env
+    permissions: "0644"
+    content: |
+      FLEET_KEY_VAULT=gswa-fleet-kv-07c17c
+      FLEET_HOME=/opt/flotilla/gswa-backend
+      FLEET_APP_REPO_URL=https://dev.azure.com/genshift/gswa-dev/_git/gswa-backend
+      FLEET_PARENT_SCOPE_IDS=139
+      FLOTILLA_REPO_URL=https://dev.azure.com/genshift/gswa-dev/_git/flotilla
+      FLEET_VENV=/opt/flotilla/venv
+      FLEET_USER=azureuser
+
+  # The idempotent activation script. CANONICAL SOURCE:
+  # docs/fleet-host/fleet-host-activate.sh — keep this embedded copy in sync.
+  - path: /opt/flotilla/fleet-host-activate.sh
+    permissions: "0755"
+    owner: azureuser:azureuser
+    content: |
+      #!/usr/bin/env bash
+      # fleet-host-activate.sh — idempotent fleet-host activation (ADR-0002 §11).
+      # Installs flotilla from the pin + renders/installs the systemd units. Safe
+      # to re-run; exits 0 (does nothing) until the Key Vault `get` grant exists.
+      # Does NOT enable the timer and does NOT clone gswa-backend (fleet-tick does).
+      set -euo pipefail
+      ENV_FILE=${FLEET_HOST_ENV_FILE:-/opt/flotilla/fleet-host.env}
+      PIN_FILE=${FLEET_PINNED_COMMIT_FILE:-/opt/flotilla/PINNED_COMMIT}
+      log() { echo "fleet-host-activate: $*"; }
+      # shellcheck disable=SC1090
+      [ -f "$ENV_FILE" ] && . "$ENV_FILE"
+      : "${FLEET_KEY_VAULT:?set FLEET_KEY_VAULT in $ENV_FILE}"
+      : "${FLEET_HOME:?set FLEET_HOME in $ENV_FILE}"
+      : "${FLOTILLA_REPO_URL:?set FLOTILLA_REPO_URL in $ENV_FILE}"
+      VENV=${FLEET_VENV:-/opt/flotilla/venv}
+      PIN=$(tr -d '[:space:]' < "$PIN_FILE" 2>/dev/null || true)
+      if ! az login --identity --only-show-errors --output none 2>/dev/null; then
+        log "managed-identity login failed; KV grant not ready? re-run later."; exit 0
+      fi
+      PAT=$(az keyvault secret show --vault-name "$FLEET_KEY_VAULT" --name fleet-ado-pat \
+              --query value --output tsv 2>/dev/null || true)
+      if [ -z "$PAT" ]; then
+        log "could not read fleet-ado-pat from $FLEET_KEY_VAULT; re-run after the grant."; exit 0
+      fi
+      export AZURE_DEVOPS_EXT_PAT="$PAT"
+      SPEC="git+${FLOTILLA_REPO_URL}"
+      [ -n "$PIN" ] && [ "$PIN" != "REPLACE_WITH_FLOTILLA_CUTOVER_COMMIT" ] && SPEC="${SPEC}@${PIN}"
+      log "installing ${SPEC} into ${VENV}"
+      GIT_CONFIG_COUNT=2 \
+      GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= \
+      GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1='!f() { echo username=pat; echo "password=$AZURE_DEVOPS_EXT_PAT"; }; f' \
+        "$VENV/bin/pip" install --upgrade "$SPEC"
+      unset AZURE_DEVOPS_EXT_PAT
+      sudo "$VENV/bin/flotilla" install-units \
+        --key-vault "$FLEET_KEY_VAULT" --fleet-home "$FLEET_HOME" --venv-bin "$VENV/bin" \
+        --app-repo-url "${FLEET_APP_REPO_URL:-}" --parent-scope-ids "${FLEET_PARENT_SCOPE_IDS:-}"
+      sudo systemctl daemon-reload
+      log "done. Smoke a dry-run, then: sudo systemctl enable --now flotilla.timer"
+
+runcmd:
+  # --- Docker Engine (native daemon) from the official apt repo, pinned signed key ---
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - >
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc]
+    https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable"
+    > /etc/apt/sources.list.d/docker.list
+  - apt-get update
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  - systemctl enable --now docker
+  - usermod -aG docker azureuser
+
+  # --- Azure CLI (Microsoft first-party apt repo; for `az login --identity` + KV) ----
+  - curl -fsSL https://aka.ms/InstallAzureCLIDeb | bash
+
+  # --- Python 3.11 (jammy ships 3.10; flotilla requires >=3.11) via deadsnakes ------
+  - add-apt-repository -y ppa:deadsnakes/ppa
+  - apt-get update
+  - apt-get install -y python3.11 python3.11-venv
+
+  # --- Empty flotilla venv (built with 3.11), owned by azureuser so the activate ---
+  # --- script's pip install needs no sudo. chown MUST follow venv creation. --------
+  - python3.11 -m venv /opt/flotilla/venv
+  - chown -R azureuser:azureuser /opt/flotilla
+
+  # --- Install flotilla + render/install the systemd units (idempotent; safe to ----
+  # --- re-run once the Key Vault grant exists). Runs as azureuser. -----------------
+  - su - azureuser -c 'bash /opt/flotilla/fleet-host-activate.sh' >> /var/log/fleet-host-activate.log 2>&1 || true
+
+  # --- Provenance breadcrumb -------------------------------------------------------
+  - docker --version > /opt/flotilla/PROVISIONED 2>&1
+  - az version >> /opt/flotilla/PROVISIONED 2>&1 || true
