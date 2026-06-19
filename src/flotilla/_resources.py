@@ -18,6 +18,7 @@ import stat
 
 _SCRIPTS_DIRNAME: str = "_scripts"
 _TEMPLATES_DIRNAME: str = "_templates"
+_UNITS_DIRNAME: str = "_units"
 
 
 def scripts_dir() -> Path:
@@ -60,4 +61,26 @@ def resolve_template(name: str) -> Path:
     path: Path = templates_dir() / name
     if not path.is_file():
         raise FileNotFoundError(f"flotilla: packaged template not found: {path}")
+    return path
+
+
+def units_dir() -> Path:
+    """Return the directory holding flotilla's packaged systemd unit templates."""
+    return Path(str(importlib.resources.files("flotilla").joinpath(_UNITS_DIRNAME)))
+
+
+def resolve_unit(name: str) -> Path:
+    """Return an absolute path to the packaged systemd unit template ``name``.
+
+    Unit templates are read and rendered (not executed), so — like
+    :func:`resolve_template` — the executable bit is left untouched.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the package does not ship a unit template of that name.
+    """
+    path: Path = units_dir() / name
+    if not path.is_file():
+        raise FileNotFoundError(f"flotilla: packaged unit template not found: {path}")
     return path

@@ -1,0 +1,24 @@
+[Unit]
+# flotilla fleet supervisor — one tick (ADR-0002 §11). Timer-activated oneshot:
+# each tick is a fresh, crash-only process under the supervisor's own flock, so
+# an overlapping fire exits cleanly. Rendered from package data by
+# `flotilla install-units`; do not edit in place.
+Description=flotilla fleet supervisor tick
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=${user}
+WorkingDirectory=${fleet_home}
+# Secrets are NOT here: `flotilla fleet-tick` fetches the PAT + ANTHROPIC_API_KEY
+# from Key Vault via the VM managed identity at runtime and applies them
+# in-process (ADR-0002 §11) — nothing secret is written to this file or disk.
+Environment=FLEET_HOME=${fleet_home}
+Environment=FLEET_ROOT=${fleet_root}
+Environment=FLEET_PYTHON=${venv_bin}/python
+Environment=FLEET_KEY_VAULT=${key_vault}
+Environment=FLEET_APP_REPO_URL=${app_repo_url}
+Environment=FLEET_PARENT_SCOPE_IDS=${parent_scope_ids}
+ExecStart=${venv_bin}/flotilla fleet-tick

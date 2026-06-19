@@ -18,6 +18,8 @@ import pytest
 
 from flotilla import cli
 import flotilla.board as board_module
+import flotilla.repo as repo_module
+import flotilla.secrets as secrets_module
 import flotilla.supervisor as real_supervisor
 
 
@@ -176,6 +178,94 @@ def test_tick_delegates_to_supervisor_lazily(monkeypatch: pytest.MonkeyPatch) ->
     rc: int = cli.main(["tick", "--dry-run", "--fleet-home", "/tmp/y"])
     assert rc == 0
     assert recorded == [["--dry-run", "--fleet-home", "/tmp/y"]]
+
+
+def test_fleet_tick_bootstraps_secrets_then_ticks(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Stub the KV fetch + repo sync + supervisor so no real az / git / tick runs;
+    # assert the bootstrap order and that --dry-run flows through to a no-clobber
+    # sync and to the supervisor unchanged.
+    monkeypatch.setenv("FLEET_KEY_VAULT", "the-vault")
+    fleet_secrets = secrets_module.FleetSecrets(anthropic_api_key="k", ado_pat="p")
+
+    def _load(_access: object, _names: object = None) -> secrets_module.FleetSecrets:
+        return fleet_secrets
+
+    applied: list[secrets_module.FleetSecrets] = []
+    sync_mutate: list[bool] = []
+    recorded: list[list[str]] = []
+
+    def _apply(secrets: secrets_module.FleetSecrets) -> None:
+        applied.append(secrets)
+
+    monkeypatch.setattr(secrets_module, "load_fleet_secrets", _load)
+    monkeypatch.setattr(secrets_module, "apply_supervisor_environ", _apply)
+
+    def _sync(*, mutate: bool = True) -> bool:
+        sync_mutate.append(mutate)
+        return True
+
+    monkeypatch.setattr(repo_module, "ensure_app_repo_from_env", _sync)
+
+    def _fake_main(argv: Sequence[str] | None = None) -> int:
+        recorded.append(list(argv or []))
+        return 0
+
+    monkeypatch.setattr(real_supervisor, "main", _fake_main)
+
+    rc: int = cli.main(["fleet-tick", "--dry-run"])
+    assert rc == 0
+    assert applied == [fleet_secrets]
+    assert sync_mutate == [False]  # --dry-run => no reset --hard
+    assert recorded == [["--dry-run"]]
+
+
+def test_fleet_tick_requires_key_vault(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("FLEET_KEY_VAULT", raising=False)
+    rc: int = cli.main(["fleet-tick"])
+    assert rc == 2
+    assert "FLEET_KEY_VAULT" in capsys.readouterr().err
+
+
+def test_fleet_tick_reports_secret_fetch_failure(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("FLEET_KEY_VAULT", "v")
+
+    def _boom(_access: object, _names: object = None) -> secrets_module.FleetSecrets:
+        raise secrets_module.SecretFetchError("identity has no get on the vault")
+
+    monkeypatch.setattr(secrets_module, "load_fleet_secrets", _boom)
+
+    rc: int = cli.main(["fleet-tick"])
+    assert rc == 1
+    assert "no get on the vault" in capsys.readouterr().err
+
+
+def test_install_units_renders_and_writes(tmp_path: Path) -> None:
+    dest: Path = tmp_path / "systemd"
+    dest.mkdir()
+    rc: int = cli.main(
+        [
+            "install-units",
+            "--key-vault",
+            "the-vault",
+            "--fleet-home",
+            str(tmp_path / "home"),
+            "--venv-bin",
+            "/opt/flotilla/venv/bin",
+            "--app-repo-url",
+            "https://dev.azure.com/genshift/gswa-dev/_git/gswa-backend",
+            "--dest",
+            str(dest),
+        ]
+    )
+    assert rc == 0
+    service: str = (dest / "flotilla.service").read_text(encoding="utf-8")
+    assert "Environment=FLEET_KEY_VAULT=the-vault" in service
+    assert "ExecStart=/opt/flotilla/venv/bin/flotilla fleet-tick" in service
+    assert (dest / "flotilla.timer").is_file()
 
 
 def test_fleetctl_subcommand_shells_to_script(monkeypatch: pytest.MonkeyPatch) -> None:

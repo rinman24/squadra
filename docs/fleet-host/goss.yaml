@@ -1,0 +1,68 @@
+# goss.yaml — executable on-host acceptance for the flotilla fleet-host (ADR-0002 §11).
+#
+# Run on gswa-fleet-host (Docker + systemd are VM-only) after fleet-host-activate.sh:
+#   export FLEET_KEY_VAULT=gswa-fleet-kv-07c17c
+#   goss -g goss.yaml validate
+# See SMOKE.md for the pinned, checksum-verified goss install and the full procedure.
+#
+# This codifies the host-side acceptance. The agent-env minimization (the PAT never
+# reaches the contained agent) is proven in pytest — tests/test_secrets.py
+# (agent_environ) — and by the gswa .flotilla/ compose listing only ANTHROPIC_API_KEY;
+# a dry-run tick launches no agent container, so it is not asserted live here.
+
+package:
+  docker-ce:
+    installed: true
+
+file:
+  /etc/systemd/system/flotilla.service:
+    exists: true
+    contains:
+      - "Type=oneshot"
+      - "/flotilla fleet-tick"
+      - "Environment=FLEET_KEY_VAULT="
+      # No secret material is ever written into the unit (ADR-0002 §11).
+      - "!/AZURE_DEVOPS_EXT_PAT/"
+  /etc/systemd/system/flotilla.timer:
+    exists: true
+    contains:
+      - "Unit=flotilla.service"
+      - "OnUnitActiveSec="
+  /opt/flotilla/venv/bin/flotilla:
+    exists: true
+    mode: "0755"
+
+service:
+  docker:
+    enabled: true
+    running: true
+  # Installed but deliberately NOT enabled — fleet activation is a separate,
+  # deliberate `systemctl enable --now flotilla.timer` (decision 16). Flip the
+  # expectations below to `true` only after the fleet is intentionally activated.
+  flotilla.timer:
+    enabled: false
+    running: false
+
+command:
+  # The VM managed identity can authenticate (IMDS reachable, identity assigned).
+  az-managed-identity-login:
+    exec: "az login --identity --only-show-errors --output none"
+    exit-status: 0
+  # The identity has `get` on both fleet secrets in Key Vault.
+  kv-anthropic-key-readable:
+    exec: 'az keyvault secret show --vault-name "$FLEET_KEY_VAULT" --name anthropic-api-key --query value --output tsv'
+    exit-status: 0
+  kv-ado-pat-readable:
+    exec: 'az keyvault secret show --vault-name "$FLEET_KEY_VAULT" --name fleet-ado-pat --query value --output tsv'
+    exit-status: 0
+  # The load-bearing end-to-end gate: a dry-run tick runs UNDER systemd (transient
+  # unit, no enabled timer), which exercises fleet-tick's KV secret fetch + app-repo
+  # sync + the non-mutating tick. Exit 0 == secrets pulled, repo synced, tick planned.
+  dry-run-tick-under-systemd:
+    exec: >
+      systemd-run --wait --collect --quiet
+      --setenv=FLEET_KEY_VAULT="$FLEET_KEY_VAULT"
+      --property=EnvironmentFile=/opt/flotilla/fleet-host.env
+      /opt/flotilla/venv/bin/flotilla fleet-tick --dry-run
+    exit-status: 0
+    timeout: 120000
