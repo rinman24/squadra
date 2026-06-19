@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
 # fleetctl.sh — on-demand start/stop/status control for the fleet supervisor
-# ticker. The imperative counterpart of the FLEET_AUTOSTART boot
-# hook (fleet-autostart.sh): same mechanism — the detached `fleet-ticker` tmux
-# session whose loop fires one supervisor tick every FLEET_TICK_INTERVAL_SECONDS
-# — but driven by hand, right now, this session.
+# ticker, for hands-on LOCAL/DEV runs: a detached `fleet-ticker` tmux session
+# whose loop fires one supervisor tick every FLEET_TICK_INTERVAL_SECONDS.
+#
+# NB the dedicated fleet-host does NOT use this — it schedules ticks with systemd
+# (`flotilla.timer` → `flotilla fleet-tick`, installed via `flotilla
+# install-units`; ADR-0002 §11). The boot-time `fleet-autostart.sh` / cron
+# autostart paths have been retired in favor of systemd.
 #
 # This script ships as flotilla package data and is the body of the `flotilla`
 # console command: `flotilla {start|stop|status|tick|log}` execs it. It resolves
 # its sibling fleet-tick.sh from the same _scripts directory.
-#
-# Use FLEET_AUTOSTART for *standing* activation (bring the fleet up on every
-# container boot); use this for *hands-on* up/down of the running ticker. The
-# two compose: autostart calls the same start path.
 #
 #   flotilla start    start the ticker if not already running (idempotent)
 #   flotilla stop     stop the ticker if running
@@ -25,7 +24,7 @@
 #   flotilla log      tail the supervisor log (default last 40 lines); -f to
 #                     follow live (tail -f), -n N for a custom line count
 #
-# Env knobs (shared with fleet-autostart.sh / fleet-tick.sh):
+# Env knobs (shared with fleet-tick.sh):
 #   FLEET_HOME                   repo flotilla operates on (default: cwd)
 #   FLEET_ROOT                   fleet state dir, holds supervisor.log
 #                                (default $FLEET_HOME/.claude/fleet)
