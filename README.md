@@ -316,13 +316,32 @@ another provider the adapter substitutes that board's configured names.
    (`tmux attach -t fleet` is the live view). A failed launch rolls the claim
    back (tag removed, `Doing → To Do`, comment), so no slice is stranded.
 
-Finalize and claim depend on a working `claude`; reap needs only `az` and `git`.
-A tick with such work pending runs an **auth preflight** first: a throwaway
-`claude -p 'reply READY' --dangerously-skip-permissions --model "$FLEET_MODEL"`
-probe with a 120s hard timeout, passing only on exit 0 plus `READY` in stdout. On
-a failed probe — dead auth, a transient API outage, and an unavailable model read
-identically — the tick degrades to the reap pass only and retries next tick. Idle
-and saturated ticks never pay for the probe.
+Only **claim/launch** depends on credentials beyond the board reads: a working
+ADO PAT (claiming a slice does host-side git remote ops — worktree create off
+`origin/main`, then push — over HTTPS+PAT, no SSH key) and a working `claude`
+(the contained runner is the fleet's single LLM call — finalize and reap are
+deterministic). A tick with claim work pending runs **two preflights** first, in
+order, and short-circuits on the first failure:
+
+1. **PAT preflight** — `git ls-remote` against the target remote (the live
+   checkout's `origin`, else `FLEET_APP_REPO_URL`) using the env-var PAT
+   credential helper, non-interactively (`GIT_TERMINAL_PROMPT=0`) with a 30s
+   timeout. This exercises the exact auth path every host-side git op uses, so it
+   cannot pass while a real claim's git op fails. A rejected/expired/wrong-scope
+   PAT, an unreachable remote, a timeout, or no `git` all read as a failure.
+2. **claude preflight** — a throwaway
+   `claude -p 'reply READY' --dangerously-skip-permissions --model "$FLEET_MODEL"`
+   probe with a 120s hard timeout, passing only on exit 0 plus `READY` in stdout
+   (dead auth, a transient API outage, and an unavailable model read identically).
+
+On either failed probe the tick **degrades to the reap pass only** — every
+claim/launch decision is dropped (no slice is claimed, no `To Do → Doing`, no
+`fleet:claimed`), while in-flight finalize and reap still proceed — and retries
+next tick. The PAT failure logs one actionable line naming the `fleet-ado-pat`
+Key Vault secret and the rotation runbook (the consuming repo's
+`docs/contributing/afk-fleet.md` → *Key Vault secrets & PAT rotation*). The PAT
+probe runs first, so a dead PAT never pays to spawn `claude`. Idle, saturated,
+and finalize-only ticks never pay for either probe.
 
 **Finalize** retires slices that are truly done: Issue `Done` *and* a completed
 PR for the slice branch. For each, it runs the consuming repo's
@@ -345,10 +364,10 @@ attempt+1, and exhausted retries escalate to `fleet:failed` instead.
 `python -m flotilla.supervisor --dry-run`) runs the same three passes' read+plan logic
 and reports the would-be actions, with every side effect suppressed at the
 `TickSeams` boundary (`dry_run_seams`): board writes become logged
-`[dry-run] WOULD …` no-ops, no runner pane launches, no `claude` is spawned
-(the cleanup pass and the auth preflight included), no worktree is archived,
-no local status/marker file is written. Safety is the wrapped boundary, not a
-flag inside the passes, so a future pass cannot forget to honor it. Only the
+`[dry-run] WOULD …` no-ops, no runner pane launches, neither preflight probe runs
+(no `git ls-remote` for the PAT, no `claude` spawn for auth), no worktree is
+archived, no local status/marker file is written. Safety is the wrapped boundary,
+not a flag inside the passes, so a future pass cannot forget to honor it. Only the
 tick lock and the supervisor log are still written — coordination artifacts,
 not fleet state.
 
@@ -367,8 +386,8 @@ levers compose:
 - **A dry run first** (the safest first step): `flotilla tick --dry-run` (or
   `FLEET_DRY_RUN=1`) runs the full finalize/reap/claim read+plan logic and logs
   every action a real tick WOULD take, but cannot mutate — board writes, runner
-  launches, claude spawns (cleanup + the auth probe), and local fleet-state
-  writes are all suppressed at the seams. Ticks log to
+  launches, the preflight probes (the PAT `git ls-remote` and the `claude` auth
+  spawn), and local fleet-state writes are all suppressed at the seams. Ticks log to
   `$FLEET_ROOT/supervisor.log`, so review the plan with `flotilla log`.
 - **One tick by hand**: `flotilla tick` — logs to `$FLEET_ROOT/supervisor.log`.
   Note that `FLEET_MAX_RUNNERS=0` is **not** a read-only tick: it only zeroes
