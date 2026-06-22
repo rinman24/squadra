@@ -27,11 +27,15 @@ from tests.helpers.worktree_fakes import FakeWorktree
 
 
 def _seams(board: GitHubShapedFakeBoard, sandbox: FakeSandbox | None = None) -> TickSeams:
+    # Stub BOTH claim-path preflight probes so the tick never spawns a real
+    # `git ls-remote` (pat_ok) or `claude` (auth_ok) — the claim must hinge on
+    # the board, not on ambient host auth.
     return TickSeams(
         ado=board,
         sandbox=sandbox if sandbox is not None else FakeSandbox(),
         cleanup=FakeCleanup(),
         worktree=FakeWorktree(),
+        pat_ok=lambda: True,
         auth_ok=lambda: True,
     )
 
