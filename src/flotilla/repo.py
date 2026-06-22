@@ -25,6 +25,10 @@ from typing import Final
 
 DEFAULT_BASE_BRANCH: Final[str] = "main"
 
+# A PAT auth probe (`git ls-remote`) must fail fast, never hang: bound it so a
+# stalled connection cannot stall the whole tick.
+LS_REMOTE_TIMEOUT_SECONDS: Final[float] = 30.0
+
 APP_REPO_URL_ENV: Final[str] = "FLEET_APP_REPO_URL"
 FLEET_HOME_ENV: Final[str] = "FLEET_HOME"
 BASE_BRANCH_ENV: Final[str] = "FLEET_BASE_BRANCH"
@@ -49,6 +53,25 @@ _CREDENTIAL_HELPER: Final[tuple[str, ...]] = (
 def _run_git(args: Sequence[str]) -> "subprocess.CompletedProcess[str]":
     """Run a ``git`` command capturing output; never raises on a non-zero exit."""
     return subprocess.run(["git", *args], capture_output=True, text=True, check=False)
+
+
+def _run_git_probe(args: Sequence[str]) -> "subprocess.CompletedProcess[str]":
+    """Run a probe ``git`` command non-interactively with a hard timeout.
+
+    ``GIT_TERMINAL_PROMPT=0`` turns a rejected/expired credential into a fast
+    non-zero exit instead of an interactive username/password prompt that would
+    hang an unattended tick, and the timeout bounds a stalled network probe. The
+    PAT still reaches git through the env-var credential helper (see
+    :data:`_CREDENTIAL_HELPER`); only the *interactive fallback* is disabled.
+    """
+    return subprocess.run(
+        ["git", *args],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=LS_REMOTE_TIMEOUT_SECONDS,
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+    )
 
 
 def ensure_app_repo(
@@ -119,3 +142,49 @@ def ensure_app_repo_from_env(
         mutate=mutate,
         run=run,
     )
+
+
+def target_remote_url(
+    fleet_home: Path,
+    *,
+    run: GitRun = _run_git,
+    environ: Mapping[str, str] | None = None,
+) -> str | None:
+    """Resolve the fetch URL of the repo flotilla operates on, or ``None``.
+
+    Prefers ``FLEET_HOME``'s ``origin`` remote — the live checkout's own remote,
+    which is the exact thing host-side clone/fetch/push talk to — and falls back
+    to ``FLEET_APP_REPO_URL`` (the bootstrap clone URL) when the checkout has no
+    usable ``origin`` yet. ``None`` when neither resolves, in which case there is
+    no remote to probe. This is provider-agnostic: it returns whatever the target
+    repo's origin is, never a hardcoded host.
+    """
+    env: Mapping[str, str] = os.environ if environ is None else environ
+    completed: subprocess.CompletedProcess[str] = run(
+        ["-C", str(fleet_home), "remote", "get-url", "origin"]
+    )
+    if completed.returncode == 0:
+        url: str = completed.stdout.strip()
+        if url:
+            return url
+    fallback: str = env.get(APP_REPO_URL_ENV, "").strip()
+    return fallback or None
+
+
+def remote_auth_ok(remote_url: str, *, run: GitRun = _run_git_probe) -> bool:
+    """Whether the ambient PAT authenticates against ``remote_url`` over HTTPS.
+
+    Probes the *exact* auth path every host-side git op uses: ``git ls-remote``
+    with the env-var PAT credential helper and the hooks guard, so the probe
+    cannot pass while a real clone/fetch/push would fail. Any failure mode — a
+    rejected or expired PAT, a wrong-scope PAT, an unreachable/missing remote, a
+    timeout, or no ``git`` binary — reads as not-OK. The PAT is supplied via the
+    credential helper from the environment and never appears in argv.
+    """
+    try:
+        completed: subprocess.CompletedProcess[str] = run(
+            [*_CREDENTIAL_HELPER, *_HOOKS_GUARD, "ls-remote", remote_url]
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    return completed.returncode == 0

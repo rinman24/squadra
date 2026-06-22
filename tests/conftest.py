@@ -107,7 +107,7 @@ def fake_worktree() -> FakeWorktree:
 
 
 def _always_ok() -> bool:
-    """Auth-probe stub that always passes — tests never run the real probe."""
+    """Auth-probe stub that always passes — tests never run a real PAT/claude probe."""
     return True
 
 
@@ -126,6 +126,7 @@ def make_seams(
             sandbox=fake_sandbox,
             cleanup=fake_cleanup,
             worktree=fake_worktree,
+            pat_ok=_always_ok,
             auth_ok=_always_ok,
         )
         return dataclasses.replace(base, **overrides)

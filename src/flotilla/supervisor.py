@@ -30,9 +30,15 @@ names are configuration.
 
 Only the **claim/launch** path now needs a working ``claude`` (the contained
 runner is the fleet's single LLM call — finalize cleanup is deterministic, ADR-
-0002 decision 4). A tick with claim work pending first preflights claude auth
-with a throwaway prompt; on a failed probe (dead auth and a transient outage read
-identically) the tick degrades to the non-claim decisions and retries next tick.
+0002 decision 4) *and* a working Azure DevOps PAT (claiming a slice does host-side
+git remote ops — worktree create off ``origin/main``, then push — over HTTPS+PAT,
+no SSH key). A tick with claim work pending preflights both before it claims: the
+PAT via a ``git ls-remote`` against the target remote, then claude via a throwaway
+prompt. On a failed probe (a rejected/expired PAT, dead claude auth, or a transient
+outage all read identically) the tick degrades to the non-claim decisions — the
+finalize + reap pass, which never claim and so never touch that auth — and retries
+next tick. The PAT probe runs first and short-circuits, so a dead PAT does not pay
+to spawn claude.
 
 Overlapping ticks serialize via a non-blocking ``flock`` on
 ``<fleet-root>/supervisor.lock`` — the losing tick exits cleanly without touching
@@ -41,8 +47,8 @@ the board.
 A tick can be a **dry run** (``--dry-run`` / ``FLEET_DRY_RUN=1``): the full
 fact-gather + decide logic runs and reports what a real tick WOULD do, but every
 side effect — board writes, sandbox launch/teardown/exec, deterministic cleanup,
-worktree create/archive/prune, slice-context injection, the auth probe, and local
-status/marker writes — is suppressed at the ``TickSeams`` boundary
+worktree create/archive/prune, slice-context injection, the PAT + claude auth
+probes, and local status/marker writes — is suppressed at the ``TickSeams`` boundary
 (``dry_run_seams``), so the tick physically cannot mutate. ``FLEET_MAX_RUNNERS=0``
 is *not* a safe smoke: it only zeroes the claim budget. Use a dry run.
 
@@ -55,6 +61,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 import fcntl
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -100,7 +107,9 @@ from flotilla.domain import (
 from flotilla.dry_run import DryRunCleanup, DryRunWorktree
 from flotilla.engines import LifecycleEngine, slice_branch
 from flotilla.manifest import ManifestRead, read_manifest, write_slice_context
+from flotilla.repo import remote_auth_ok, target_remote_url
 from flotilla.sandbox import ComposeSandbox, DryRunSandbox, SandboxAccess
+from flotilla.secrets import secret_names_from_env
 from flotilla.status import FleetStatus, StatusUpdate, load_or_none, update
 from flotilla.worktree import GitWorktreeAccess, WorktreeAccess
 
@@ -150,6 +159,45 @@ def _claude_auth_ok(
     except (subprocess.TimeoutExpired, OSError):
         return False
     return completed.returncode == 0 and "READY" in completed.stdout
+
+
+# --- ADO PAT probe (guards the claim/launch path's host-side git remote ops) ---
+
+
+def _resolve_fleet_home() -> Path:
+    """Resolve ``FLEET_HOME`` for the default probe (the repo flotilla operates on)."""
+    raw: str | None = os.environ.get("FLEET_HOME")
+    return Path(raw) if raw is not None and raw.strip() else Path.cwd()
+
+
+def _ado_pat_ok(fleet_home: Path | None = None) -> bool:
+    """Actively probe the ADO PAT on the git auth path the fleet's claims use.
+
+    Resolves the target remote from ``FLEET_HOME``'s ``origin`` (else
+    ``FLEET_APP_REPO_URL``) and runs ``git ls-remote`` against it with the
+    env-var PAT credential helper — the exact path of every host-side clone/
+    fetch/push, so it cannot pass while a real claim's git op fails. A missing
+    remote, a rejected/expired/wrong-scope PAT, a timeout, or no ``git`` all read
+    as unavailable; the tick degrades to the non-claim decisions and retries.
+    """
+    home: Path = fleet_home if fleet_home is not None else _resolve_fleet_home()
+    remote: str | None = target_remote_url(home)
+    if remote is None:
+        return False
+    return remote_auth_ok(remote)
+
+
+def _ado_pat_rejected_message() -> str:
+    """Build the actionable one-line error logged when the PAT preflight fails."""
+    secret: str = secret_names_from_env().ado_pat
+    return (
+        "ado PAT rejected on the git auth path (git ls-remote against the target "
+        "remote failed) — skipped the claim/launch decisions; running the non-claim "
+        f"decisions only, retrying next tick. Rotate the {secret!r} Key Vault secret "
+        "(it is expired or lacks Code (Read & Write)): see the README 'Supervisor' "
+        "section and the gswa runbook docs/contributing/afk-fleet.md -> "
+        "'Key Vault secrets & PAT rotation'."
+    )
 
 
 # --- fact-gathering read seams (host-side I/O; pass through in dry-run) --------
@@ -211,11 +259,13 @@ class TickSeams:
     The **mutating** seams are what ``dry_run_seams`` must wrap so a dry-run tick
     physically cannot write: board writes via ``ado``; sandbox launch/teardown/
     exec via ``sandbox``; deterministic cleanup via ``cleanup``; worktree create/
-    archive/prune via ``worktree``; the auth probe via ``auth_ok``; slice-context
-    injection via ``write_context``; the local fleet-state writes via
-    ``update_status`` / ``write_claimed_at``. Keeping this exhaustive is what makes
-    ``dry_run_seams`` a write-blocking boundary rather than a flag — never add a
-    side effect without routing it through a seam.
+    archive/prune via ``worktree``; the PAT probe via ``pat_ok`` and the claude
+    auth probe via ``auth_ok`` (each spawns a process and so is itself a side
+    effect a dry run must not perform); slice-context injection via
+    ``write_context``; the local fleet-state writes via ``update_status`` /
+    ``write_claimed_at``. Keeping this exhaustive is what makes ``dry_run_seams`` a
+    write-blocking boundary rather than a flag — never add a side effect without
+    routing it through a seam.
 
     The **read** seams (``inspect`` / ``read_logs`` / ``read_manifest`` /
     ``commits_present``) gather facts and pass through unchanged under dry-run;
@@ -227,6 +277,7 @@ class TickSeams:
     sandbox: SandboxAccess
     cleanup: CleanupAccess
     worktree: WorktreeAccess
+    pat_ok: Callable[[], bool] = field(default=_ado_pat_ok)
     auth_ok: Callable[[], bool] = field(default=_claude_auth_ok)
     write_context: Callable[..., object] = field(default=write_slice_context)
     read_manifest: Callable[[Path], ManifestRead] = field(default=read_manifest)
@@ -282,15 +333,34 @@ def run_tick(seams: TickSeams, config: FlotillaConfig) -> int:
             return 0
         engine = LifecycleEngine()
         views: list[SliceView] = _gather(seams, config, engine)
-        if _claim_work_pending(views, config) and not seams.auth_ok():
-            _log(
-                "claude auth-unavailable — skipped the claim/launch decisions; "
-                "running the non-claim decisions only, retrying next tick"
-            )
-            _execute(seams, config, [v for v in views if not _is_claim(v)])
-            return 0
+        if _claim_work_pending(views, config):
+            # Both probes guard the claim/launch path only (finalize + reap never
+            # claim and never touch this auth). The PAT probe runs first and
+            # short-circuits, so a dead PAT never pays to spawn the claude probe.
+            if not seams.pat_ok():
+                _log(_ado_pat_rejected_message())
+                _execute_non_claim(seams, config, views)
+                return 0
+            if not seams.auth_ok():
+                _log(
+                    "claude auth-unavailable — skipped the claim/launch decisions; "
+                    "running the non-claim decisions only, retrying next tick"
+                )
+                _execute_non_claim(seams, config, views)
+                return 0
         _execute(seams, config, views)
     return 0
+
+
+def _execute_non_claim(
+    seams: TickSeams, config: FlotillaConfig, views: Sequence[SliceView]
+) -> None:
+    """Run the finalize + reap decisions only — the degraded auth-probe path.
+
+    Every claim/launch decision is dropped so no slice is claimed, but in-flight
+    finalize and reap still proceed (they never claim and never touch that auth).
+    """
+    _execute(seams, config, [v for v in views if not _is_claim(v)])
 
 
 def _gather(seams: TickSeams, config: FlotillaConfig, engine: LifecycleEngine) -> list[SliceView]:
@@ -856,6 +926,12 @@ class ReadOnlyBoard:
         _log(f"[dry-run] WOULD comment on #{item_id}: {event}")
 
 
+def _dry_run_pat_ok() -> bool:
+    """Skip the PAT preflight — a ``git ls-remote`` probe is itself a network side effect."""
+    _log("[dry-run] WOULD run the ADO PAT auth preflight; assuming it passes")
+    return True
+
+
 def _dry_run_auth_ok() -> bool:
     """Skip the auth preflight — a spawned ``claude -p`` probe is itself a side effect."""
     _log("[dry-run] WOULD run the claude auth preflight; assuming it passes")
@@ -886,8 +962,8 @@ def dry_run_seams(seams: TickSeams) -> TickSeams:
 
     Reads pass through — the tick still gathers facts and decides, reporting the
     would-be actions — but every write (board, sandbox launch/teardown/exec,
-    deterministic cleanup, worktree create/archive/prune, the auth probe, slice-
-    context injection, local status/marker files) becomes a logged
+    deterministic cleanup, worktree create/archive/prune, the PAT + claude auth
+    probes, slice-context injection, local status/marker files) becomes a logged
     ``[dry-run] WOULD …`` no-op. The fact-gathering read seams (``sandbox.inspect``
     / ``logs``, ``read_manifest``, ``commits_present``) stay real: they are pure
     reads and the plan is meaningless without them. The tick lock and supervisor
@@ -899,6 +975,7 @@ def dry_run_seams(seams: TickSeams) -> TickSeams:
         sandbox=DryRunSandbox(seams.sandbox),
         cleanup=DryRunCleanup(seams.cleanup),
         worktree=DryRunWorktree(seams.worktree),
+        pat_ok=_dry_run_pat_ok,
         auth_ok=_dry_run_auth_ok,
         write_context=_dry_run_write_context,
         update_status=_dry_run_update_status,
@@ -913,12 +990,13 @@ def build_seams(config: FlotillaConfig, *, dry_run: bool = False) -> TickSeams:
         sandbox=ComposeSandbox(),
         cleanup=DeterministicCleanup(config.fleet_home),
         worktree=GitWorktreeAccess(config.fleet_home),
+        pat_ok=lambda: _ado_pat_ok(config.fleet_home),
     )
     if not dry_run:
         return seams
     _log(
         "DRY-RUN tick: reads and planning only — every board write, sandbox launch/"
-        "teardown, deterministic cleanup, worktree change, claude spawn, slice-context "
+        "teardown, deterministic cleanup, worktree change, PAT + claude probe, slice-context "
         "injection, and local fleet-state write is suppressed and logged as '[dry-run] WOULD …'"
     )
     return dry_run_seams(seams)
