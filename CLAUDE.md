@@ -33,7 +33,7 @@ src/flotilla/
 ├── cli.py              # unified argparse `flotilla` — the API / composition root
 ├── _resources.py       # resolve packaged shell glue via importlib.resources (+chmod +x)
 └── _scripts/           # PACKAGE DATA: runner-wrap.sh, fleet-tick.sh,
-                        #   fleet-autostart.sh, fleetctl.sh, fleet-cron.example
+                        #   fleetctl.sh
 tests/                  # unit tests + BoardAccess contract suite +
                         #   tests/scripts/run-runner-wrap-tests.sh (hermetic)
 ```
@@ -41,8 +41,8 @@ tests/                  # unit tests + BoardAccess contract suite +
 ## Hard invariants
 
 - **Packaged-script resolution.** Anything that invokes the shell glue (the
-  supervisor's `TmuxLauncher`, the `flotilla` CLI's ticker subcommands, the tick
-  entry point) MUST resolve it via `flotilla._resources.resolve_script(...)`
+  supervisor's `SandboxAccess` launch, the `flotilla` CLI's ticker subcommands,
+  the tick entry point) MUST resolve it via `flotilla._resources.resolve_script(...)`
   (`importlib.resources.files("flotilla")/"_scripts"`, `chmod +x` on resolve) —
   **never** a path relative to `FLEET_HOME`. The package is not the working repo.
 - **`FLEET_HOME`** = the repo the fleet operates on (default: cwd). No hardcoded

@@ -250,9 +250,12 @@ CPU saturation or 429s.
 ## Slice runners
 
 A runner is one short-lived, headless Claude session driving one slice. The
-supervisor launches each into its own detached-tmux pane running the
+supervisor launches each into its own per-slice ephemeral Docker compose project
+via `SandboxAccess` (ADR-0002 §5): the compose `agent` service's command *is* the
 deterministic wrapper (`flotilla/_scripts/runner-wrap.sh`, resolved from the
-installed package and invoked as `runner-wrap.sh <issue-id> <branch> [attempt]`).
+installed package and invoked as `runner-wrap.sh <issue-id> <branch> [attempt]`),
+so container lifecycle == agent lifecycle and `docker inspect .State.ExitCode`
+*is* the agent exit code.
 
 The wrapper owns everything that must not depend on an LLM:
 
@@ -311,9 +314,11 @@ another provider the adapter substitutes that board's configured names.
    deterministically: `feat/slice-<id>-<kebab-of-title>` (suffix `-aN` on
    retries).
 4. **Launch** — one `runner-wrap.sh <issue-id> <branch> <attempt>` per claimed
-   slice, into its own pane of the detached `fleet` tmux session
-   (`tmux attach -t fleet` is the live view). A failed launch rolls the claim
-   back (tag removed, `Doing → To Do`, comment), so no slice is stranded.
+   slice, as the `agent`-service command of its own per-slice ephemeral Docker
+   compose project via `SandboxAccess` (build + `compose up -d`, non-blocking;
+   `docker compose logs` against the slice project is the live view). A failed
+   launch rolls the claim back (tag removed, `Doing → To Do`, comment), so no
+   slice is stranded.
 
 Only **claim/launch** depends on credentials beyond the board reads: a working
 ADO PAT (claiming a slice does host-side git remote ops — worktree create off
@@ -417,8 +422,8 @@ so a re-started ticker resumes cleanly.
 
 Watch the fleet: `flotilla status` (is-it-running + recent log), `flotilla log
 -f` (follow the supervisor log live), the board (`fleet:*` tags) is the macro
-view, per-slice `status.json` is the micro view, `tmux attach -t fleet` is the
-live pane view.
+view, per-slice `status.json` is the micro view, `docker compose logs` against a
+slice's compose project is the live agent view.
 
 ## Development
 
@@ -432,8 +437,8 @@ uv run pytest                  # unit + hermetic shell tests
 
 The shell glue (`runner-wrap.sh`, `fleet-tick.sh`, `fleetctl.sh`) ships as package
 data under `src/flotilla/_scripts/`. Anything that needs to invoke it — the
-supervisor's tmux launcher, the `flotilla` dispatcher, the tick entry point —
-resolves it via `flotilla._resources.resolve_script(...)` (`importlib.resources` +
+supervisor's `SandboxAccess` launch, the `flotilla` dispatcher, the tick entry
+point — resolves it via `flotilla._resources.resolve_script(...)` (`importlib.resources` +
 `chmod +x`), never a path relative to `FLEET_HOME`. The fleet-host systemd unit
 templates ship the same way under `src/flotilla/_units/` (resolved via
 `resolve_unit(...)`, rendered by `flotilla.units`).
