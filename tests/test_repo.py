@@ -149,7 +149,14 @@ def test_target_remote_url_prefers_fleet_home_origin(tmp_path: Path) -> None:
     # origin resolves -> the env fallback is never consulted.
     url = target_remote_url(tmp_path, run=git, environ={"FLEET_APP_REPO_URL": "https://other"})
     assert url == _REPO_URL
-    assert git.calls[0][:3] == ["-C", str(tmp_path), "remote"]
+    call: list[str] = git.calls[0]
+    # full host-side argv: hooks guard + narrow safe.directory + -C <path> + verb.
+    assert call[0] == "git"
+    assert "core.hooksPath=/dev/null" in call
+    assert f"safe.directory={tmp_path}" in call
+    assert "safe.directory=*" not in call
+    ci: int = call.index("-C")
+    assert call[ci : ci + 5] == ["-C", str(tmp_path), "remote", "get-url", "origin"]
 
 
 def test_target_remote_url_falls_back_to_app_repo_url_env(tmp_path: Path) -> None:
