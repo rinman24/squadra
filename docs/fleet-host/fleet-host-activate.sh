@@ -48,6 +48,12 @@ fi
 # only through an env-var credential helper, never argv or disk (memory
 # git-push-https-pat-not-ssh); AZURE_DEVOPS_EXT_PAT is exported only for this
 # process and the units never see it.
+#
+# --force-reinstall is load-bearing, not cosmetic: flotilla's version is a static
+# 0.1.0, so a plain --upgrade is a no-op across commits — pip sees 0.1.0 already
+# satisfied and SKIPS rebuilding from the new pin, silently leaving stale code in
+# the venv. --force-reinstall makes a cutover actually rebuild from the pinned
+# commit. flotilla has no third-party runtime deps, so only flotilla is reinstalled.
 export AZURE_DEVOPS_EXT_PAT="$PAT"
 SPEC="git+${FLOTILLA_REPO_URL}"
 [ -n "$PIN" ] && [ "$PIN" != "REPLACE_WITH_FLOTILLA_CUTOVER_COMMIT" ] && SPEC="${SPEC}@${PIN}"
@@ -55,7 +61,7 @@ log "installing ${SPEC} into ${VENV}"
 GIT_CONFIG_COUNT=2 \
 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= \
 GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1='!f() { echo username=pat; echo "password=$AZURE_DEVOPS_EXT_PAT"; }; f' \
-  "$VENV/bin/pip" install --upgrade "$SPEC"
+  "$VENV/bin/pip" install --upgrade --force-reinstall "$SPEC"
 unset AZURE_DEVOPS_EXT_PAT
 
 # Render + install the systemd units (timer NOT enabled).
