@@ -24,6 +24,8 @@ import shutil
 import subprocess
 from typing import Protocol
 
+from flotilla.git_host import host_git_argv
+
 DEFAULT_BASE_REF: str = "origin/main"
 
 
@@ -102,10 +104,12 @@ class GitWorktreeAccess:
         base). This matches the "always rebase onto current main" semantics —
         the eventual rebase is a no-op.
         """
-        if self._run(["git", "-C", self._fleet_home, "fetch", "origin"]) != 0:
+        if self._run(host_git_argv("fetch", "origin", work_dir=self._fleet_home)) != 0:
             return WorktreeCreateResult(created=False, branch=branch)
         added: int = self._run(
-            ["git", "-C", self._fleet_home, "worktree", "add", "-b", branch, worktree, base_ref]
+            host_git_argv(
+                "worktree", "add", "-b", branch, worktree, base_ref, work_dir=self._fleet_home
+            )
         )
         return WorktreeCreateResult(created=added == 0, branch=branch)
 
@@ -122,4 +126,4 @@ class GitWorktreeAccess:
 
     def prune(self) -> bool:
         """Prune stale worktree entries with ``git worktree prune``."""
-        return self._run(["git", "-C", self._fleet_home, "worktree", "prune"]) == 0
+        return self._run(host_git_argv("worktree", "prune", work_dir=self._fleet_home)) == 0
