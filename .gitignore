@@ -21,6 +21,10 @@ htmlcov/
 # but ignored defensively in case flotilla is run from its own checkout.
 .claude/fleet/
 
+# Dev-container host scripts: per-developer overrides + local audit breadcrumb
+scripts/devbox/config.local.sh
+scripts/devbox/.flotilla-devbox.log
+
 # Editor / OS
 .DS_Store
 *.swp
