@@ -406,8 +406,14 @@ flotilla closes this by routing **every** host-side git invocation through
 
 Both are transient command-line overrides — never written to `.git/config`, so the
 agent cannot strip them. The worktree create/archive/prune, branch delete, the
-`base..HEAD` commit count, the app-repo bootstrap, and (when wired) the branch
-push / PR-create all inherit this automatically by going through the builder.
+`base..HEAD` commit count, and the app-repo bootstrap all inherit this automatically
+by going through the builder. The host-side **push** of a slice's commits — the
+credential-holding op the agent does not perform — is not yet wired in code (the
+deferred write-tail in the supervisor's `_handoff`); when it is, it must be built as
+`host_git_argv(*credential_helper, "push", "origin", branch, work_dir=worktree)`, and
+`tests/test_git_host.py` already proves that contract neutralizes a planted `pre-push`
+hook (with a bare-push control), so a push that bypasses the builder is a reviewable
+regression rather than a silent escape.
 
 **Manual operator pushes** against a fleet worktree must carry the same guard —
 run e.g. `git -c core.hooksPath=/dev/null -c safe.directory="$PWD" push …` (or
