@@ -54,6 +54,8 @@ write_files:
       FLOTILLA_REPO_URL=https://dev.azure.com/your-org/example-project/_git/flotilla
       FLEET_VENV=/opt/flotilla/venv
       FLEET_USER=azureuser
+      FLEET_ADO_ORG=https://dev.azure.com/your-org
+      FLEET_ADO_PROJECT=example-project
 
   # The idempotent activation script. CANONICAL SOURCE:
   # docs/fleet-host/fleet-host-activate.sh — keep this embedded copy in sync.
@@ -76,6 +78,10 @@ write_files:
       : "${FLEET_HOME:?set FLEET_HOME in $ENV_FILE}"
       : "${FLOTILLA_REPO_URL:?set FLOTILLA_REPO_URL in $ENV_FILE}"
       VENV=${FLEET_VENV:-/opt/flotilla/venv}
+      # az devops org/project the board adapter reads (board.py::_configured_default);
+      # overridable via the env file, default your-org / example-project.
+      ADO_ORG=${FLEET_ADO_ORG:-https://dev.azure.com/your-org}
+      ADO_PROJECT=${FLEET_ADO_PROJECT:-example-project}
       PIN=$(tr -d '[:space:]' < "$PIN_FILE" 2>/dev/null || true)
       if ! az login --identity --only-show-errors --output none 2>/dev/null; then
         log "managed-identity login failed; KV grant not ready? re-run later."; exit 0
@@ -100,6 +106,11 @@ write_files:
         --key-vault "$FLEET_KEY_VAULT" --fleet-home "$FLEET_HOME" --venv-bin "$VENV/bin" \
         --app-repo-url "${FLEET_APP_REPO_URL:-}" --parent-scope-ids "${FLEET_PARENT_SCOPE_IDS:-}"
       sudo systemctl daemon-reload
+      # az devops defaults the board adapter reads — set for BOTH azureuser (this
+      # script) and root (the goss smoke runs as root). Stored per-user in ~/.azure.
+      log "configuring az devops defaults: organization=${ADO_ORG} project=${ADO_PROJECT}"
+      az devops configure --defaults "organization=${ADO_ORG}" "project=${ADO_PROJECT}"
+      sudo az devops configure --defaults "organization=${ADO_ORG}" "project=${ADO_PROJECT}"
       log "done. Smoke a dry-run, then: sudo systemctl enable --now flotilla.timer"
 
 runcmd:

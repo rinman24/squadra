@@ -29,6 +29,11 @@ log() { echo "fleet-host-activate: $*"; }
 : "${FLEET_HOME:?set FLEET_HOME in $ENV_FILE}"
 : "${FLOTILLA_REPO_URL:?set FLOTILLA_REPO_URL in $ENV_FILE}"
 VENV=${FLEET_VENV:-/opt/flotilla/venv}
+# Azure DevOps org/project the board adapter resolves from `az devops configure`
+# defaults (board.py::_configured_default). Overridable via the env file; default
+# to your-org / example-project (matches FLOTILLA_REPO_URL / FLEET_APP_REPO_URL).
+ADO_ORG=${FLEET_ADO_ORG:-https://dev.azure.com/your-org}
+ADO_PROJECT=${FLEET_ADO_PROJECT:-example-project}
 PIN=$(tr -d '[:space:]' < "$PIN_FILE" 2>/dev/null || true)
 
 # Authenticate as the VM managed identity and read the PAT from Key Vault. If
@@ -72,5 +77,13 @@ sudo "$VENV/bin/flotilla" install-units \
   --app-repo-url "${FLEET_APP_REPO_URL:-}" \
   --parent-scope-ids "${FLEET_PARENT_SCOPE_IDS:-}"
 sudo systemctl daemon-reload
+
+# Set the az devops org/project defaults the board adapter reads
+# (board.py::_configured_default). These live per-user under ~/.azure, so set them
+# for BOTH the service user — this script already runs as azureuser — and root,
+# under which the on-host goss smoke runs the dry-run tick (docs/fleet-host/SMOKE.md).
+log "configuring az devops defaults: organization=${ADO_ORG} project=${ADO_PROJECT}"
+az devops configure --defaults "organization=${ADO_ORG}" "project=${ADO_PROJECT}"
+sudo az devops configure --defaults "organization=${ADO_ORG}" "project=${ADO_PROJECT}"
 
 log "done. Smoke a dry-run, then activate: sudo systemctl enable --now flotilla.timer"
