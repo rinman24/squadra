@@ -1,0 +1,39 @@
+{
+    "name": "flotilla Dev Container",
+    "dockerComposeFile": "docker-compose.yml",
+    "service": "flotilla",
+    "workspaceFolder": "/workspaces/flotilla",
+    // Create the in-repo `.venv` (uv sync) and assert gpgsign off on container create.
+    // gpgsign is also baked into the image; re-asserting it here is belt-and-suspenders.
+    "postCreateCommand": "git config --global commit.gpgsign false && uv sync --frozen",
+    "remoteUser": "dev",
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "[python]": {
+                    "editor.defaultFormatter": "charliermarsh.ruff",
+                    "editor.formatOnSave": true,
+                    "editor.codeActionsOnSave": {
+                        "source.organizeImports.ruff": "explicit"
+                    }
+                },
+                "explorer.compactFolders": false,
+                "python.defaultInterpreterPath": "/workspaces/flotilla/.venv/bin/python",
+                "python.languageServer": "Pylance",
+                // Type-checking is enforced via `uv run pyright` (strict), not Pylance.
+                "python.analysis.typeCheckingMode": "off",
+                "python.testing.pytestArgs": [
+                    "tests"
+                ],
+                "python.testing.pytestEnabled": true,
+                "python.testing.unittestEnabled": false
+            },
+            "extensions": [
+                "anthropic.claude-code",
+                "charliermarsh.ruff",
+                "ms-python.python",
+                "ms-python.vscode-pylance"
+            ]
+        }
+    }
+}
