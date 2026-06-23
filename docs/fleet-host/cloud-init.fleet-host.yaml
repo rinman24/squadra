@@ -89,10 +89,12 @@ write_files:
       SPEC="git+${FLOTILLA_REPO_URL}"
       [ -n "$PIN" ] && [ "$PIN" != "REPLACE_WITH_FLOTILLA_CUTOVER_COMMIT" ] && SPEC="${SPEC}@${PIN}"
       log "installing ${SPEC} into ${VENV}"
+      # --force-reinstall: flotilla is a static 0.1.0, so plain --upgrade is a
+      # no-op across commits (pip skips the rebuild); force a rebuild from the pin.
       GIT_CONFIG_COUNT=2 \
       GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= \
       GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1='!f() { echo username=pat; echo "password=$AZURE_DEVOPS_EXT_PAT"; }; f' \
-        "$VENV/bin/pip" install --upgrade "$SPEC"
+        "$VENV/bin/pip" install --upgrade --force-reinstall "$SPEC"
       unset AZURE_DEVOPS_EXT_PAT
       sudo "$VENV/bin/flotilla" install-units \
         --key-vault "$FLEET_KEY_VAULT" --fleet-home "$FLEET_HOME" --venv-bin "$VENV/bin" \
