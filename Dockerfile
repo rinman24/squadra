@@ -20,7 +20,12 @@ ENV PYTHONUNBUFFERED=TRUE \
     PYTHONDONTWRITEBYTECODE=TRUE \
     PIP_DEFAULT_TIMEOUT=100 \
     UV_PYTHON_DOWNLOADS=never \
-    AZURE_CORE_COLLECT_TELEMETRY=0
+    AZURE_CORE_COLLECT_TELEMETRY=0 \
+    # uv's cache (container overlay fs) and the in-repo .venv (bind mount) live on
+    # different filesystems, so the default hardlink mode falls back to copy with a
+    # warning on every `uv sync`. Pin copy mode to silence it. Dev-image only — CI runs
+    # uv directly on the runner, not this image.
+    UV_LINK_MODE=copy
 
 # System build/dev prerequisites reused below (apt-repo setup needs curl/gnupg).
 RUN set -eux; \
