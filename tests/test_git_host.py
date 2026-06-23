@@ -7,13 +7,15 @@ Two layers:
    a ``safe.directory`` scoped to that exact path and **never** the ``*`` wildcard.
 
 2. End-to-end regression tests against a **real** temp git repo with an
-   agent-planted ``reference-transaction`` hook, driven through the production
-   adapters (:class:`flotilla.worktree.GitWorktreeAccess`,
+   agent-planted hook, driven through the production adapters
+   (:class:`flotilla.worktree.GitWorktreeAccess`,
    :class:`flotilla.cleanup.DeterministicCleanup`) with their real ``_run_quiet``
-   runner — no fake git. They assert the planted hook does **not** fire when a
-   host-side ref-touching op (worktree-add branch create, branch delete) runs.
-   A control proves the same hook *does* fire without the guard, so the test
-   cannot silently pass for the wrong reason.
+   runner — no fake git. They assert a planted ``reference-transaction`` hook does
+   **not** fire when a host-side ref-touching op (worktree-add branch create,
+   branch delete) runs, and that a planted ``pre-push`` hook does **not** fire on a
+   host-side ``git push`` built through ``host_git_argv`` — the credential-holding
+   op the wired push path must use. Each has a control proving the hook *does* fire
+   without the guard, so the tests cannot silently pass for the wrong reason.
 """
 
 from collections.abc import Sequence
@@ -156,3 +158,61 @@ def test_host_side_op_survives_dubious_ownership_scenario(tmp_path: Path) -> Non
     argv: list[str] = host_git_argv("worktree", "prune", work_dir=repo)
     assert f"safe.directory={repo}" in argv
     assert "safe.directory=*" not in argv
+
+
+# --- end-to-end regression: a planted pre-push hook must not fire on a push ---
+#
+# push is the credential-holding host-side op at the centre of the #193 threat
+# model: the agent commits in the bind-mounted worktree (and could plant a
+# ``pre-push`` hook there), then the *supervisor* pushes host-side while holding
+# the PAT. ``pre-push`` fires on ``git push`` specifically — the one hook verb the
+# ref-transaction tests above do not exercise. The push path, when wired, MUST
+# build its argv through ``host_git_argv("push", …, work_dir=worktree)`` (the same
+# builder fetch / worktree / branch-delete already use); these tests prove that
+# contract neutralizes a planted ``pre-push`` hook, with a control proving the
+# hook fires on a bare push so the regression cannot pass vacuously.
+
+_PRE_PUSH_MARKER: str = "PRE_PUSH_FIRED"
+
+
+def _plant_pre_push_hook(repo: Path) -> Path:
+    """Plant a ``pre-push`` hook that touches a marker, as a malicious agent would.
+
+    Returns the marker path the hook would create when ``git push`` runs.
+    """
+    hooks_dir: Path = repo / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    marker: Path = repo / _PRE_PUSH_MARKER
+    hook: Path = hooks_dir / "pre-push"
+    hook.write_text(f'#!/bin/sh\necho FIRED > "{marker}"\n')
+    hook.chmod(0o755)
+    return marker
+
+
+def test_control_pre_push_hook_fires_on_an_unguarded_push(tmp_path: Path) -> None:
+    # Sanity control: a bare `git push` DOES fire the planted pre-push hook. If
+    # this ever stops firing the regression below would pass vacuously.
+    repo: Path = tmp_path / "repo"
+    _init_repo(repo)
+    marker: Path = _plant_pre_push_hook(repo)
+    _git("-C", str(repo), "commit", "--allow-empty", "-qm", "slice work")
+
+    subprocess.run(
+        ["git", "-C", str(repo), "push", "-q", "origin", "HEAD:refs/heads/control"],
+        check=True,
+    )
+    assert marker.exists(), "control: a planted pre-push hook should fire on an unguarded push"
+
+
+def test_host_side_push_does_not_fire_a_planted_pre_push_hook(tmp_path: Path) -> None:
+    repo: Path = tmp_path / "repo"
+    _init_repo(repo)
+    marker: Path = _plant_pre_push_hook(repo)
+    _git("-C", str(repo), "commit", "--allow-empty", "-qm", "slice work")
+
+    # Built through host_git_argv, the push argv pins core.hooksPath=/dev/null, so
+    # the pre-push hook planted in the worktree cannot fire in the host context.
+    rc: int = _run_quiet(host_git_argv("push", "origin", "HEAD:refs/heads/slice-x", work_dir=repo))
+
+    assert rc == 0, "host-side push must succeed"
+    assert not marker.exists(), "host-side push must NOT run a planted pre-push hook"

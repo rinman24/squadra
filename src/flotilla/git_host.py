@@ -33,6 +33,16 @@ Two coupled hardenings, applied together because either alone reopens the hole:
 Both are command-line ``-c`` overrides (highest-precedence, transient, never
 persisted), so the hardening travels with the argv and an agent cannot strip it
 from on-disk config.
+
+The host-side **push** of a slice's commits is the credential-holding op at the
+centre of this threat model, but it is not yet wired in code (it is the deferred
+write-tail the supervisor's ``_handoff`` documents). When it is wired it MUST be
+built as ``host_git_argv(*credential_helper, "push", "origin", branch,
+work_dir=worktree)`` — the same builder fetch / worktree-create / branch-delete
+already use — so a ``pre-push`` hook planted in the bind-mounted worktree cannot
+fire in the host context. ``tests/test_git_host.py`` proves that contract
+(planted ``pre-push`` hook neutralized, plus a bare-push control), so a future
+push that bypasses this builder is a reviewable regression, not a silent escape.
 """
 
 from collections.abc import Sequence
