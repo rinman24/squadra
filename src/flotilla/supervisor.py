@@ -106,6 +106,7 @@ from flotilla.domain import (
 )
 from flotilla.dry_run import DryRunCleanup, DryRunWorktree
 from flotilla.engines import LifecycleEngine, slice_branch
+from flotilla.git_host import host_git_argv
 from flotilla.manifest import ManifestRead, read_manifest, write_slice_context
 from flotilla.repo import remote_auth_ok, target_remote_url
 from flotilla.sandbox import ComposeSandbox, DryRunSandbox, SandboxAccess
@@ -213,7 +214,7 @@ def _read_commits_present(worktree: Path, base_ref: str) -> bool:
     if not worktree.is_dir():
         return False
     completed: subprocess.CompletedProcess[str] = subprocess.run(
-        ["git", "-C", str(worktree), "rev-list", "--count", f"{base_ref}..HEAD"],
+        host_git_argv("rev-list", "--count", f"{base_ref}..HEAD", work_dir=worktree),
         capture_output=True,
         text=True,
         check=False,

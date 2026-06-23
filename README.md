@@ -381,6 +381,44 @@ restricts claiming to slices under those parents; it supersedes the legacy
 (the default) means every unblocked `queued` work item in the project is
 eligible.
 
+### Host-side git hardening (sandbox-escape control)
+
+The slice agent runs in a sandbox with the slice worktree bind-mounted as
+`/work`, and it commits there — so a prompt-injected or misbehaving agent can
+plant a git hook (`pre-push`, `post-checkout`, …) or set `core.hooksPath` to an
+agent-controlled directory inside the worktree. Host-side git ops later run
+against that same worktree in the **supervisor** context, which holds the ADO PAT
+and the VM managed identity. A hook firing there would be a sandbox escape into
+the credential-holding host.
+
+flotilla closes this by routing **every** host-side git invocation through
+`flotilla.git_host`, which:
+
+- pins `-c core.hooksPath=/dev/null` on the argv (a command-line `-c` outranks any
+  config the agent set, so neither a planted hook file nor an agent-set
+  `core.hooksPath` can execute); and
+- on a checkout op, adds `-c safe.directory=<that exact path>` to clear git's
+  dubious-ownership refusal when the op runs as a different OS user than the
+  `FLEET_HOME`/worktree owner — **scoped to the path, never `safe.directory=*`**
+  (a wildcard would trust every repo on the host and, paired with a planted hook,
+  reopen the escape).
+
+Both are transient command-line overrides — never written to `.git/config`, so the
+agent cannot strip them. The worktree create/archive/prune, branch delete, the
+`base..HEAD` commit count, and the app-repo bootstrap all inherit this automatically
+by going through the builder. The host-side **push** of a slice's commits — the
+credential-holding op the agent does not perform — is not yet wired in code (the
+deferred write-tail in the supervisor's `_handoff`); when it is, it must be built as
+`host_git_argv(*credential_helper, "push", "origin", branch, work_dir=worktree)`, and
+`tests/test_git_host.py` already proves that contract neutralizes a planted `pre-push`
+hook (with a bare-push control), so a push that bypasses the builder is a reviewable
+regression rather than a silent escape.
+
+**Manual operator pushes** against a fleet worktree must carry the same guard —
+run e.g. `git -c core.hooksPath=/dev/null -c safe.directory="$PWD" push …` (or
+export `GIT_CONFIG_PARAMETERS`) rather than a bare `git push`, so an operator's
+hands-on op cannot trip a planted hook either.
+
 ## Activation (manual, opt-in)
 
 Nothing starts the fleet automatically. Scope claiming with

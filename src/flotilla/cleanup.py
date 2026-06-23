@@ -24,6 +24,8 @@ from pathlib import Path
 import subprocess
 from typing import Protocol
 
+from flotilla.git_host import host_git_argv
+
 
 @dataclass(frozen=True, slots=True)
 class CleanupResult:
@@ -93,18 +95,20 @@ class DeterministicCleanup:
 
     def delete_branch(self, branch: str) -> bool:
         """Delete the merged branch with ``git branch -D``."""
-        return self._run(["git", "-C", self._fleet_home, "branch", "-D", branch]) == 0
+        return self._run(host_git_argv("branch", "-D", branch, work_dir=self._fleet_home)) == 0
 
     def remove_worktree(self, worktree: str) -> bool:
         """Remove the slice's worktree with ``git worktree remove --force``."""
         return (
-            self._run(["git", "-C", self._fleet_home, "worktree", "remove", "--force", worktree])
+            self._run(
+                host_git_argv("worktree", "remove", "--force", worktree, work_dir=self._fleet_home)
+            )
             == 0
         )
 
     def prune_worktrees(self) -> bool:
         """Prune stale worktree entries with ``git worktree prune``."""
-        return self._run(["git", "-C", self._fleet_home, "worktree", "prune"]) == 0
+        return self._run(host_git_argv("worktree", "prune", work_dir=self._fleet_home)) == 0
 
     def compose_down(self, project: str) -> bool:
         """Tear the leftover compose project down with volumes (``down -v``)."""

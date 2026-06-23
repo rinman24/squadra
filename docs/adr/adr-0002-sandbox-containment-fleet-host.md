@@ -153,6 +153,16 @@ the code cites them (e.g. `§5`, `§11`, `decision 2`).
   than a manual checklist (see `docs/fleet-host/`).
 - The tmux *ticker* is retired on the fleet-host (systemd owns scheduling);
   `fleetctl.sh`'s `start/stop/status/log` remain only for hands-on local/dev runs.
+- Host-side git ops are hardened against the sandbox-escape vector the commit-only
+  worktree opens (Issue #193). Every host-side git invocation is built through
+  `flotilla.git_host` and pins `-c core.hooksPath=/dev/null`, so a hook the agent
+  plants in the bind-mounted worktree (or an agent-set `core.hooksPath`) cannot
+  execute when a supervisor-context git op (worktree create/archive/prune, branch
+  delete, `base..HEAD` commit count, the app-repo bootstrap, and the future
+  push/PR-create) later runs against that worktree. The same builder clears git's
+  dubious-ownership refusal with a `safe.directory` **scoped to the exact checkout
+  path** — never the `safe.directory=*` wildcard, which (paired with a planted
+  hook) would reopen the escape this control closes.
 
 ## Alternatives considered
 

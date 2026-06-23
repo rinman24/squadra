@@ -12,9 +12,10 @@ process environment (``AZURE_DEVOPS_EXT_PAT``, applied by the fleet-tick secret
 bootstrap) at git time and is **never** written to ``.git/config`` or any file —
 the helper string carries only the variable *reference*, not its value (matching
 the repo-local helper pattern in memory ``git-push-https-pat-not-ssh``). Every
-host-side git invocation also pins ``core.hooksPath=/dev/null`` so a hook planted
-in the checkout cannot execute during a host-side op (defense aligned with the
-flotilla git-hooks hardening, Issue #193; not its full centralization).
+host-side git argv here is built through :mod:`flotilla.git_host`, so it pins
+``core.hooksPath=/dev/null`` (and, on a checkout op, a narrowly-scoped
+``safe.directory``) — the centralized #193 hardening that keeps a planted hook
+from executing during a host-side op.
 """
 
 from collections.abc import Callable, Mapping, Sequence
@@ -22,6 +23,8 @@ import os
 from pathlib import Path
 import subprocess
 from typing import Final
+
+from flotilla.git_host import host_git_argv, with_hooks_guard
 
 DEFAULT_BASE_BRANCH: Final[str] = "main"
 
@@ -33,12 +36,11 @@ APP_REPO_URL_ENV: Final[str] = "FLEET_APP_REPO_URL"
 FLEET_HOME_ENV: Final[str] = "FLEET_HOME"
 BASE_BRANCH_ENV: Final[str] = "FLEET_BASE_BRANCH"
 
-# Git command-runner seam (argv -> completed process), injected for tests.
+# Git command-runner seam (full argv incl. ``git`` -> completed process),
+# injected for tests. The argv is built by :mod:`flotilla.git_host` so every op
+# carries the host-side hooks guard (and, on a checkout op, a narrow
+# ``safe.directory``) — see that module for the #193 threat model.
 GitRun = Callable[[Sequence[str]], "subprocess.CompletedProcess[str]"]
-
-# Defeats a checkout-planted hook / agent-set core.hooksPath on host-side ops
-# (command-line ``-c`` overrides config). Forward-aligned with Issue #193.
-_HOOKS_GUARD: Final[tuple[str, ...]] = ("-c", "core.hooksPath=/dev/null")
 
 # An env-var credential helper: reset any inherited helper, then one that reads
 # the PAT from the environment. No secret is persisted — only the var reference.
@@ -51,12 +53,12 @@ _CREDENTIAL_HELPER: Final[tuple[str, ...]] = (
 
 
 def _run_git(args: Sequence[str]) -> "subprocess.CompletedProcess[str]":
-    """Run a ``git`` command capturing output; never raises on a non-zero exit."""
-    return subprocess.run(["git", *args], capture_output=True, text=True, check=False)
+    """Run a full ``git`` argv capturing output; never raises on a non-zero exit."""
+    return subprocess.run(list(args), capture_output=True, text=True, check=False)
 
 
 def _run_git_probe(args: Sequence[str]) -> "subprocess.CompletedProcess[str]":
-    """Run a probe ``git`` command non-interactively with a hard timeout.
+    """Run a probe ``git`` argv non-interactively with a hard timeout.
 
     ``GIT_TERMINAL_PROMPT=0`` turns a rejected/expired credential into a fast
     non-zero exit instead of an interactive username/password prompt that would
@@ -65,7 +67,7 @@ def _run_git_probe(args: Sequence[str]) -> "subprocess.CompletedProcess[str]":
     :data:`_CREDENTIAL_HELPER`); only the *interactive fallback* is disabled.
     """
     return subprocess.run(
-        ["git", *args],
+        list(args),
         capture_output=True,
         text=True,
         check=False,
@@ -97,23 +99,17 @@ def ensure_app_repo(
     """
     git_dir: Path = fleet_home / ".git"
     if not git_dir.is_dir():
-        cloned = run(
-            [
-                *_CREDENTIAL_HELPER,
-                *_HOOKS_GUARD,
-                "clone",
-                repo_url,
-                str(fleet_home),
-            ]
-        )
+        # clone targets a fresh dir (no existing checkout to exempt): hooks guard
+        # + credential helper, no ``safe.directory``/``-C``.
+        cloned = run(with_hooks_guard(_CREDENTIAL_HELPER, "clone", repo_url, str(fleet_home)))
         return cloned.returncode == 0
 
-    fetched = run([*_CREDENTIAL_HELPER, *_HOOKS_GUARD, "-C", str(fleet_home), "fetch", "origin"])
+    fetched = run(host_git_argv(*_CREDENTIAL_HELPER, "fetch", "origin", work_dir=fleet_home))
     if fetched.returncode != 0:
         return False
     if not mutate:
         return True
-    reset = run([*_HOOKS_GUARD, "-C", str(fleet_home), "reset", "--hard", f"origin/{base_branch}"])
+    reset = run(host_git_argv("reset", "--hard", f"origin/{base_branch}", work_dir=fleet_home))
     return reset.returncode == 0
 
 
@@ -161,7 +157,7 @@ def target_remote_url(
     """
     env: Mapping[str, str] = os.environ if environ is None else environ
     completed: subprocess.CompletedProcess[str] = run(
-        ["-C", str(fleet_home), "remote", "get-url", "origin"]
+        host_git_argv("remote", "get-url", "origin", work_dir=fleet_home)
     )
     if completed.returncode == 0:
         url: str = completed.stdout.strip()
@@ -183,7 +179,7 @@ def remote_auth_ok(remote_url: str, *, run: GitRun = _run_git_probe) -> bool:
     """
     try:
         completed: subprocess.CompletedProcess[str] = run(
-            [*_CREDENTIAL_HELPER, *_HOOKS_GUARD, "ls-remote", remote_url]
+            with_hooks_guard(_CREDENTIAL_HELPER, "ls-remote", remote_url)
         )
     except (subprocess.TimeoutExpired, OSError):
         return False
