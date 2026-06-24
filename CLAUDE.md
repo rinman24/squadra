@@ -70,8 +70,14 @@ it runs against a stubbed `claude` and a temp fleet root (no network/ADO/tmux).
 
 - Type-prefixed commit subjects (`feat:`, `refactor:`, `test:`, `fix:`,
   `docs:`, `ci:` …); each commit a coherent, self-contained unit (no WIP).
-- Push to Azure DevOps over **HTTPS + PAT** (`AZURE_DEVOPS_EXT_PAT`); this
-  container has no SSH key. Commit with `commit.gpgsign=false`.
+- Authenticate from inside the container via `gh auth login` (device flow),
+  which wires git's credential helper for HTTPS push (this container has no SSH
+  key) and enables `gh pr`. Commit with `commit.gpgsign=false`.
 - **No Claude/Anthropic authorship trailers** on commits, PR bodies, or tags.
-- PR descriptions render **Markdown**; ADO work-item fields render **HTML**.
-- `main` is gated by build validation (the CI pipeline) + require-PR.
+- On GitHub everything (PR descriptions, issues) renders **Markdown**.
+- `main` is protected by a branch ruleset — require a PR + the GitHub Actions
+  CI check + branches up to date; merge via **merge commit**. GitHub has no
+  native semi-linear merge, so keep linear history **by convention**: rebase
+  your branch onto `main` before merge (preserves `git revert -m 1 <merge>`
+  per-PR atomic revert and `git log --first-parent` PR-level history). This is
+  a delta from ADO, where semi-linear was gate-enforced.

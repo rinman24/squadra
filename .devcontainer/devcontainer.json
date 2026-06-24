@@ -6,6 +6,12 @@
     // Create the in-repo `.venv` (uv sync) and assert gpgsign off on container create.
     // gpgsign is also baked into the image; re-asserting it here is belt-and-suspenders.
     "postCreateCommand": "git config --global commit.gpgsign false && uv sync --frozen",
+    // gh is layered on as a devcontainer feature (kept out of the base image so it stays
+    // host-agnostic); it installs at container-create with no image rebuild. Authenticate
+    // with `gh auth login` (device flow) — documented in docs/dev-container.md.
+    "features": {
+        "ghcr.io/devcontainers/features/github-cli:1": {}
+    },
     "remoteUser": "dev",
     "customizations": {
         "vscode": {

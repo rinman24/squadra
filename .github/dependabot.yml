@@ -1,0 +1,37 @@
+# Dependabot configuration for flotilla.
+# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+version: 2
+
+updates:
+  # GitHub Actions used by .github/workflows/*.yml (actions/checkout, astral-sh/setup-uv, ...).
+  # Batched into a single weekly PR so action bumps land together rather than one PR per action.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # Python dependencies via the native uv ecosystem (reads pyproject.toml + uv.lock).
+  # flotilla has zero third-party runtime deps; everything updatable lives in the PEP 735
+  # [dependency-groups] `dev` group (ruff, pyright, pytest), so the group below targets
+  # development dependencies and batches them into one weekly PR.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      dev:
+        dependency-type: "development"
+        patterns:
+          - "*"
