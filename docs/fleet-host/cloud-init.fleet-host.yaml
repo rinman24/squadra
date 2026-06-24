@@ -51,7 +51,8 @@ write_files:
       FLEET_HOME=/opt/flotilla/gswa-backend
       FLEET_APP_REPO_URL=https://dev.azure.com/genshift/gswa-dev/_git/gswa-backend
       FLEET_PARENT_SCOPE_IDS=139
-      FLOTILLA_REPO_URL=https://dev.azure.com/genshift/gswa-dev/_git/flotilla
+      FLOTILLA_REPO_URL=https://github.com/rinman24/flotilla.git
+      FLEET_GITHUB_PAT_SECRET=flotilla-github-pat
       FLEET_VENV=/opt/flotilla/venv
       FLEET_USER=azureuser
       FLEET_ADO_ORG=https://dev.azure.com/genshift
@@ -83,15 +84,19 @@ write_files:
       ADO_ORG=${FLEET_ADO_ORG:-https://dev.azure.com/genshift}
       ADO_PROJECT=${FLEET_ADO_PROJECT:-gswa-dev}
       PIN=$(tr -d '[:space:]' < "$PIN_FILE" 2>/dev/null || true)
+      GH_PAT_SECRET=${FLEET_GITHUB_PAT_SECRET:-flotilla-github-pat}
       if ! az login --identity --only-show-errors --output none 2>/dev/null; then
         log "managed-identity login failed; KV grant not ready? re-run later."; exit 0
       fi
-      PAT=$(az keyvault secret show --vault-name "$FLEET_KEY_VAULT" --name fleet-ado-pat \
-              --query value --output tsv 2>/dev/null || true)
-      if [ -z "$PAT" ]; then
-        log "could not read fleet-ado-pat from $FLEET_KEY_VAULT; re-run after the grant."; exit 0
+      GH_PAT=$(az keyvault secret show --vault-name "$FLEET_KEY_VAULT" --name "$GH_PAT_SECRET" \
+                 --query value --output tsv 2>/dev/null || true)
+      if [ -z "$GH_PAT" ]; then
+        log "could not read $GH_PAT_SECRET from $FLEET_KEY_VAULT; re-run after the secret/grant."; exit 0
       fi
-      export AZURE_DEVOPS_EXT_PAT="$PAT"
+      # flotilla is on GitHub now (migrate-flotilla Phase 2b): pip-install it with the
+      # GitHub PAT (Contents: read). The ADO PAT (fleet-ado-pat) is read at tick time
+      # for gswa-backend + board ops, so the host holds BOTH secrets (decision #8).
+      export GITHUB_PAT="$GH_PAT"
       SPEC="git+${FLOTILLA_REPO_URL}"
       [ -n "$PIN" ] && [ "$PIN" != "REPLACE_WITH_FLOTILLA_CUTOVER_COMMIT" ] && SPEC="${SPEC}@${PIN}"
       log "installing ${SPEC} into ${VENV}"
@@ -99,9 +104,9 @@ write_files:
       # no-op across commits (pip skips the rebuild); force a rebuild from the pin.
       GIT_CONFIG_COUNT=2 \
       GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= \
-      GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1='!f() { echo username=pat; echo "password=$AZURE_DEVOPS_EXT_PAT"; }; f' \
+      GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1='!f() { echo username=x-access-token; echo "password=$GITHUB_PAT"; }; f' \
         "$VENV/bin/pip" install --upgrade --force-reinstall "$SPEC"
-      unset AZURE_DEVOPS_EXT_PAT
+      unset GITHUB_PAT
       sudo "$VENV/bin/flotilla" install-units \
         --key-vault "$FLEET_KEY_VAULT" --fleet-home "$FLEET_HOME" --venv-bin "$VENV/bin" \
         --app-repo-url "${FLEET_APP_REPO_URL:-}" --parent-scope-ids "${FLEET_PARENT_SCOPE_IDS:-}"
