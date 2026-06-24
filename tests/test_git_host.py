@@ -2,14 +2,14 @@
 
 Two layers:
 
-1. Unit tests of :mod:`flotilla.git_host` argv construction — every host-side
+1. Unit tests of :mod:`squadra.git_host` argv construction — every host-side
    git argv pins ``core.hooksPath=/dev/null``; a checkout op additionally carries
    a ``safe.directory`` scoped to that exact path and **never** the ``*`` wildcard.
 
 2. End-to-end regression tests against a **real** temp git repo with an
    agent-planted hook, driven through the production adapters
-   (:class:`flotilla.worktree.GitWorktreeAccess`,
-   :class:`flotilla.cleanup.DeterministicCleanup`) with their real ``_run_quiet``
+   (:class:`squadra.worktree.GitWorktreeAccess`,
+   :class:`squadra.cleanup.DeterministicCleanup`) with their real ``_run_quiet``
    runner — no fake git. They assert a planted ``reference-transaction`` hook does
    **not** fire when a host-side ref-touching op (worktree-add branch create,
    branch delete) runs, and that a planted ``pre-push`` hook does **not** fire on a
@@ -22,9 +22,9 @@ from collections.abc import Sequence
 from pathlib import Path
 import subprocess
 
-from flotilla.cleanup import DeterministicCleanup
-from flotilla.git_host import HOOKS_GUARD, host_git_argv, with_hooks_guard
-from flotilla.worktree import GitWorktreeAccess
+from squadra.cleanup import DeterministicCleanup
+from squadra.git_host import HOOKS_GUARD, host_git_argv, with_hooks_guard
+from squadra.worktree import GitWorktreeAccess
 
 # --- unit: argv construction -------------------------------------------------
 

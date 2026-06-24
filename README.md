@@ -1,34 +1,34 @@
-# flotilla
+# squadra
 
 Deterministic supervisor + per-slice runner machinery for an **AFK, board-driven
-Claude implementation fleet**. flotilla runs the implementation phase of an
+Claude implementation fleet**. squadra runs the implementation phase of an
 engineering pipeline (`/tdd` → `/qa`) unattended across many vertical slices at
 once, with board work-item state as the single source of truth at every tier.
-flotilla speaks a provider-neutral 3-bucket `Lifecycle` (queued / active / done);
+squadra speaks a provider-neutral 3-bucket `Lifecycle` (queued / active / done);
 a `BoardAccess` adapter translates that to a concrete board's native semantics at
 the boundary. Azure DevOps (the `az` CLI) is the adapter that ships today; GitHub
 and GitLab are tracked backlog adapters the same contract-test suite will
 validate. Every fleet process is stateless or short-lived and reconstructs its
 view from the board on each run.
 
-flotilla is the packaged, reusable extraction of the fleet originally built in
+squadra is the packaged, reusable extraction of the fleet originally built in
 the `app` backend (provider-neutral seam: [ADR-0001](docs/adr/adr-0001-board-provider-seam.md)
 and its [design note](docs/design/board-provider-seam.md)). The package ships the
 **deterministic machinery + its tests + scaffolding** — the agent-side skills
 (`/afk-slice-runner`, `/tdd`, `/qa`, `/cleanup-merged-branches`) are
-consumer-owned and live in the consuming repo. flotilla *scaffolds* genericized
-templates for the ones it drives (`flotilla init`), then invokes them only by
+consumer-owned and live in the consuming repo. squadra *scaffolds* genericized
+templates for the ones it drives (`squadra init`), then invokes them only by
 **skill name** through `claude`: scaffolding the template is not owning it, so the
 runtime boundary is unchanged.
 
-> flotilla operates *on* a target repository, identified by `FLEET_HOME` (the
+> squadra operates *on* a target repository, identified by `FLEET_HOME` (the
 > current working directory by default). The installed package is never the
 > working repo; the shell glue it drives ships as package data and is resolved
 > via `importlib.resources`.
 
 ## Install
 
-flotilla is built with [uv](https://docs.astral.sh/uv/) + Hatchling (PEP 621,
+squadra is built with [uv](https://docs.astral.sh/uv/) + Hatchling (PEP 621,
 src layout). It has **no third-party runtime dependencies** (pure standard
 library); `tmux`, `git`, the board provider's CLI (the `az` CLI for the ADO
 adapter that ships today), and the `claude` CLI must be available on the host that
@@ -36,38 +36,38 @@ runs the fleet.
 
 ```bash
 # From a clone (development):
-uv sync                      # create .venv, install flotilla + dev tools
+uv sync                      # create .venv, install squadra + dev tools
 
 # As a dependency of another project (consumer):
 #   editable path dep while iterating, or a git+HTTPS pin once stable
-uv pip install -e /path/to/flotilla
+uv pip install -e /path/to/squadra
 ```
 
-A single unified `flotilla` CLI is installed (the API / composition root):
+A single unified `squadra` CLI is installed (the API / composition root):
 
 | Command | Role |
 |---|---|
-| `flotilla init [--provider P] [--check]` | scaffold an annotated `flotilla.toml`; `--check` validates it against the live board |
-| `flotilla tick [--dry-run]` | run one supervisor tick in-process |
-| `flotilla {start\|stop\|status\|log}` | hands-on ticker control (shells to the packaged `fleetctl.sh`) |
-| `flotilla slice {init\|update\|heartbeat\|show}` | the per-slice status-file ops (used by the runner wrapper) |
+| `squadra init [--provider P] [--check]` | scaffold an annotated `squadra.toml`; `--check` validates it against the live board |
+| `squadra tick [--dry-run]` | run one supervisor tick in-process |
+| `squadra {start\|stop\|status\|log}` | hands-on ticker control (shells to the packaged `fleetctl.sh`) |
+| `squadra slice {init\|update\|heartbeat\|show}` | the per-slice status-file ops (used by the runner wrapper) |
 
-`python -m flotilla.supervisor` (one tick) and `python -m flotilla.status` (the
-status-file CLI) remain as internal module entry points. The `flotilla-status`
-console script is kept as a **deprecated alias** for `flotilla slice` until the
+`python -m squadra.supervisor` (one tick) and `python -m squadra.status` (the
+status-file CLI) remain as internal module entry points. The `squadra-status`
+console script is kept as a **deprecated alias** for `squadra slice` until the
 coupled app PR migrates off it.
 
 ## Configuration
 
-flotilla reads a `flotilla.toml` in the target repo (the *what* — which board,
+squadra reads a `squadra.toml` in the target repo (the *what* — which board,
 which states, which skills) and layers it under environment + flag overrides. The
 precedence, lowest to highest:
 
 ```
-built-in defaults  <  flotilla.toml  <  FLEET_* env  <  CLI flag
+built-in defaults  <  squadra.toml  <  FLEET_* env  <  CLI flag
 ```
 
-`flotilla.toml` describes the *target* (like a kubeconfig context) and defaults the
+`squadra.toml` describes the *target* (like a kubeconfig context) and defaults the
 *how* wherever it can. Schema:
 
 | Section / key | Default | Meaning |
@@ -77,7 +77,7 @@ built-in defaults  <  flotilla.toml  <  FLEET_* env  <  CLI flag
 | `[board].tag_prefix` | `fleet:` | Configurable namespace for the fleet's tags; detection is prefix-based (`startswith`). The five suffixes are fixed (see [Tag vocabulary](#tag-vocabulary)). |
 | `[board].parent_scope_ids` | `[]` (whole project) | Optional claim-scope filter — only slices under these parents are claimable. Supersedes the legacy `FLEET_EPIC_IDS` env, which is still honored. |
 | `[board.states].queued` / `.active` / `.done` | — | Lists of the board's *native* state names mapped onto the three neutral `Lifecycle` buckets (many-native→one-neutral allowed). **REQUIRED** unless the provider is ADO-Basic, which defaults to `["To Do"]` / `["Doing"]` / `["Done"]`. GitHub/GitLab statuses are user-defined, so they must be declared. |
-| `[pipeline].branch_template` | `feat/slice-{id}-{slug}` | Slice branch naming. flotilla owns the `-a{attempt}` retry suffix (fixed rule, not templated). |
+| `[pipeline].branch_template` | `feat/slice-{id}-{slug}` | Slice branch naming. squadra owns the `-a{attempt}` retry suffix (fixed rule, not templated). |
 | `[pipeline].worktree_dir` | `.claude/worktrees` | Where slice worktrees are created. |
 | `[pipeline].runner_skill` | `/afk-slice-runner` | Skill the runner wrapper invokes per slice. |
 | `[pipeline].tdd_skill` | `/tdd` | TDD skill name, threaded into the runner prompt. |
@@ -110,32 +110,32 @@ Operational and secret knobs stay **env-only** with the defaults in
 (`FLEET_TICK_INTERVAL_SECONDS`, `FLEET_HEARTBEAT_INTERVAL_SECONDS`,
 `FLEET_STALENESS_THRESHOLD_SECONDS`), `FLEET_MAX_ATTEMPTS`,
 `FLEET_MODEL`/`FLEET_EFFORT`, `FLEET_HOME`/`FLEET_ROOT`/`FLEET_PYTHON`, and the PAT.
-These are not in `flotilla.toml`.
+These are not in `squadra.toml`.
 
 Safety is **validate-against-board, not mandatory typing.** `validate_config()`
 resolves the configured state names, tag prefix, and base branch against the
-*live* board — at startup of every tick and on `flotilla init --check` — and fails
+*live* board — at startup of every tick and on `squadra init --check` — and fails
 loud on any mismatch (e.g. "configured active state 'Doing' not found among this
 project's states"). A typo can't silently strand or mis-claim slices.
 
-### Scaffolding (`flotilla init`)
+### Scaffolding (`squadra init`)
 
-`flotilla init [--provider ado]` makes adoption one command plus a few edits. It
+`squadra init [--provider ado]` makes adoption one command plus a few edits. It
 emits:
 
-- a complete, **annotated** `flotilla.toml` — every key written with its default
+- a complete, **annotated** `squadra.toml` — every key written with its default
   and `provider` taken from `--provider`; and
 - the genericized, **consumer-owned** runner-skill and cleanup-skill templates.
 
 The skill templates are provider/repo-agnostic (a neutral lifecycle: claim-verify
 → worktree → seams → tdd → qa → park) with clearly-marked fill-in sections (e.g.
-`## Gates`, shared-seam conventions) that work out of the box. flotilla copies
+`## Gates`, shared-seam conventions) that work out of the box. squadra copies
 them out, then drives them only by skill name through `claude` — copying the
 template is not owning it, so the "machinery + tests + scaffolding" runtime
-boundary holds. `flotilla init --check` runs `validate_config()` against the live
+boundary holds. `squadra init --check` runs `validate_config()` against the live
 board without writing anything.
 
-> The unified `flotilla init` CLI surface lands with the PR2 core; the scaffolding
+> The unified `squadra init` CLI surface lands with the PR2 core; the scaffolding
 > engine itself ships on this branch.
 
 ## Status file + heartbeat convention
@@ -181,25 +181,25 @@ never see partial JSON; interleaved writers never lose fields.
 Shell callers (the runner wrapper, skills) use the status CLI:
 
 ```bash
-flotilla slice init \
+squadra slice init \
   --issue-id 41 --runner-id runner-41-a1 \
   --branch feat/slice-41-example --worktree "$FLEET_HOME/.claude/worktrees/feat+slice-41-example"
 
-flotilla slice update --issue-id 41 --phase tdd
-flotilla slice update --issue-id 41 \
+squadra slice update --issue-id 41 --phase tdd
+squadra slice update --issue-id 41 \
   --phase parked --parked-state awaiting-pr-approval --pr-url <url>
-flotilla slice update --issue-id 41 --phase tdd --parked-state none
-flotilla slice heartbeat --issue-id 41
-flotilla slice show --issue-id 41
+squadra slice update --issue-id 41 --phase tdd --parked-state none
+squadra slice heartbeat --issue-id 41
+squadra slice show --issue-id 41
 ```
 
 `--fleet-root` overrides the location (used by tests; defaults to
-`$FLEET_HOME/.claude/fleet`). `python -m flotilla.status …` is equivalent, as is
-the deprecated `flotilla-status …` alias.
+`$FLEET_HOME/.claude/fleet`). `python -m squadra.status …` is equivalent, as is
+the deprecated `squadra-status …` alias.
 
 ## Constants
 
-All addendum constants live in `flotilla/constants.py` and are env-tunable
+All addendum constants live in `squadra/constants.py` and are env-tunable
 (read at process start — every fleet process is fresh per fire):
 
 | Constant | Default | Env override |
@@ -226,9 +226,9 @@ effect rather than a choice. Effort accepts the CLI levels
 `FLEET_MODEL` / `FLEET_EFFORT` — it flows through autostart → ticker → supervisor
 → runner panes by environment inheritance.
 
-`FLEET_PYTHON` must point at an interpreter that has `flotilla` installed; the
+`FLEET_PYTHON` must point at an interpreter that has `squadra` installed; the
 supervisor injects its own `sys.executable` into each runner pane so the runner
-reaches `flotilla.*` regardless of what `python3` resolves to on PATH.
+reaches `squadra.*` regardless of what `python3` resolves to on PATH.
 
 <a id="tag-vocabulary"></a>
 Tag vocabulary (parked sub-states are **tags**, not states — the ADO Basic
@@ -252,7 +252,7 @@ CPU saturation or 429s.
 A runner is one short-lived, headless Claude session driving one slice. The
 supervisor launches each into its own per-slice ephemeral Docker compose project
 via `SandboxAccess` (ADR-0002 §5): the compose `agent` service's command *is* the
-deterministic wrapper (`flotilla/_scripts/runner-wrap.sh`, resolved from the
+deterministic wrapper (`squadra/_scripts/runner-wrap.sh`, resolved from the
 installed package and invoked as `runner-wrap.sh <issue-id> <branch> [attempt]`),
 so container lifecycle == agent lifecycle and `docker inspect .State.ExitCode`
 *is* the agent exit code.
@@ -285,13 +285,13 @@ Runner wrapper env knobs: `FLEET_HOME`, `FLEET_ROOT`,
 `FLEET_HEARTBEAT_INTERVAL_SECONDS`, `FLEET_MODEL`, `FLEET_EFFORT`,
 `FLEET_RUNNER_SKILL`, `FLEET_TDD_SKILL`, `FLEET_QA_SKILL` (the supervisor injects
 these into the pane env; when any is unset — e.g. a manual run — the wrapper
-resolves the default from `flotilla.config` / `flotilla.constants`, the single
+resolves the default from `squadra.config` / `squadra.constants`, the single
 source of truth, the same fallback pattern as `FLEET_MODEL`/`FLEET_EFFORT`/the
 interval), `FLEET_PYTHON`, `FLEET_CLAUDE_CMD` (stubbed in the hermetic tests).
 
 ## Supervisor
 
-`flotilla/supervisor.py` is the deterministic, token-free tick: no LLM anywhere,
+`squadra/supervisor.py` is the deterministic, token-free tick: no LLM anywhere,
 so it cannot hallucinate a board mutation, and it is unit-tested against in-memory
 fakes (including a divergent GitHub-shaped fake, which catches any hardcoded
 native-state leak and proves the core is provider-blind). It speaks the neutral
@@ -364,8 +364,8 @@ to `.claude/fleet/<issue-id>/archive/attempt-N/`, records the reap, drops
 `fleet:claimed`, and moves `Doing → To Do`; the next claim retries with
 attempt+1, and exhausted retries escalate to `fleet:failed` instead.
 
-**Dry run** — `flotilla tick --dry-run` (or `FLEET_DRY_RUN=1`, or
-`python -m flotilla.supervisor --dry-run`) runs the same three passes' read+plan logic
+**Dry run** — `squadra tick --dry-run` (or `FLEET_DRY_RUN=1`, or
+`python -m squadra.supervisor --dry-run`) runs the same three passes' read+plan logic
 and reports the would-be actions, with every side effect suppressed at the
 `TickSeams` boundary (`dry_run_seams`): board writes become logged
 `[dry-run] WOULD …` no-ops, no runner pane launches, neither preflight probe runs
@@ -391,8 +391,8 @@ against that same worktree in the **supervisor** context, which holds the ADO PA
 and the VM managed identity. A hook firing there would be a sandbox escape into
 the credential-holding host.
 
-flotilla closes this by routing **every** host-side git invocation through
-`flotilla.git_host`, which:
+squadra closes this by routing **every** host-side git invocation through
+`squadra.git_host`, which:
 
 - pins `-c core.hooksPath=/dev/null` on the argv (a command-line `-c` outranks any
   config the agent set, so neither a planted hook file nor an agent-set
@@ -425,27 +425,27 @@ Nothing starts the fleet automatically. Scope claiming with
 `[board].parent_scope_ids` (or the legacy `FLEET_EPIC_IDS`) before enabling. Two
 levers compose:
 
-- **A dry run first** (the safest first step): `flotilla tick --dry-run` (or
+- **A dry run first** (the safest first step): `squadra tick --dry-run` (or
   `FLEET_DRY_RUN=1`) runs the full finalize/reap/claim read+plan logic and logs
   every action a real tick WOULD take, but cannot mutate — board writes, runner
   launches, the preflight probes (the PAT `git ls-remote` and the `claude` auth
   spawn), and local fleet-state writes are all suppressed at the seams. Ticks log to
-  `$FLEET_ROOT/supervisor.log`, so review the plan with `flotilla log`.
-- **One tick by hand**: `flotilla tick` — logs to `$FLEET_ROOT/supervisor.log`.
+  `$FLEET_ROOT/supervisor.log`, so review the plan with `squadra log`.
+- **One tick by hand**: `squadra tick` — logs to `$FLEET_ROOT/supervisor.log`.
   Note that `FLEET_MAX_RUNNERS=0` is **not** a read-only tick: it only zeroes
   the *claim budget*; finalize and reap still mutate the board (drop fleet tags,
   comment PR links, run the headless cleanup, move `Doing → To Do`). For a tick
   that cannot mutate, use `--dry-run`.
 - **The fleet-host (production): systemd.** The dedicated fleet-host VM schedules
-  ticks with systemd, not tmux (ADR-0002 §11): a `flotilla.timer` fires a oneshot
-  `flotilla.service` running `flotilla fleet-tick`, which fetches the PAT +
+  ticks with systemd, not tmux (ADR-0002 §11): a `squadra.timer` fires a oneshot
+  `squadra.service` running `squadra fleet-tick`, which fetches the PAT +
   `ANTHROPIC_API_KEY` from Key Vault via the VM managed identity, syncs the app
-  repo, and runs one tick. Render + install the units with `flotilla install-units
+  repo, and runs one tick. Render + install the units with `squadra install-units
   --key-vault <kv> --fleet-home <checkout> [...]`; this does **not** enable the
   timer. Provisioning, the on-host acceptance (`goss`), and activation
-  (`systemctl enable --now flotilla.timer`) live in
+  (`systemctl enable --now squadra.timer`) live in
   [`docs/fleet-host/`](docs/fleet-host/SMOKE.md).
-- **Local / dev on demand: tmux.** `flotilla {start|stop|status|log}` drives a
+- **Local / dev on demand: tmux.** `squadra {start|stop|status|log}` drives a
   detached `fleet-ticker` tmux session whose loop fires one tick every
   `FLEET_TICK_INTERVAL_SECONDS` (default 180): `start` is idempotent, `stop` kills
   it (in-flight runners in the separate `fleet` session keep going), `status`
@@ -458,7 +458,7 @@ schedule, so crash-only semantics are preserved). In-flight slice state is
 reconstructed from the board plus the bind-mounted `.claude/fleet/` status files,
 so a re-started ticker resumes cleanly.
 
-Watch the fleet: `flotilla status` (is-it-running + recent log), `flotilla log
+Watch the fleet: `squadra status` (is-it-running + recent log), `squadra log
 -f` (follow the supervisor log live), the board (`fleet:*` tags) is the macro
 view, per-slice `status.json` is the micro view, `docker compose logs` against a
 slice's compose project is the live agent view.
@@ -474,9 +474,9 @@ uv run pytest                  # unit + hermetic shell tests
 ```
 
 The shell glue (`runner-wrap.sh`, `fleet-tick.sh`, `fleetctl.sh`) ships as package
-data under `src/flotilla/_scripts/`. Anything that needs to invoke it — the
-supervisor's `SandboxAccess` launch, the `flotilla` dispatcher, the tick entry
-point — resolves it via `flotilla._resources.resolve_script(...)` (`importlib.resources` +
+data under `src/squadra/_scripts/`. Anything that needs to invoke it — the
+supervisor's `SandboxAccess` launch, the `squadra` dispatcher, the tick entry
+point — resolves it via `squadra._resources.resolve_script(...)` (`importlib.resources` +
 `chmod +x`), never a path relative to `FLEET_HOME`. The fleet-host systemd unit
-templates ship the same way under `src/flotilla/_units/` (resolved via
-`resolve_unit(...)`, rendered by `flotilla.units`).
+templates ship the same way under `src/squadra/_units/` (resolved via
+`resolve_unit(...)`, rendered by `squadra.units`).

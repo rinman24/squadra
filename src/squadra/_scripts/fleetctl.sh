@@ -4,28 +4,28 @@
 # whose loop fires one supervisor tick every FLEET_TICK_INTERVAL_SECONDS.
 #
 # NB the dedicated fleet-host does NOT use this — it schedules ticks with systemd
-# (`flotilla.timer` → `flotilla fleet-tick`, installed via `flotilla
+# (`squadra.timer` → `squadra fleet-tick`, installed via `squadra
 # install-units`; ADR-0002 §11). The boot-time `fleet-autostart.sh` / cron
 # autostart paths have been retired in favor of systemd.
 #
-# This script ships as flotilla package data and is the body of the `flotilla`
-# console command: `flotilla {start|stop|status|tick|log}` execs it. It resolves
+# This script ships as squadra package data and is the body of the `squadra`
+# console command: `squadra {start|stop|status|tick|log}` execs it. It resolves
 # its sibling fleet-tick.sh from the same _scripts directory.
 #
-#   flotilla start    start the ticker if not already running (idempotent)
-#   flotilla stop     stop the ticker if running
-#   flotilla status   report whether the ticker is running + tail the log
-#   flotilla tick     run one supervisor tick in the foreground (extra args
-#                     pass through to the supervisor; `flotilla tick --dry-run`
+#   squadra start    start the ticker if not already running (idempotent)
+#   squadra stop     stop the ticker if running
+#   squadra status   report whether the ticker is running + tail the log
+#   squadra tick     run one supervisor tick in the foreground (extra args
+#                     pass through to the supervisor; `squadra tick --dry-run`
 #                     is the safe smoke — it plans and reports every would-be
 #                     action but cannot mutate. FLEET_MAX_RUNNERS=0 is NOT
 #                     read-only: it only zeroes the claim budget, while
 #                     finalize and reap still mutate ADO)
-#   flotilla log      tail the supervisor log (default last 40 lines); -f to
+#   squadra log      tail the supervisor log (default last 40 lines); -f to
 #                     follow live (tail -f), -n N for a custom line count
 #
 # Env knobs (shared with fleet-tick.sh):
-#   FLEET_HOME                   repo flotilla operates on (default: cwd)
+#   FLEET_HOME                   repo squadra operates on (default: cwd)
 #   FLEET_ROOT                   fleet state dir, holds supervisor.log
 #                                (default $FLEET_HOME/.claude/fleet)
 #   FLEET_TICK_INTERVAL_SECONDS  seconds between ticks (default 180 = the */3 cadence)
@@ -124,7 +124,7 @@ cmd_log() {
 
 usage() {
   cat >&2 <<EOF
-usage: flotilla {start|stop|status|tick|log} [args...]
+usage: squadra {start|stop|status|tick|log} [args...]
 
   start    start the detached '$SESSION' ticker if not already running
   stop     stop the '$SESSION' ticker if running

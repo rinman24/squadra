@@ -8,14 +8,14 @@
 
 ## Context
 
-flotilla was extracted from `app` carrying ADO-specific assumptions: the
+squadra was extracted from `app` carrying ADO-specific assumptions: the
 `AdoClient` Protocol speaks ADO semantics (`"To Do"/"Doing"/"Done"` state literals,
 HTML comments, ADO relation URIs, `fleet:`-prefixed tags, WIQL `WorkItemType='Issue'`,
 target branch `main`), and skill names / branch naming / worktree paths are literals.
-The flotilla → public/PyPI path requires flotilla be usable against other boards.
+The squadra → public/PyPI path requires squadra be usable against other boards.
 This ADR covers **step 1**: make the package provider-agnostic and configurable.
 
-flotilla is also targeted for an eventual Löwy "Righting Software" closed-architecture
+squadra is also targeted for an eventual Löwy "Righting Software" closed-architecture
 refactor (API → Manager → pure Engines → ResourceAccess → Resource). This step must
 **align** with that target without committing to the full restructure.
 
@@ -35,17 +35,17 @@ your-org-specific literals to configuration. Concretely:
    - a **`validate_config()`** method resolves config against the live board and
      fails loud — this, not mandatory config, is the safety mechanism.
 2. **Configuration** follows the modern layered pattern
-   `defaults < flotilla.toml < FLEET_* env < CLI flag`. Only the un-defaultable is
+   `defaults < squadra.toml < FLEET_* env < CLI flag`. Only the un-defaultable is
    required (`provider`; `[board.states]` unless provider is ADO-Basic); everything
-   else defaults. `flotilla init` scaffolds a complete annotated `flotilla.toml` plus
+   else defaults. `squadra init` scaffolds a complete annotated `squadra.toml` plus
    the runner/cleanup skill templates.
-3. **CLI**: a single argparse `flotilla` (the API/composition root) with
-   `init`/`tick`/`start`/`stop`/`status`/`log` and `flotilla slice {…}` for the
+3. **CLI**: a single argparse `squadra` (the API/composition root) with
+   `init`/`tick`/`start`/`stop`/`status`/`log` and `squadra slice {…}` for the
    status-file ops; the provider **registry** (name → adapter factory) lives here.
-   The `flotilla-supervisor`/`flotilla-status` console scripts are dropped.
+   The `squadra-supervisor`/`squadra-status` console scripts are dropped.
 4. **Runner skill** is delivered as a genericized, consumer-owned template scaffolded
-   by `flotilla init`; skill names are config and threaded into the runner prompt.
-   flotilla stays Claude-specific (the agent CLI is not abstracted in this step).
+   by `squadra init`; skill names are config and threaded into the runner prompt.
+   squadra stays Claude-specific (the agent CLI is not abstracted in this step).
 5. **Architecture alignment**: flat role-named modules (`domain`/`config`/`board`/
    `engines` + `supervisor` orchestration) matching the target layers; **no** Manager
    class / nested package tree yet (deferred to the formal-decomposition item).
@@ -59,7 +59,7 @@ tracked follow-ups.
 
 **Delivery**: PR1 = behavior-preserving refactor (module split + rename + engine
 extraction, zero logic change); PR2 = the generalization above; + a small coupled
-app PR (runner skill `flotilla-status`→`flotilla slice`, runtime-pin bump).
+app PR (runner skill `squadra-status`→`squadra slice`, runtime-pin bump).
 
 ## Consequences
 

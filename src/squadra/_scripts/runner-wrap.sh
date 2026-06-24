@@ -8,29 +8,29 @@
 # unexpected exit by stamping parked_state=failed. The supervisor launches one
 # of these per claimed slice into its own detached-tmux pane.
 #
-# This script ships as flotilla package data; the supervisor resolves it via
-# importlib.resources (flotilla._resources.resolve_script) and passes the
+# This script ships as squadra package data; the supervisor resolves it via
+# importlib.resources (squadra._resources.resolve_script) and passes the
 # FLEET_* env below into the pane. FLEET_PYTHON must point at an interpreter
-# that has flotilla installed (the supervisor passes its own sys.executable).
+# that has squadra installed (the supervisor passes its own sys.executable).
 #
 # Usage:
 #   runner-wrap.sh <issue-id> <branch> [attempt]
 #
 # Env knobs (all optional):
-#   FLEET_HOME                        repo flotilla operates on (default: cwd)
+#   FLEET_HOME                        repo squadra operates on (default: cwd)
 #   FLEET_ROOT                        status-file root (default $FLEET_HOME/.claude/fleet)
 #   FLEET_HEARTBEAT_INTERVAL_SECONDS  heartbeat cadence (default: HEARTBEAT_INTERVAL_SECONDS
-#                                     in flotilla.constants)
+#                                     in squadra.constants)
 #   FLEET_MODEL                       claude --model for the runner (default: FLEET_MODEL
-#                                     in flotilla.constants)
+#                                     in squadra.constants)
 #   FLEET_EFFORT                      claude --effort for the runner (default: FLEET_EFFORT
-#                                     in flotilla.constants)
+#                                     in squadra.constants)
 #   FLEET_RUNNER_SKILL                slice-runner skill name (default: DEFAULT_RUNNER_SKILL
-#                                     in flotilla.config)
+#                                     in squadra.config)
 #   FLEET_TDD_SKILL                   tdd skill passed to the runner (default: DEFAULT_TDD_SKILL
-#                                     in flotilla.config)
+#                                     in squadra.config)
 #   FLEET_QA_SKILL                    qa skill passed to the runner (default: DEFAULT_QA_SKILL
-#                                     in flotilla.config)
+#                                     in squadra.config)
 #   FLEET_PYTHON                      interpreter for the status CLI (default: python3)
 #   FLEET_CLAUDE_CMD                  claude binary (stubbed in tests)
 
@@ -59,14 +59,14 @@ RUNNER_SKILL=${FLEET_RUNNER_SKILL:-}
 TDD_SKILL=${FLEET_TDD_SKILL:-}
 QA_SKILL=${FLEET_QA_SKILL:-}
 # Defaults are the single source of truth — INTERVAL/MODEL/EFFORT from
-# flotilla.constants, the skill names from flotilla.config. Fetch them in one
+# squadra.constants, the skill names from squadra.config. Fetch them in one
 # shot for any knob the environment did not supply. In the normal
 # supervisor-driven path the launcher passes them all, so this never runs.
 if [ -z "$INTERVAL" ] || [ -z "$MODEL" ] || [ -z "$EFFORT" ] || \
    [ -z "$RUNNER_SKILL" ] || [ -z "$TDD_SKILL" ] || [ -z "$QA_SKILL" ]; then
   defaults=$("$PYTHON" -c \
-    'from flotilla.constants import HEARTBEAT_INTERVAL_SECONDS as h, FLEET_MODEL as m, FLEET_EFFORT as e
-from flotilla.config import DEFAULT_RUNNER_SKILL as r, DEFAULT_TDD_SKILL as t, DEFAULT_QA_SKILL as q
+    'from squadra.constants import HEARTBEAT_INTERVAL_SECONDS as h, FLEET_MODEL as m, FLEET_EFFORT as e
+from squadra.config import DEFAULT_RUNNER_SKILL as r, DEFAULT_TDD_SKILL as t, DEFAULT_QA_SKILL as q
 print(h); print(m); print(e); print(r); print(t); print(q)') \
     || exit 70
   { read -r d_interval; read -r d_model; read -r d_effort
@@ -90,7 +90,7 @@ RUNNER_ID="runner-${ISSUE_ID}-a${ATTEMPT}-$(date -u +%Y%m%dT%H%M%SZ)"
 WORKTREE=$FLEET_HOME/.claude/worktrees/$(printf '%s' "$BRANCH" | tr '/' '+')
 
 fleet_status() {
-  "$PYTHON" -m flotilla.status "$@" --fleet-root "$FLEET_ROOT"
+  "$PYTHON" -m squadra.status "$@" --fleet-root "$FLEET_ROOT"
 }
 
 fleet_status init --issue-id "$ISSUE_ID" --runner-id "$RUNNER_ID" \
@@ -125,7 +125,7 @@ trap cleanup EXIT
 echo "fleet: runner $RUNNER_ID starting (issue #$ISSUE_ID, branch $BRANCH, attempt $ATTEMPT, model ${MODEL:-inherited}, effort ${EFFORT:-inherited}, heartbeat ${INTERVAL}s)"
 cd "$FLEET_HOME" || exit 70
 # Pin the compute tier explicitly so the runner never silently inherits an
-# interactive session's default model/effort (flotilla.constants is the source).
+# interactive session's default model/effort (squadra.constants is the source).
 CLAUDE_ARGS=(-p "$RUNNER_SKILL issue-id=$ISSUE_ID branch=$BRANCH attempt=$ATTEMPT tdd-skill=$TDD_SKILL qa-skill=$QA_SKILL"
              --dangerously-skip-permissions)
 [ -n "$MODEL" ] && CLAUDE_ARGS+=(--model "$MODEL")

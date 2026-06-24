@@ -7,7 +7,7 @@
 - Date: 2026-06-15
 - Context origin: the fleet's original, uncontained tmux design (pre-extraction).
   The consumer side of this decision (sandbox image
-  stage, `.flotilla/` compose, skill-contract rewrite) is recorded in the consuming repo.
+  stage, `.squadra/` compose, skill-contract rewrite) is recorded in the consuming repo.
 - Builds on: [ADR-0001](adr-0001-board-provider-seam.md) (the `BoardAccess` seam +
   configure-not-customize posture this extends to the new ResourceAccess seams).
 
@@ -26,7 +26,7 @@ except the Anthropic API, and move the supervisor onto a **dedicated Azure Linux
 fleet-host VM** that holds the PAT + the Docker socket and performs all board /
 remote / secret operations host-side. The agent becomes **commit-only**.
 
-It realizes this in Python, extending flotilla, and **aligns with — but does not
+It realizes this in Python, extending squadra, and **aligns with — but does not
 complete** — the Löwy closed-architecture target (new ResourceAccess seams + a pure
 engine; no `SupervisorManager` restructure yet, which stays the standing P2).
 
@@ -36,7 +36,7 @@ The resolved design — the spine the slices implement. Section numbers are stab
 the code cites them (e.g. `§5`, `§11`, `decision 2`).
 
 1. **Handoff model — outcome manifest + host finalize.** The agent is a single
-   end-to-end headless session that writes a structured `.flotilla/outcome.json`
+   end-to-end headless session that writes a structured `.squadra/outcome.json`
    into the bind-mounted `/work` worktree as its final act, then exits 0. The
    supervisor reads it host-side and performs **all** board/remote writes via
    `BoardAccess` (push, PR open, work-item links, QA Task, comments, tags). Per-Task
@@ -102,26 +102,26 @@ the code cites them (e.g. `§5`, `§11`, `decision 2`).
     runner detects this early and parks `needs-decision` — keeps egress tight.
 
 11. **Fleet-host VM — systemd + managed-identity → Key Vault.** A dedicated Azure
-    Linux VM with native Docker. `flotilla.timer` fires a oneshot `flotilla.service`
-    running `flotilla fleet-tick` every N minutes (crash-only per tick fits
-    `Type=oneshot`). flotilla is installed into a pinned VM venv; cloud-init
+    Linux VM with native Docker. `squadra.timer` fires a oneshot `squadra.service`
+    running `squadra fleet-tick` every N minutes (crash-only per tick fits
+    `Type=oneshot`). squadra is installed into a pinned VM venv; cloud-init
     bootstraps Docker + the venv + the units. The VM **managed identity → IMDS → Key
     Vault** `get` reads the PAT + `ANTHROPIC_API_KEY`: the supervisor holds the PAT
     in its own process env (for `BoardAccess`); the compose `agent` env carries
-    **only `ANTHROPIC_API_KEY`** (`flotilla.secrets.agent_environ` is the enforced
+    **only `ANTHROPIC_API_KEY`** (`squadra.secrets.agent_environ` is the enforced
     projection; the PAT-exclusion is contract-tested). Secrets are fetched per tick
     into the process env and **never written to disk** (no `EnvironmentFile`). This
     retires `fleet-autostart.sh` / `fleet-cron.example` / the boot-time tmux ticker
-    in favor of systemd. `flotilla install-units` renders the packaged unit
+    in favor of systemd. `squadra install-units` renders the packaged unit
     templates against the host; installing them does **not** enable the timer.
 
 12. **Resource bounds — two-lever.** `FLEET_MAX_RUNNERS` keeps its meaning (claim
     budget = max concurrent slices), re-sized to *VM capacity ÷ per-slice
-    footprint*; per-container `cpu`/`mem` limits live in the `.flotilla/` compose.
+    footprint*; per-container `cpu`/`mem` limits live in the `.squadra/` compose.
     `MAX_RUNNERS=0` stays claim-suppression-only.
 
 13. **Skill contracts — fleet "produce-artifacts" mode.** Reads move host-side (the
-    supervisor injects a read-only `.flotilla/slice.json`); write-tails move
+    supervisor injects a read-only `.squadra/slice.json`); write-tails move
     host-side via the manifest (`/tdd` fleet mode commits + drafts PR title/body into
     the manifest; `/qa` fleet mode writes `qa.md` + records its path; the runner
     emits the manifest instead of writing tags). Skills stay human-usable.
@@ -132,12 +132,12 @@ the code cites them (e.g. `§5`, `§11`, `decision 2`).
     new seams. **No** `SupervisorManager` restructure — that stays the P2.
 
 15. **Scope — app-only execution, multi-repo-ready seam shape.** Ship containment
-    for the app fleet only; the `.flotilla/` compose + `sandbox` stage are
+    for the app fleet only; the `.squadra/` compose + `sandbox` stage are
     target-repo-owned by convention; `SandboxAccess` is provider-blind in shape.
     Multi-repo is a later config extension, not a rearchitecture.
 
 16. **Cutover — clean, seam-granular.** The container path **replaces** the tmux
-    path (no dual-substrate flag). Safety = contract tests + flotilla dry-run, then a
+    path (no dual-substrate flag). Safety = contract tests + squadra dry-run, then a
     staged live smoke on the new VM **before** enabling the systemd timer. Fleet
     activation is manual/opt-in, so there is no live prod to regress.
 
@@ -155,7 +155,7 @@ the code cites them (e.g. `§5`, `§11`, `decision 2`).
   `fleetctl.sh`'s `start/stop/status/log` remain only for hands-on local/dev runs.
 - Host-side git ops are hardened against the sandbox-escape vector the commit-only
   worktree opens (Issue #193). Every host-side git invocation is built through
-  `flotilla.git_host` and pins `-c core.hooksPath=/dev/null`, so a hook the agent
+  `squadra.git_host` and pins `-c core.hooksPath=/dev/null`, so a hook the agent
   plants in the bind-mounted worktree (or an agent-set `core.hooksPath`) cannot
   execute when a supervisor-context git op (worktree create/archive/prune, branch
   delete, `base..HEAD` commit count, the app-repo bootstrap, and the future
@@ -167,7 +167,7 @@ the code cites them (e.g. `§5`, `§11`, `decision 2`).
 ## Alternatives considered
 
 - **TypeScript / sandcastle rewrite** — rejected (`/grill-me` 2026-06-15): a
-  Python + Docker-`SandboxAccess` containment reuses flotilla wholesale and the
+  Python + Docker-`SandboxAccess` containment reuses squadra wholesale and the
   existing `builder-base` venv (zero parity gap).
 - **DooD / DinD on the dev container** — rejected: native Docker on a dedicated VM
   avoids socket-sharing escape surface and the dev container's credential blast
@@ -180,20 +180,20 @@ the code cites them (e.g. `§5`, `§11`, `decision 2`).
 - **Keep the tmux ticker on the fleet-host** — rejected: a oneshot service under a
   timer is crash-only by construction and needs no tmux/cron on the VM (§11, §16).
 
-## Addendum — flotilla package source moved to GitHub (2026-06-24)
+## Addendum — squadra package source moved to GitHub (2026-06-24)
 
-migrate-flotilla Phase 2b moved the flotilla **package** from Azure DevOps to a
-private GitHub repo (`github.com/rinman24/flotilla`). The fleet-host now holds **two**
-Key Vault PATs (migrate-flotilla decision #8), each scoped to one job:
+migrate-squadra Phase 2b moved the squadra **package** from Azure DevOps to a
+private GitHub repo (`github.com/rinman24/squadra`). The fleet-host now holds **two**
+Key Vault PATs (migrate-squadra decision #8), each scoped to one job:
 
-- `flotilla-github-pat` — a GitHub fine-grained PAT (Contents: read on the flotilla
-  repo). Read by `fleet-host-activate.sh` to `pip install` flotilla from GitHub
-  (`FLOTILLA_REPO_URL`), via the same env-var credential helper (username
+- `squadra-github-pat` — a GitHub fine-grained PAT (Contents: read on the squadra
+  repo). Read by `fleet-host-activate.sh` to `pip install` squadra from GitHub
+  (`SQUADRA_REPO_URL`), via the same env-var credential helper (username
   `x-access-token`), never argv or disk.
 - `fleet-ado-pat` — the Azure DevOps PAT, unchanged: fetched at tick time
-  (`flotilla.secrets`) for the app-backend clone (`FLEET_HOME` / `FLEET_APP_REPO_URL`)
+  (`squadra.secrets`) for the app-backend clone (`FLEET_HOME` / `FLEET_APP_REPO_URL`)
   and the ADO board ops. The §11 agent-env PAT-exclusion is unchanged.
 
 The activate-time install secret (GitHub) and the tick-time runtime secret (ADO) are
 deliberately distinct, so the GitHub PAT never enters the supervisor/agent env.
-app-backend and the board stay on Azure DevOps; only flotilla's source host moved.
+app-backend and the board stay on Azure DevOps; only squadra's source host moved.

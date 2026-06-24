@@ -11,7 +11,7 @@ and prunes stale administrative entries (the reap path's worktree work).
 filesystem move are injected as constructor seams (mirroring ``AzCliAdo.run``),
 so unit and contract tests drive it against fakes — no live git checkout or real
 disk moves are required. The dry-run wrapper lives alongside in
-:mod:`flotilla.dry_run` so a tick physically cannot mutate.
+:mod:`squadra.dry_run` so a tick physically cannot mutate.
 
 The orchestration wiring (F4) — mapping the engine's launch / retry actions onto
 this seam — is out of scope for this slice.
@@ -24,7 +24,7 @@ import shutil
 import subprocess
 from typing import Protocol
 
-from flotilla.git_host import host_git_argv
+from squadra.git_host import host_git_argv
 
 DEFAULT_BASE_REF: str = "origin/main"
 
@@ -79,7 +79,7 @@ class GitWorktreeAccess:
 
     The command runner and the move callable are injected so tests drive fakes;
     in production they are :func:`_run_quiet` and :func:`_move`. ``fleet_home``
-    is the repo flotilla operates on (the ``git -C`` target).
+    is the repo squadra operates on (the ``git -C`` target).
     """
 
     def __init__(

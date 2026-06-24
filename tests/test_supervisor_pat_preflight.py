@@ -16,11 +16,11 @@ from pathlib import Path
 
 import pytest
 
-from flotilla.config import FlotillaConfig
-from flotilla.domain import Finalized, Lifecycle, SandboxRunning
-from flotilla.secrets import secret_names_from_env
-from flotilla.status import FleetStatus, write
-from flotilla.supervisor import TickSeams, run_tick
+from squadra.config import SquadraConfig
+from squadra.domain import Finalized, Lifecycle, SandboxRunning
+from squadra.secrets import secret_names_from_env
+from squadra.status import FleetStatus, write
+from squadra.supervisor import TickSeams, run_tick
 from tests.helpers.cleanup_fakes import FakeCleanup
 from tests.helpers.fleet_fakes import FakeBoard, FakeIssue
 from tests.helpers.sandbox_fakes import FakeSandbox
@@ -66,7 +66,7 @@ def test_claimable_work_triggers_the_pat_probe(
     fake_board: FakeBoard,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     make_probe: Callable[[bool], _RecordingProbe],
 ) -> None:
     make_issue(50, title="feat: fresh slice")  # claimable within budget
@@ -80,7 +80,7 @@ def test_dead_pat_skips_claim_but_the_slice_stays_queued(
     fake_sandbox: FakeSandbox,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     make_probe: Callable[[bool], _RecordingProbe],
 ) -> None:
     make_issue(50, title="feat: fresh slice")
@@ -97,7 +97,7 @@ def test_dead_pat_short_circuits_before_the_claude_probe(
     fake_board: FakeBoard,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     make_probe: Callable[[bool], _RecordingProbe],
 ) -> None:
     # A dead PAT must not pay to spawn the (more expensive) claude probe.
@@ -113,7 +113,7 @@ def test_dead_pat_still_finalizes_a_merged_slice(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     make_probe: Callable[[bool], _RecordingProbe],
 ) -> None:
     # Finalize is deterministic (no claude, no remote claim), so a dead-PAT tick
@@ -137,7 +137,7 @@ def test_healthy_pat_proceeds_to_claim_and_launch(
     fake_sandbox: FakeSandbox,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     make_probe: Callable[[bool], _RecordingProbe],
 ) -> None:
     # A healthy PAT (and healthy claude) lets the claim proceed end-to-end.
@@ -152,7 +152,7 @@ def test_healthy_pat_proceeds_to_claim_and_launch(
 
 def test_idle_tick_never_probes_the_pat(
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     make_probe: Callable[[bool], _RecordingProbe],
 ) -> None:
     probe: _RecordingProbe = make_probe(False)
@@ -166,7 +166,7 @@ def test_finalize_only_tick_never_probes_the_pat(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     make_probe: Callable[[bool], _RecordingProbe],
 ) -> None:
     # Only finalize work (no claimable slice): finalize claims nothing, so the
@@ -185,17 +185,17 @@ def test_saturated_tick_never_probes_the_pat(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     make_probe: Callable[[bool], _RecordingProbe],
 ) -> None:
     # Cap 2, two fresh claimed runners in flight: zero claim budget, so a queued
     # candidate alone must not trigger the PAT probe.
     make_issue(41, state=Lifecycle.ACTIVE, tags=["fleet:claimed"])
     write(make_status(last_heartbeat=_now()), fleet_root)
-    fake_sandbox.seed("flotilla-slice-41", SandboxRunning())
+    fake_sandbox.seed("squadra-slice-41", SandboxRunning())
     make_issue(42, state=Lifecycle.ACTIVE, tags=["fleet:claimed"])
     write(make_status(issue_id=42, runner_id="runner-42-a1", last_heartbeat=_now()), fleet_root)
-    fake_sandbox.seed("flotilla-slice-42", SandboxRunning())
+    fake_sandbox.seed("squadra-slice-42", SandboxRunning())
     make_issue(50, title="feat: fresh slice")
     probe: _RecordingProbe = make_probe(False)
     assert run_tick(make_seams(pat_ok=probe), make_config()) == 0
@@ -206,7 +206,7 @@ def test_dead_pat_emits_one_actionable_log_line(
     capsys: pytest.CaptureFixture[str],
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     make_probe: Callable[[bool], _RecordingProbe],
 ) -> None:
     make_issue(50, title="feat: fresh slice")  # pending claim work

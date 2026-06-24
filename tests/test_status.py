@@ -8,8 +8,8 @@ import threading
 
 import pytest
 
-from flotilla import status as fleet_status
-from flotilla.status import (
+from squadra import status as fleet_status
+from squadra.status import (
     FleetStatus,
     FleetStatusError,
     StatusUpdate,

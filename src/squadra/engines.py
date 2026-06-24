@@ -6,18 +6,18 @@ derived-state FSM live here; the orchestration and I/O that consume them stay in
 
 :class:`LifecycleEngine` is the subsuming, derived-state FSM (ADR-0002 decision
 3): one pure ``decide(facts) -> LifecycleDecision`` that projects a slice's
-observed reality onto a :class:`~flotilla.domain.State` plus the orchestrator
+observed reality onto a :class:`~squadra.domain.State` plus the orchestrator
 intents to execute. It subsumes the legacy finalize / reap / claim passes — and
 the old ``is_parked`` / ``is_failed_park`` predicates they used — by folding the
 deliberate-park / failed-park distinction directly into its fact-derivation
 (:func:`_is_deliberate_park` / :func:`_is_failed_park`). The F4 cutover wired this
-engine into the live tick (``flotilla.supervisor.run_tick``).
+engine into the live tick (``squadra.supervisor.run_tick``).
 """
 
 import re
 
-from flotilla.config import DEFAULT_BRANCH_TEMPLATE
-from flotilla.domain import (
+from squadra.config import DEFAULT_BRANCH_TEMPLATE
+from squadra.domain import (
     AwaitAgent,
     EscalateEgressDenied,
     EscalateExhausted,
@@ -45,7 +45,7 @@ def slice_branch(
     The slug is the text after the first ``":"`` (else the whole title),
     lowercased, with runs of non-``[a-z0-9]`` collapsed to ``"-"``, capped at 32
     chars and stripped of leading/trailing ``"-"`` (``"slice"`` when empty). The
-    template owns the ``{id}``/``{slug}`` layout; flotilla owns the retry rule —
+    template owns the ``{id}``/``{slug}`` layout; squadra owns the retry rule —
     a ``-a{attempt}`` suffix is appended only when ``attempt > 1``.
     """
     base: str = title.split(":", 1)[1] if ":" in title else title
@@ -62,9 +62,9 @@ def slice_branch(
 class LifecycleEngine:
     """A pure, zero-I/O, derived-state FSM over one slice's observed facts.
 
-    ``decide(facts)`` projects :class:`~flotilla.domain.LifecycleFacts` onto
-    exactly one :class:`~flotilla.domain.State` and the ordered, closed set of
-    :data:`~flotilla.domain.LifecycleAction` intents the orchestrator must run.
+    ``decide(facts)`` projects :class:`~squadra.domain.LifecycleFacts` onto
+    exactly one :class:`~squadra.domain.State` and the ordered, closed set of
+    :data:`~squadra.domain.LifecycleAction` intents the orchestrator must run.
     The engine performs **no I/O** and holds **no state** between calls — the
     same facts always yield the same decision, which is what preserves the
     crash-only idempotence of the passes this engine subsumes (the state is a
@@ -213,7 +213,7 @@ class LifecycleEngine:
     def _timeout(self, facts: LifecycleFacts) -> LifecycleDecision:
         """Stop a hung-but-alive container, then retry-or-escalate the timeout.
 
-        The state is :attr:`~flotilla.domain.State.AGENT_TIMEOUT`; the actions
+        The state is :attr:`~squadra.domain.State.AGENT_TIMEOUT`; the actions
         stop the container first, then carry the same retry/escalate decision the
         timeout edge resolves to (so the orchestrator both reclaims the resources
         and advances the attempt budget in one tick).

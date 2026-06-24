@@ -1,10 +1,10 @@
 # Merged-branch cleanup skill (consumer-owned template)
 
 <!--
-  SCAFFOLDED BY `flotilla init`. This is YOUR copy — edit it freely.
+  SCAFFOLDED BY `squadra init`. This is YOUR copy — edit it freely.
 
   Wire this file in as the skill named by `[pipeline].cleanup_skill` in
-  flotilla.toml (default `/cleanup-merged-branches`). The supervisor's finalize
+  squadra.toml (default `/cleanup-merged-branches`). The supervisor's finalize
   pass invokes it HEADLESSLY and NON-INTERACTIVELY, once per candidate branch,
   to retire branches whose work has already landed on the base branch.
 

@@ -3,7 +3,7 @@
 The actual assertions live in tests/scripts/run-runner-wrap-tests.sh (hermetic:
 temp fleet root, stubbed claude binary, no network/ADO/tmux). This wrapper only
 makes the suite run under pytest, and pins ``FLEET_PYTHON`` to the interpreter
-running the tests so the shell harness reaches an installed ``flotilla``.
+running the tests so the shell harness reaches an installed ``squadra``.
 """
 
 import os

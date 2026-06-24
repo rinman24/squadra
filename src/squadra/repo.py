@@ -3,7 +3,7 @@
 When INFRA #148 hand-provisioned the fleet-host, cloud-init never fired, so the
 app-backend checkout the supervisor operates on (``FLEET_HOME``) had to be
 cloned by hand (memory ``fleet-host-needs-manual-clone``). This module
-removes that manual step: ``flotilla fleet-tick`` calls :func:`ensure_app_repo`
+removes that manual step: ``squadra fleet-tick`` calls :func:`ensure_app_repo`
 before each tick, so the host self-heals to a fresh checkout — clone if absent,
 fetch (+ reset to the remote base) if present.
 
@@ -12,7 +12,7 @@ process environment (``AZURE_DEVOPS_EXT_PAT``, applied by the fleet-tick secret
 bootstrap) at git time and is **never** written to ``.git/config`` or any file —
 the helper string carries only the variable *reference*, not its value (matching
 the repo-local helper pattern in memory ``git-push-https-pat-not-ssh``). Every
-host-side git argv here is built through :mod:`flotilla.git_host`, so it pins
+host-side git argv here is built through :mod:`squadra.git_host`, so it pins
 ``core.hooksPath=/dev/null`` (and, on a checkout op, a narrowly-scoped
 ``safe.directory``) — the centralized #193 hardening that keeps a planted hook
 from executing during a host-side op.
@@ -24,7 +24,7 @@ from pathlib import Path
 import subprocess
 from typing import Final
 
-from flotilla.git_host import host_git_argv, with_hooks_guard
+from squadra.git_host import host_git_argv, with_hooks_guard
 
 DEFAULT_BASE_BRANCH: Final[str] = "main"
 
@@ -37,7 +37,7 @@ FLEET_HOME_ENV: Final[str] = "FLEET_HOME"
 BASE_BRANCH_ENV: Final[str] = "FLEET_BASE_BRANCH"
 
 # Git command-runner seam (full argv incl. ``git`` -> completed process),
-# injected for tests. The argv is built by :mod:`flotilla.git_host` so every op
+# injected for tests. The argv is built by :mod:`squadra.git_host` so every op
 # carries the host-side hooks guard (and, on a checkout op, a narrow
 # ``safe.directory``) — see that module for the #193 threat model.
 GitRun = Callable[[Sequence[str]], "subprocess.CompletedProcess[str]"]
@@ -146,7 +146,7 @@ def target_remote_url(
     run: GitRun = _run_git,
     environ: Mapping[str, str] | None = None,
 ) -> str | None:
-    """Resolve the fetch URL of the repo flotilla operates on, or ``None``.
+    """Resolve the fetch URL of the repo squadra operates on, or ``None``.
 
     Prefers ``FLEET_HOME``'s ``origin`` remote — the live checkout's own remote,
     which is the exact thing host-side clone/fetch/push talk to — and falls back

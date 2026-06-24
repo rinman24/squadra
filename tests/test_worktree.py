@@ -5,14 +5,14 @@ two injected DI seams), so neither a live git checkout nor real filesystem moves
 are required. The contract behavior lives in
 ``tests/contract/test_worktree_contract.py``.
 
-Every host-side git argv is built through :mod:`flotilla.git_host` (#193), so it
+Every host-side git argv is built through :mod:`squadra.git_host` (#193), so it
 carries ``-c core.hooksPath=/dev/null`` and a narrowly-scoped ``safe.directory``;
 these tests assert that hardening as well as the git sub-command.
 """
 
 from collections.abc import Sequence
 
-from flotilla.worktree import GitWorktreeAccess, WorktreeCreateResult
+from squadra.worktree import GitWorktreeAccess, WorktreeCreateResult
 
 _REPO = "/repo"
 

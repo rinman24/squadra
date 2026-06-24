@@ -1,8 +1,8 @@
-# flotilla dev-container image — host-agnostic dev toolchain only.
+# squadra dev-container image — host-agnostic dev toolchain only.
 #
 # Deliberately carries NO project source, NO baked project venv, and NO host-specific
 # tooling (no Azure CLI, no GitHub CLI). It is "language + dev tooling only" so the
-# ADO -> GitHub migration (migrate-flotilla plan, Phase 2) needs no image rebuild:
+# ADO -> GitHub migration (migrate-squadra plan, Phase 2) needs no image rebuild:
 #   - `az` is never installed here — the fleet-host owns board ops, not this container.
 #   - `gh` arrives later as a devcontainer FEATURE (Phase 2), not a base-image layer.
 #
@@ -73,7 +73,7 @@ RUN git config --system push.autoSetupRemote true
 
 # Non-root user `dev` (uid/gid 1000). REQUIRED, not cosmetic: Claude Code refuses
 # `--dangerously-skip-permissions` as root (uid 0), which is the unattended posture this
-# image targets. uid 1000 aligns with the host's repo owner so the /workspaces/flotilla
+# image targets. uid 1000 aligns with the host's repo owner so the /workspaces/squadra
 # bind mount needs no chown (chowning a bind mount would mutate the host tree). The
 # `.claude` mountpoint is pre-created owned by `dev` so the named volume mounted over it
 # (docker-compose.yml) inherits dev ownership instead of root:root. Passwordless sudo is
@@ -85,16 +85,16 @@ RUN groupadd -g 1000 dev \
     && install -d -o dev -g dev -m 0700 /home/dev/.claude
 
 # Point `dev`'s tmux config at the tracked devbox conf. The target resolves at runtime
-# via the /workspaces/flotilla bind mount, so editing scripts/devbox/tmux.conf takes
+# via the /workspaces/squadra bind mount, so editing scripts/devbox/tmux.conf takes
 # effect on the next tmux server start with no rebuild. A dangling link at build time is
 # fine — the bind mount supplies the file at runtime.
-RUN ln -s /workspaces/flotilla/scripts/devbox/tmux.conf /home/dev/.tmux.conf \
+RUN ln -s /workspaces/squadra/scripts/devbox/tmux.conf /home/dev/.tmux.conf \
     && chown -h dev:dev /home/dev/.tmux.conf
 
 # Bake `dev`'s git defaults so they survive on every launch path: trust the bind-mounted
 # workspace despite a possible uid mismatch, and disable commit gpg-signing (no key
 # in-container). Run as `dev` (HOME=/home/dev) so they land in /home/dev/.gitconfig.
-RUN su dev -c 'git config --global safe.directory /workspaces/flotilla' \
+RUN su dev -c 'git config --global safe.directory /workspaces/squadra' \
     && su dev -c 'git config --global commit.gpgsign false'
 
 # Install Claude Code via Anthropic's native installer, as `dev`. NOT `npm install -g`:
@@ -108,7 +108,7 @@ RUN su dev -c 'curl -fsSL https://claude.ai/install.sh | bash'
 
 # The bind-mount target. No source is COPYed in (host-agnostic image, see header); the
 # checkout arrives at runtime via the bind mount and the in-repo `.venv` is created then.
-WORKDIR /workspaces/flotilla
+WORKDIR /workspaces/squadra
 
 # Drop to the non-root user — the FINAL directive so it is the default for every entry
 # path (`docker exec` without -u, VS Code "Reopen in Container", the compose `command`).

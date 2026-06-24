@@ -1,10 +1,10 @@
-"""Unit tests for the unified ``flotilla`` CLI (ADR-0001 decision 3).
+"""Unit tests for the unified ``squadra`` CLI (ADR-0001 decision 3).
 
 These tests stub every outward effect — ``status.main``, ``resolve_script``,
 and the lazily-imported ``supervisor`` — so no real tmux / az / claude /
 supervisor ever runs. They also assert the one structural invariant the
-mid-migration state demands: importing :mod:`flotilla.cli` must NOT import
-``flotilla.supervisor`` (the tick handler imports it lazily).
+mid-migration state demands: importing :mod:`squadra.cli` must NOT import
+``squadra.supervisor`` (the tick handler imports it lazily).
 """
 
 from collections.abc import Sequence
@@ -16,24 +16,24 @@ from typing import cast
 
 import pytest
 
-from flotilla import cli
-import flotilla.board as board_module
-import flotilla.repo as repo_module
-import flotilla.secrets as secrets_module
-import flotilla.supervisor as real_supervisor
+from squadra import cli
+import squadra.board as board_module
+import squadra.repo as repo_module
+import squadra.secrets as secrets_module
+import squadra.supervisor as real_supervisor
 
 
 def test_importing_cli_does_not_import_supervisor() -> None:
     # The supervisor is mid-migration; cli.py must import it lazily (in the tick
-    # handler) so importing cli — for collection, `flotilla init`, or
-    # `flotilla slice` — never drags the supervisor in. Checked in a clean
+    # handler) so importing cli — for collection, `squadra init`, or
+    # `squadra slice` — never drags the supervisor in. Checked in a clean
     # subprocess so an unrelated test's import cannot mask a regression.
     proc = subprocess.run(
         [
             sys.executable,
             "-c",
-            "import flotilla.cli, sys; "
-            "assert 'flotilla.supervisor' not in sys.modules, 'cli imported supervisor'",
+            "import squadra.cli, sys; "
+            "assert 'squadra.supervisor' not in sys.modules, 'cli imported supervisor'",
         ],
         capture_output=True,
         text=True,
@@ -42,12 +42,12 @@ def test_importing_cli_does_not_import_supervisor() -> None:
     assert proc.returncode == 0, proc.stderr
 
 
-def test_init_writes_flotilla_toml_and_skill_templates(tmp_path: Path) -> None:
+def test_init_writes_squadra_toml_and_skill_templates(tmp_path: Path) -> None:
     rc: int = cli.main(["init", "--fleet-home", str(tmp_path)])
     assert rc == 0
-    config_path: Path = tmp_path / "flotilla.toml"
+    config_path: Path = tmp_path / "squadra.toml"
     assert config_path.is_file()
-    # init delegates to flotilla.scaffold, which also drops the consumer-owned
+    # init delegates to squadra.scaffold, which also drops the consumer-owned
     # runner/cleanup skill templates alongside the config.
     assert (tmp_path / "runner-skill.md").is_file()
     assert (tmp_path / "cleanup-skill.md").is_file()
@@ -71,13 +71,13 @@ def test_init_writes_flotilla_toml_and_skill_templates(tmp_path: Path) -> None:
 def test_init_provider_flag_lands_in_toml(tmp_path: Path) -> None:
     cli.main(["init", "--fleet-home", str(tmp_path), "--provider", "github"])
     parsed: dict[str, object] = tomllib.loads(
-        (tmp_path / "flotilla.toml").read_text(encoding="utf-8")
+        (tmp_path / "squadra.toml").read_text(encoding="utf-8")
     )
     assert _table(parsed, "board")["provider"] == "github"
 
 
 def test_init_skips_existing_without_force(tmp_path: Path) -> None:
-    config_path: Path = tmp_path / "flotilla.toml"
+    config_path: Path = tmp_path / "squadra.toml"
     config_path.write_text("# pre-existing\n", encoding="utf-8")
 
     # Skipping an existing file is re-runnable, not an error (the scaffolder's
@@ -88,7 +88,7 @@ def test_init_skips_existing_without_force(tmp_path: Path) -> None:
 
 
 def test_init_force_overwrites(tmp_path: Path) -> None:
-    config_path: Path = tmp_path / "flotilla.toml"
+    config_path: Path = tmp_path / "squadra.toml"
     config_path.write_text("# pre-existing\n", encoding="utf-8")
 
     rc: int = cli.main(["init", "--fleet-home", str(tmp_path), "--force"])
@@ -164,7 +164,7 @@ def test_slice_without_subcommand_errors(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_tick_delegates_to_supervisor_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
-    # ``from flotilla import supervisor`` binds the already-imported submodule
+    # ``from squadra import supervisor`` binds the already-imported submodule
     # attribute, so stub ``supervisor.main`` on the real module rather than
     # swapping sys.modules — this also proves no real tick (and no az call) runs.
     recorded: list[list[str]] = []
@@ -254,7 +254,7 @@ def test_install_units_renders_and_writes(tmp_path: Path) -> None:
             "--fleet-home",
             str(tmp_path / "home"),
             "--venv-bin",
-            "/opt/flotilla/venv/bin",
+            "/opt/squadra/venv/bin",
             "--app-repo-url",
             "https://dev.azure.com/your-org/example-project/_git/app-backend",
             "--dest",
@@ -262,10 +262,10 @@ def test_install_units_renders_and_writes(tmp_path: Path) -> None:
         ]
     )
     assert rc == 0
-    service: str = (dest / "flotilla.service").read_text(encoding="utf-8")
+    service: str = (dest / "squadra.service").read_text(encoding="utf-8")
     assert "Environment=FLEET_KEY_VAULT=the-vault" in service
-    assert "ExecStart=/opt/flotilla/venv/bin/flotilla fleet-tick" in service
-    assert (dest / "flotilla.timer").is_file()
+    assert "ExecStart=/opt/squadra/venv/bin/squadra fleet-tick" in service
+    assert (dest / "squadra.timer").is_file()
 
 
 def test_fleetctl_subcommand_shells_to_script(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -322,7 +322,7 @@ def test_deprecated_status_main_warns_and_delegates(
 def test_no_command_prints_help_and_errors(capsys: pytest.CaptureFixture[str]) -> None:
     rc: int = cli.main([])
     assert rc == 2
-    assert "flotilla" in capsys.readouterr().err
+    assert "squadra" in capsys.readouterr().err
 
 
 def _table(parsed: dict[str, object], name: str) -> dict[str, object]:

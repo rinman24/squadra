@@ -1,7 +1,7 @@
 """Render + install the fleet-host systemd units (ADR-0002 §11, decision 11).
 
 The fleet-host schedules ticks with systemd, not the retired tmux ticker: a
-``flotilla.timer`` fires a oneshot ``flotilla.service`` that runs ``flotilla
+``squadra.timer`` fires a oneshot ``squadra.service`` that runs ``squadra
 fleet-tick`` (crash-only per tick fits ``Type=oneshot``). The unit *templates*
 ship as package data under ``_units/`` with ``${...}`` placeholders; this module
 renders them against a :class:`UnitContext` (host paths, the venv, the vault,
@@ -10,7 +10,7 @@ the cadence) and writes the result to the systemd unit directory.
 The render is a pure :func:`render_units` (string substitution, no I/O) so it is
 unit-tested without a host; :func:`install_units` is the thin writer. Installing
 the units does **not** enable them — fleet activation is a deliberate
-``systemctl enable --now flotilla.timer`` after the staged smoke (decision 16).
+``systemctl enable --now squadra.timer`` after the staged smoke (decision 16).
 """
 
 from collections.abc import Callable
@@ -19,7 +19,7 @@ from pathlib import Path
 from string import Template
 from typing import Final
 
-from flotilla._resources import resolve_unit
+from squadra._resources import resolve_unit
 
 # The default per-tick cadence (the */3-minute rhythm the tmux ticker used).
 DEFAULT_INTERVAL_SECONDS: Final[int] = 180
@@ -27,7 +27,7 @@ DEFAULT_SYSTEMD_DIR: Final[Path] = Path("/etc/systemd/system")
 DEFAULT_USER: Final[str] = "azureuser"
 
 # The unit files this module renders + installs, in dependency order.
-UNIT_FILENAMES: Final[tuple[str, ...]] = ("flotilla.service", "flotilla.timer")
+UNIT_FILENAMES: Final[tuple[str, ...]] = ("squadra.service", "squadra.timer")
 
 # A file writer seam (path, content) -> None, injected so tests render to a tmp
 # dir without root / a real /etc/systemd/system.
@@ -38,7 +38,7 @@ UnitWriter = Callable[[Path, str], None]
 class UnitContext:
     """The host-specific values interpolated into the fleet-host unit templates.
 
-    - ``venv_bin`` — the fleet's venv ``bin`` dir (holds ``flotilla`` + ``python``).
+    - ``venv_bin`` — the fleet's venv ``bin`` dir (holds ``squadra`` + ``python``).
     - ``fleet_home`` — the app-backend checkout the supervisor operates on.
     - ``fleet_root`` — the fleet state dir (``status.json``, ``supervisor.log``).
     - ``key_vault`` — the Key Vault name ``fleet-tick`` reads secrets from.
@@ -102,7 +102,7 @@ def install_units(
 
     Writing the units neither reloads systemd nor enables the timer — both are
     deliberate operator steps (``systemctl daemon-reload`` then, only when
-    activating the fleet, ``systemctl enable --now flotilla.timer``). The writer
+    activating the fleet, ``systemctl enable --now squadra.timer``). The writer
     is injected so tests target a temp dir.
     """
     written: list[Path] = []

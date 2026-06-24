@@ -7,8 +7,8 @@ dialect. Any implementation that passes this suite satisfies the seam contract.
 
 import pytest
 
-from flotilla.board import BoardAccess, BoardValidationError
-from flotilla.domain import (
+from squadra.board import BoardAccess, BoardValidationError
+from squadra.domain import (
     Claimed,
     CommentEvent,
     Escalated,

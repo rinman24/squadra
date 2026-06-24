@@ -1,7 +1,7 @@
 """Unit tests for the fleet-host systemd unit rendering/installation.
 
 Renders the packaged ``_units/`` templates against a :class:`UnitContext` and
-asserts the load-bearing properties: a oneshot service that runs ``flotilla
+asserts the load-bearing properties: a oneshot service that runs ``squadra
 fleet-tick`` with no secret baked in, a timer that is installed but carries no
 runtime enablement, and an installer that writes both files without touching
 systemd.
@@ -9,7 +9,7 @@ systemd.
 
 from pathlib import Path
 
-from flotilla.units import (
+from squadra.units import (
     UNIT_FILENAMES,
     UnitContext,
     install_units,
@@ -20,9 +20,9 @@ from flotilla.units import (
 
 def _ctx() -> UnitContext:
     return UnitContext(
-        venv_bin=Path("/opt/flotilla/venv/bin"),
-        fleet_home=Path("/opt/flotilla/app-backend"),
-        fleet_root=Path("/opt/flotilla/state"),
+        venv_bin=Path("/opt/squadra/venv/bin"),
+        fleet_home=Path("/opt/squadra/app-backend"),
+        fleet_root=Path("/opt/squadra/state"),
         key_vault="fleet-kv",
         app_repo_url="https://dev.azure.com/your-org/example-project/_git/app-backend",
         parent_scope_ids="139",
@@ -32,18 +32,18 @@ def _ctx() -> UnitContext:
 
 
 def test_service_is_oneshot_running_fleet_tick() -> None:
-    service: str = render_unit("flotilla.service", _ctx())
+    service: str = render_unit("squadra.service", _ctx())
     assert "Type=oneshot" in service
-    assert "ExecStart=/opt/flotilla/venv/bin/flotilla fleet-tick" in service
+    assert "ExecStart=/opt/squadra/venv/bin/squadra fleet-tick" in service
     assert "User=azureuser" in service
-    assert "WorkingDirectory=/opt/flotilla/app-backend" in service
+    assert "WorkingDirectory=/opt/squadra/app-backend" in service
 
 
 def test_service_passes_runtime_env_but_no_secret() -> None:
-    service: str = render_unit("flotilla.service", _ctx())
+    service: str = render_unit("squadra.service", _ctx())
     assert "Environment=FLEET_KEY_VAULT=fleet-kv" in service
-    assert "Environment=FLEET_HOME=/opt/flotilla/app-backend" in service
-    assert "Environment=FLEET_PYTHON=/opt/flotilla/venv/bin/python" in service
+    assert "Environment=FLEET_HOME=/opt/squadra/app-backend" in service
+    assert "Environment=FLEET_PYTHON=/opt/squadra/venv/bin/python" in service
     assert (
         "Environment=FLEET_APP_REPO_URL="
         "https://dev.azure.com/your-org/example-project/_git/app-backend" in service
@@ -55,9 +55,9 @@ def test_service_passes_runtime_env_but_no_secret() -> None:
 
 
 def test_timer_schedules_the_service_and_is_installable_not_enabled() -> None:
-    timer: str = render_unit("flotilla.timer", _ctx())
+    timer: str = render_unit("squadra.timer", _ctx())
     assert "OnUnitActiveSec=180s" in timer
-    assert "Unit=flotilla.service" in timer
+    assert "Unit=squadra.service" in timer
     # [Install] lets an operator deliberately `enable` it later; rendering does
     # not enable anything by itself.
     assert "[Install]" in timer
@@ -80,7 +80,7 @@ def test_missing_placeholder_is_loud() -> None:
 def test_install_units_writes_both_files_without_touching_systemd(tmp_path: Path) -> None:
     written: list[Path] = install_units(_ctx(), dest=tmp_path)
 
-    assert sorted(p.name for p in written) == ["flotilla.service", "flotilla.timer"]
+    assert sorted(p.name for p in written) == ["squadra.service", "squadra.timer"]
     for path in written:
         assert path.parent == tmp_path
         assert path.read_text(encoding="utf-8")
@@ -94,4 +94,4 @@ def test_install_units_uses_injected_writer(tmp_path: Path) -> None:
 
     install_units(_ctx(), dest=tmp_path, writer=_writer)
 
-    assert set(captured) == {tmp_path / "flotilla.service", tmp_path / "flotilla.timer"}
+    assert set(captured) == {tmp_path / "squadra.service", tmp_path / "squadra.timer"}

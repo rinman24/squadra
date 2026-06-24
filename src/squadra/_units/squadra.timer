@@ -1,0 +1,17 @@
+[Unit]
+# Schedule squadra fleet supervisor ticks (ADR-0002 §11). Installed by
+# `squadra install-units` but deliberately NOT enabled — fleet activation is a
+# separate, deliberate `systemctl enable --now squadra.timer` after the staged
+# on-host smoke passes (decision 16). Rendered from package data; do not edit.
+Description=Schedule squadra fleet supervisor ticks
+Requires=docker.service
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=${interval_seconds}s
+AccuracySec=15s
+Persistent=false
+Unit=squadra.service
+
+[Install]
+WantedBy=timers.target

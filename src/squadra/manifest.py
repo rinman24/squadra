@@ -1,6 +1,6 @@
 """Host-side manifest/context I/O for the commit-only handoff (ADR-0002 §§1–2).
 
-Two bind-mounted JSON files under the worktree's ``.flotilla/`` carry the
+Two bind-mounted JSON files under the worktree's ``.squadra/`` carry the
 host↔agent exchange the credential-free agent cannot perform over the board:
 
 - **slice context** (``slice.json``) — written host-side *before* launch
@@ -9,11 +9,11 @@ host↔agent exchange the credential-free agent cannot perform over the board:
 - **outcome manifest** (``outcome.json``) — written by the agent as its final
   act, read + validated host-side *after* exit (:func:`read_manifest`). It is the
   *intent* half of the ``(container_exit, manifest_valid, commits)`` completion
-  triple the :class:`~flotilla.engines.LifecycleEngine` keys on.
+  triple the :class:`~squadra.engines.LifecycleEngine` keys on.
 
 This module owns only the file I/O + schema validation; the orchestration that
 turns a :class:`ManifestRead` into engine facts (F4 ``run_tick``) lives in
-:mod:`flotilla.supervisor`. Reads never raise — a missing, malformed, or
+:mod:`squadra.supervisor`. Reads never raise — a missing, malformed, or
 schema-invalid manifest is *information* (a crash edge), not an exception, so the
 result distinguishes ``present`` from ``valid`` for the triple.
 """
@@ -24,12 +24,12 @@ import json
 from pathlib import Path
 from typing import Final, cast
 
-from flotilla.domain import OutcomeManifest, SliceContext
-from flotilla.status import PARKED_STATES
+from squadra.domain import OutcomeManifest, SliceContext
+from squadra.status import PARKED_STATES
 
 MANIFEST_FILENAME: Final[str] = "outcome.json"
 SLICE_CONTEXT_FILENAME: Final[str] = "slice.json"
-_FLOTILLA_DIR: Final[str] = ".flotilla"
+_SQUADRA_DIR: Final[str] = ".squadra"
 
 # The parked states a valid manifest may declare — the same canonical vocabulary
 # the status convention uses (``status.PARKED_STATES``); ``needs-decision`` is the
@@ -56,19 +56,19 @@ class ManifestRead:
 
 
 def manifest_path(worktree: Path) -> Path:
-    """Return the slice worktree's ``.flotilla/outcome.json`` path."""
-    return worktree / _FLOTILLA_DIR / MANIFEST_FILENAME
+    """Return the slice worktree's ``.squadra/outcome.json`` path."""
+    return worktree / _SQUADRA_DIR / MANIFEST_FILENAME
 
 
 def slice_context_path(worktree: Path) -> Path:
-    """Return the slice worktree's ``.flotilla/slice.json`` path."""
-    return worktree / _FLOTILLA_DIR / SLICE_CONTEXT_FILENAME
+    """Return the slice worktree's ``.squadra/slice.json`` path."""
+    return worktree / _SQUADRA_DIR / SLICE_CONTEXT_FILENAME
 
 
 def write_slice_context(worktree: Path, context: SliceContext) -> Path:
-    """Write the read-only host→agent ``slice.json`` into the worktree's ``.flotilla/``.
+    """Write the read-only host→agent ``slice.json`` into the worktree's ``.squadra/``.
 
-    Creates the ``.flotilla/`` directory if needed and returns the written path.
+    Creates the ``.squadra/`` directory if needed and returns the written path.
     Predecessor-state map keys are serialized as strings (JSON object keys).
     """
     path: Path = slice_context_path(worktree)

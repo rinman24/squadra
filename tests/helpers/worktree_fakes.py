@@ -1,7 +1,7 @@
 """An in-memory ``WorktreeAccess`` fake for the worktree contract suite.
 
 :class:`FakeWorktree` conforms structurally to
-:class:`flotilla.worktree.WorktreeAccess` and records what it was asked to do, so
+:class:`squadra.worktree.WorktreeAccess` and records what it was asked to do, so
 the contract suite can assert host-side create / archive / prune behavior without
 a live git checkout or real disk moves. A failed-create is seedable so the
 contract can pin the create-failure semantics.
@@ -10,7 +10,7 @@ contract can pin the create-failure semantics.
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from flotilla.worktree import DEFAULT_BASE_REF, WorktreeCreateResult
+from squadra.worktree import DEFAULT_BASE_REF, WorktreeCreateResult
 
 
 @dataclass

@@ -11,9 +11,9 @@ and that each emits a ``[dry-run] WOULD`` line.
 
 import pytest
 
-from flotilla.cleanup import CleanupResult
-from flotilla.dry_run import DryRunCleanup, DryRunWorktree
-from flotilla.worktree import WorktreeCreateResult
+from squadra.cleanup import CleanupResult
+from squadra.dry_run import DryRunCleanup, DryRunWorktree
+from squadra.worktree import WorktreeCreateResult
 from tests.helpers.cleanup_fakes import FakeCleanup
 from tests.helpers.worktree_fakes import FakeWorktree
 

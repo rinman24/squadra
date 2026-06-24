@@ -1,4 +1,4 @@
-"""Unit tests for flotilla.board — the AzCliAdo adapter, rendering, and validation.
+"""Unit tests for squadra.board — the AzCliAdo adapter, rendering, and validation.
 
 All I/O is canned: a recording az stub matches stdout by argv-fragment, records
 every call, and reads back any ``--in-file`` payload; a coupled curl stub
@@ -18,13 +18,13 @@ from typing import cast
 
 import pytest
 
-from flotilla.board import (
+from squadra.board import (
     AzCliAdo,
     BoardValidationError,
     TagWriteError,
     render_ado_html,
 )
-from flotilla.domain import (
+from squadra.domain import (
     Claimed,
     Escalated,
     Finalized,

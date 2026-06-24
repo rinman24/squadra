@@ -2,7 +2,7 @@
 
 Mirrors ``tests/contract/test_board_contract.py``: every test asserts only
 neutral seam behavior — the agent-as-command lifecycle expressed in
-:class:`~flotilla.domain.SandboxStatus` / :class:`~flotilla.domain.ExecResult`,
+:class:`~squadra.domain.SandboxStatus` / :class:`~squadra.domain.ExecResult`,
 never a docker-native invocation. Any implementation that passes this suite
 satisfies the seam contract.
 
@@ -10,7 +10,7 @@ Two implementations are exercised:
 
 - the in-memory :class:`~tests.helpers.sandbox_fakes.FakeSandbox` (the ``sandbox``
   fixture), which models the lifecycle in memory, and
-- the SHIPPED :class:`flotilla.sandbox.ComposeSandbox` driven by a canned docker
+- the SHIPPED :class:`squadra.sandbox.ComposeSandbox` driven by a canned docker
   runner (``test_compose_adapter_*``) — proving the real adapter, not just the
   fake, satisfies the seam (the pattern of ``test_ado_adapter_conformance.py``).
   No live Docker is required by any test here.
@@ -20,7 +20,7 @@ from collections.abc import Sequence
 import json
 import subprocess
 
-from flotilla.domain import (
+from squadra.domain import (
     ExecResult,
     SandboxAbsent,
     SandboxExited,
@@ -28,7 +28,7 @@ from flotilla.domain import (
     SandboxSpec,
     SandboxStatus,
 )
-from flotilla.sandbox import ComposeSandbox, SandboxAccess
+from squadra.sandbox import ComposeSandbox, SandboxAccess
 from tests.helpers.sandbox_fakes import FakeSandbox
 
 # sandbox, sandbox_spec are provided by tests/contract/conftest.py

@@ -17,22 +17,22 @@ from pathlib import Path
 
 import pytest
 
-from flotilla import supervisor
-from flotilla.board import AzCliAdo
-from flotilla.cleanup import DeterministicCleanup
-from flotilla.config import FlotillaConfig
-from flotilla.domain import Lifecycle, SandboxExited
-from flotilla.dry_run import DryRunCleanup, DryRunWorktree
-from flotilla.sandbox import ComposeSandbox, DryRunSandbox
-from flotilla.status import FleetStatus, load, write
-from flotilla.supervisor import (
+from squadra import supervisor
+from squadra.board import AzCliAdo
+from squadra.cleanup import DeterministicCleanup
+from squadra.config import SquadraConfig
+from squadra.domain import Lifecycle, SandboxExited
+from squadra.dry_run import DryRunCleanup, DryRunWorktree
+from squadra.sandbox import ComposeSandbox, DryRunSandbox
+from squadra.status import FleetStatus, load, write
+from squadra.supervisor import (
     ReadOnlyBoard,
     TickSeams,
     build_seams,
     dry_run_seams,
     run_tick,
 )
-from flotilla.worktree import GitWorktreeAccess
+from squadra.worktree import GitWorktreeAccess
 from tests.helpers.cleanup_fakes import FakeCleanup
 from tests.helpers.fleet_fakes import FakeBoard, FakeIssue
 from tests.helpers.sandbox_fakes import FakeSandbox
@@ -55,7 +55,7 @@ def test_dry_run_tick_mutates_nothing_and_reports_every_would_be_action(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # Seed work that exercises every seam in one tick:
@@ -69,7 +69,7 @@ def test_dry_run_tick_mutates_nothing_and_reports_every_would_be_action(
     # #41 reap-eligible (active + fleet:claimed, container exited non-zero -> crash),
     make_issue(41, title="feat: example", state=Lifecycle.ACTIVE, tags=["fleet:claimed"])
     write(make_status(phase="tdd", last_heartbeat=_ANCIENT), fleet_root)
-    fake_sandbox.seed("flotilla-slice-41", SandboxExited(exit_code=1))
+    fake_sandbox.seed("squadra-slice-41", SandboxExited(exit_code=1))
     # #50 claim-eligible (queued, untagged, unblocked).
     make_issue(50, title="feat: fresh slice")
 
@@ -98,17 +98,17 @@ def test_dry_run_tick_mutates_nothing_and_reports_every_would_be_action(
     # The would-be actions are still planned and reported.
     out: str = capsys.readouterr().out
     assert "WOULD delete branch 'feat/slice-40-merged'" in out
-    assert "WOULD compose down -v project 'flotilla-slice-40'" in out
+    assert "WOULD compose down -v project 'squadra-slice-40'" in out
     assert "WOULD remove tag 'fleet:claimed' from #40" in out
     assert "WOULD comment on #40" in out
     assert "WOULD archive worktree" in out  # reap of #41
     assert "WOULD move #41 to queued" in out
-    assert "WOULD tear down sandbox flotilla-slice-41" in out
+    assert "WOULD tear down sandbox squadra-slice-41" in out
     assert "WOULD create worktree" in out  # claim of #50
     assert "WOULD inject slice context" in out
     assert "WOULD move #50 to active" in out
     assert "WOULD add tag 'fleet:claimed' to #50" in out
-    assert "WOULD launch sandbox flotilla-slice-50" in out
+    assert "WOULD launch sandbox squadra-slice-50" in out
 
 
 def test_dry_run_skips_the_auth_probe_but_still_plans_the_claim(
@@ -116,7 +116,7 @@ def test_dry_run_skips_the_auth_probe_but_still_plans_the_claim(
     fake_sandbox: FakeSandbox,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # Claimable work normally triggers the auth preflight; in dry-run even the probe
@@ -130,7 +130,7 @@ def test_dry_run_skips_the_auth_probe_but_still_plans_the_claim(
     assert run_tick(seams, make_config()) == 0
     out: str = capsys.readouterr().out
     assert "WOULD run the claude auth preflight" in out
-    assert "WOULD launch sandbox flotilla-slice-50" in out
+    assert "WOULD launch sandbox squadra-slice-50" in out
     assert fake_sandbox.launches == []
 
 
@@ -139,7 +139,7 @@ def test_dry_run_skips_the_pat_probe_but_still_plans_the_claim(
     fake_sandbox: FakeSandbox,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # Claimable work normally triggers the PAT preflight; in dry-run even the probe
@@ -153,14 +153,14 @@ def test_dry_run_skips_the_pat_probe_but_still_plans_the_claim(
     assert run_tick(seams, make_config()) == 0
     out: str = capsys.readouterr().out
     assert "WOULD run the ADO PAT auth preflight" in out
-    assert "WOULD launch sandbox flotilla-slice-50" in out
+    assert "WOULD launch sandbox squadra-slice-50" in out
     assert fake_sandbox.launches == []
 
 
 def test_build_seams_wraps_every_mutating_seam_in_dry_run(
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
-    config: FlotillaConfig = make_config()
+    config: SquadraConfig = make_config()
     real: TickSeams = build_seams(config)
     assert isinstance(real.ado, AzCliAdo)
     assert isinstance(real.sandbox, ComposeSandbox)
@@ -203,7 +203,7 @@ def test_main_engages_dry_run_from_the_flag_and_the_env(
 ) -> None:
     seen: list[bool] = []
 
-    def _spy_build_seams(config: FlotillaConfig, *, dry_run: bool = False) -> TickSeams:
+    def _spy_build_seams(config: SquadraConfig, *, dry_run: bool = False) -> TickSeams:
         seen.append(dry_run)
         raise SystemExit(0)  # never reach the real tick
 

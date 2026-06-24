@@ -6,7 +6,7 @@ The contract behavior — that finalize is LLM-free and a pure sequence of
 deterministic git/compose commands — is covered by the contract suite in
 ``tests/contract/test_cleanup_contract.py``.
 
-Every host-side **git** argv is built through :mod:`flotilla.git_host` (#193), so
+Every host-side **git** argv is built through :mod:`squadra.git_host` (#193), so
 it carries ``-c core.hooksPath=/dev/null`` and a narrowly-scoped
 ``safe.directory``; these tests assert that hardening as well as the git verb.
 The ``docker compose`` teardown is not a git op and is asserted unchanged.
@@ -14,7 +14,7 @@ The ``docker compose`` teardown is not a git op and is asserted unchanged.
 
 from collections.abc import Sequence
 
-from flotilla.cleanup import CleanupResult, DeterministicCleanup
+from squadra.cleanup import CleanupResult, DeterministicCleanup
 
 _REPO = "/repo"
 

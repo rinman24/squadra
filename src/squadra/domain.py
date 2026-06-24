@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from flotilla.constants import (
+from squadra.constants import (
     DEFAULT_TAG_PREFIX,
     PARKED_TAG_SUFFIXES,
     TAG_SUFFIX_AWAITING_PR_APPROVAL,
@@ -190,7 +190,7 @@ class ReapOutcome:
 
 # --- LifecycleEngine: derived-state FSM vocabulary (ADR-0002 decision 3) ------
 #
-# The :class:`LifecycleEngine` (in :mod:`flotilla.engines`) is a pure, zero-I/O,
+# The :class:`LifecycleEngine` (in :mod:`squadra.engines`) is a pure, zero-I/O,
 # *derived-state* FSM: each tick it projects one slice's observed reality
 # (:class:`LifecycleFacts`) onto exactly one :class:`State` and the closed set of
 # :data:`LifecycleAction` intents the orchestrator must execute. ``State`` is
@@ -483,7 +483,7 @@ class LifecycleDecision:
 
 # --- Sandbox vocabulary (the SandboxAccess seam — ADR-0002 decisions 1 & 5) ---
 #
-# The :class:`SandboxAccess` seam (in :mod:`flotilla.sandbox`) runs one slice's
+# The :class:`SandboxAccess` seam (in :mod:`squadra.sandbox`) runs one slice's
 # Claude agent as a per-slice ephemeral Docker compose project. These types are
 # the seam's neutral vocabulary: a :class:`SandboxSpec` names the project the
 # orchestrator launches; :data:`SandboxStatus` is the observed container state
@@ -505,7 +505,7 @@ class SandboxSpec:
       identity in logs).
     - ``project`` — the compose project name (the unit ``teardown`` removes
       wholesale; one project per slice attempt keeps concurrent slices isolated).
-    - ``compose_file`` — the target-repo-owned ``.flotilla/`` compose file the
+    - ``compose_file`` — the target-repo-owned ``.squadra/`` compose file the
       adapter runs (target repos own the compose by convention, ADR-0002 §15).
     - ``worktree`` — the host path bind-mounted as the agent's ``/work`` (the
       supervisor creates it off ``origin/main`` before launch, ADR-0002 §2).
@@ -555,7 +555,7 @@ class ExecResult:
 
     ``exit_code`` is the exec'd command's exit status (not the container's);
     ``stdout`` is its captured standard output (the attach/inspect convenience
-    path — ``flotilla attach`` → ``docker exec``, ADR-0002 §5).
+    path — ``squadra attach`` → ``docker exec``, ADR-0002 §5).
     """
 
     exit_code: int
@@ -565,13 +565,13 @@ class ExecResult:
 # --- manifest / slice-context vocabulary (the commit-only handoff, §§1–2) -----
 #
 # The commit-only agent and the host exchange two bind-mounted JSON files under
-# the worktree's ``.flotilla/`` (both uncommitted, gitignored): the supervisor
+# the worktree's ``.squadra/`` (both uncommitted, gitignored): the supervisor
 # injects a read-only :class:`SliceContext` (``slice.json``) *before* launch —
 # the board reads the agent no longer performs itself — and the agent writes an
 # :class:`OutcomeManifest` (``outcome.json``) as its final act, which the
 # supervisor reads + validates *after* exit. The manifest is the *intent* half of
 # the ``(container_exit, manifest_valid, commits)`` completion triple; the
-# read/validate I/O lives in :mod:`flotilla.manifest`. These types are the
+# read/validate I/O lives in :mod:`squadra.manifest`. These types are the
 # neutral vocabulary G2's produce-artifacts mode consumes.
 
 

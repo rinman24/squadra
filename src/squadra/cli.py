@@ -1,34 +1,34 @@
-"""flotilla — the unified ``flotilla`` CLI (the API / composition root).
+"""squadra — the unified ``squadra`` CLI (the API / composition root).
 
 This is the single argparse-native entry point that folds every fleet operation
 into one surface (ADR-0001 decision 3), superseding the earlier thin
-``fleetctl.sh``-execing shim and the separate ``flotilla-supervisor`` /
-``flotilla-status`` console scripts:
+``fleetctl.sh``-execing shim and the separate ``squadra-supervisor`` /
+``squadra-status`` console scripts:
 
-- ``flotilla init`` — scaffold an annotated ``flotilla.toml`` plus the
-  consumer-owned runner/cleanup skill templates (via :mod:`flotilla.scaffold`),
+- ``squadra init`` — scaffold an annotated ``squadra.toml`` plus the
+  consumer-owned runner/cleanup skill templates (via :mod:`squadra.scaffold`),
   and optionally validate the config against the live board (``--check``).
-- ``flotilla tick`` — run one supervisor tick in-process (no shell). The
+- ``squadra tick`` — run one supervisor tick in-process (no shell). The
   supervisor (and, transitively, the board adapter) is imported lazily inside
-  the handler so importing this module for ``flotilla init`` / ``flotilla slice``
+  the handler so importing this module for ``squadra init`` / ``squadra slice``
   stays lean and free of the heavyweight tick dependencies.
-- ``flotilla fleet-tick`` — the fleet-host tick entry (ADR-0002 §11): fetch the
+- ``squadra fleet-tick`` — the fleet-host tick entry (ADR-0002 §11): fetch the
   PAT + ``ANTHROPIC_API_KEY`` from Key Vault via the VM managed identity and
   apply them to this process's env, ensure ``FLEET_HOME`` is a current checkout,
   then run one tick in-process. This is the ``ExecStart`` of the systemd
-  ``flotilla.service``.
-- ``flotilla install-units`` — render the packaged systemd unit templates against
+  ``squadra.service``.
+- ``squadra install-units`` — render the packaged systemd unit templates against
   the host's paths/vault/cadence and write them to the systemd unit directory
   (does **not** enable the timer — fleet activation stays a deliberate step).
-- ``flotilla start | stop | status | log`` — tmux ticker control for hands-on
+- ``squadra start | stop | status | log`` — tmux ticker control for hands-on
   local/dev runs; these shell to the packaged ``fleetctl.sh`` resolved from the
   installed package data, with ``FLEET_PYTHON`` defaulted to this interpreter so
-  each tick / runner reaches ``flotilla.*`` regardless of what ``python3``
+  each tick / runner reaches ``squadra.*`` regardless of what ``python3``
   resolves to on PATH. (The fleet-host uses systemd, not this.)
-- ``flotilla slice {init|update|heartbeat|show}`` — the per-slice
-  ``status.json`` ops (the new noun replacing the ``flotilla-status`` script).
+- ``squadra slice {init|update|heartbeat|show}`` — the per-slice
+  ``status.json`` ops (the new noun replacing the ``squadra-status`` script).
 
-``deprecated_status_main`` keeps the retired ``flotilla-status`` console script
+``deprecated_status_main`` keeps the retired ``squadra-status`` console script
 working unchanged: it warns once to stderr, then delegates to ``status.main``.
 """
 
@@ -38,16 +38,16 @@ import os
 from pathlib import Path
 import sys
 
-from flotilla import scaffold, status
-from flotilla._resources import resolve_script
-from flotilla.config import DEFAULT_PROVIDER, ConfigError, load_config
+from squadra import scaffold, status
+from squadra._resources import resolve_script
+from squadra.config import DEFAULT_PROVIDER, ConfigError, load_config
 
 _FLEETCTL_SUBCOMMANDS: tuple[str, ...] = ("start", "stop", "status", "log")
 _SLICE_SUBCOMMANDS: tuple[str, ...] = ("init", "update", "heartbeat", "show")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Dispatch the ``flotilla`` CLI; return a process exit code.
+    """Dispatch the ``squadra`` CLI; return a process exit code.
 
     Parameters
     ----------
@@ -84,13 +84,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def deprecated_status_main(argv: Sequence[str] | None = None) -> int:
-    """Back-compat shim for the retired ``flotilla-status`` console script.
+    """Back-compat shim for the retired ``squadra-status`` console script.
 
     Prints a one-line deprecation notice to stderr, then delegates to
-    :func:`flotilla.status.main` so existing callers keep working unchanged.
+    :func:`squadra.status.main` so existing callers keep working unchanged.
     """
     print(
-        "flotilla-status is deprecated; use `flotilla slice ...`",
+        "squadra-status is deprecated; use `squadra slice ...`",
         file=sys.stderr,
     )
     return status.main(argv)
@@ -99,13 +99,13 @@ def deprecated_status_main(argv: Sequence[str] | None = None) -> int:
 def _build_parser() -> tuple[argparse.ArgumentParser, frozenset[str]]:
     """Build the top-level argparse tree and the set of fleetctl subcommands."""
     parser = argparse.ArgumentParser(
-        prog="flotilla",
+        prog="squadra",
         description="Drive the board-driven Claude implementation fleet (ADR-0001).",
     )
     subparsers = parser.add_subparsers(dest="command")
 
     init_parser = subparsers.add_parser(
-        "init", help="scaffold flotilla.toml + the runner/cleanup skill templates"
+        "init", help="scaffold squadra.toml + the runner/cleanup skill templates"
     )
     init_parser.add_argument(
         "--provider",
@@ -116,7 +116,7 @@ def _build_parser() -> tuple[argparse.ArgumentParser, frozenset[str]]:
         "--fleet-home",
         type=Path,
         default=None,
-        help="repo flotilla operates on; flotilla.toml is written here (default: cwd)",
+        help="repo squadra operates on; squadra.toml is written here (default: cwd)",
     )
     init_parser.add_argument(
         "--force", action="store_true", help="overwrite existing files instead of skipping them"
@@ -181,10 +181,10 @@ def _build_parser() -> tuple[argparse.ArgumentParser, frozenset[str]]:
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
-    """Scaffold ``flotilla.toml`` + skill templates and, with ``--check``, validate.
+    """Scaffold ``squadra.toml`` + skill templates and, with ``--check``, validate.
 
-    Delegates the scaffolding to :func:`flotilla.scaffold.init_project` (the
-    additive module that owns the annotated ``flotilla.toml`` + the consumer-owned
+    Delegates the scaffolding to :func:`squadra.scaffold.init_project` (the
+    additive module that owns the annotated ``squadra.toml`` + the consumer-owned
     runner/cleanup skill templates). Existing files are skipped (re-runnable),
     not an error, unless ``--force`` overwrites them.
 
@@ -207,11 +207,11 @@ def _cmd_init(args: argparse.Namespace) -> int:
     )
     for name, written in results.items():
         status_word: str = "wrote" if written else "skipped (exists; use --force)"
-        print(f"flotilla: {status_word} {fleet_home / name}")
+        print(f"squadra: {status_word} {fleet_home / name}")
     print(
-        "next steps: review flotilla.toml + the scaffolded skill templates (set "
-        "provider / [board.states] / parent_scope_ids), then run `flotilla init "
-        "--check` to validate against your board and `flotilla start` to run the ticker."
+        "next steps: review squadra.toml + the scaffolded skill templates (set "
+        "provider / [board.states] / parent_scope_ids), then run `squadra init "
+        "--check` to validate against your board and `squadra start` to run the ticker."
     )
 
     if args.check:
@@ -222,17 +222,17 @@ def _cmd_init(args: argparse.Namespace) -> int:
 def _check_config(fleet_home: Path, provider: str) -> int:
     """Build the provider and validate the resolved config against the board."""
     # Imported here (not at module top) so this remains the only place that
-    # pulls in the board adapter; keeps `flotilla slice` / `init` lean and lets
+    # pulls in the board adapter; keeps `squadra slice` / `init` lean and lets
     # tests stub the seam without a live az CLI.
-    from flotilla.board import BoardValidationError, build_board  # noqa: PLC0415
+    from squadra.board import BoardValidationError, build_board  # noqa: PLC0415
 
     try:
         board = build_board(load_config(fleet_home=fleet_home, provider=provider))
         board.validate_config()
     except (BoardValidationError, ConfigError) as exc:
-        print(f"flotilla: {exc}", file=sys.stderr)
+        print(f"squadra: {exc}", file=sys.stderr)
         return 1
-    print("flotilla: config OK")
+    print("squadra: config OK")
     return 0
 
 
@@ -240,10 +240,10 @@ def _cmd_tick(extra: Sequence[str]) -> int:
     """Run one supervisor tick in-process, forwarding ``extra`` to the supervisor.
 
     The supervisor is imported lazily here (never at module load) so importing
-    :mod:`flotilla.cli` for ``init``/``slice`` stays free of the tick's board
+    :mod:`squadra.cli` for ``init``/``slice`` stays free of the tick's board
     adapter + tmux dependencies.
     """
-    from flotilla import supervisor  # noqa: PLC0415
+    from squadra import supervisor  # noqa: PLC0415
 
     return supervisor.main(list(extra))
 
@@ -251,22 +251,22 @@ def _cmd_tick(extra: Sequence[str]) -> int:
 def _cmd_fleet_tick(extra: Sequence[str]) -> int:
     """Run one fleet-host tick: bootstrap KV secrets + sync the app repo, then tick.
 
-    This is the systemd ``flotilla.service`` ``ExecStart`` (ADR-0002 §11): it
+    This is the systemd ``squadra.service`` ``ExecStart`` (ADR-0002 §11): it
     authenticates as the VM managed identity, reads the PAT + ``ANTHROPIC_API_KEY``
     from Key Vault, applies them to *this* process's environment (never to disk),
     ensures ``FLEET_HOME`` is a current checkout, and then runs the same in-process
-    tick as ``flotilla tick`` (``extra`` flags — e.g. ``--dry-run`` — pass through).
+    tick as ``squadra tick`` (``extra`` flags — e.g. ``--dry-run`` — pass through).
 
     A ``--dry-run`` (or ``FLEET_DRY_RUN``) tick still fetches secrets and clones a
     missing checkout (so the smoke proves Key Vault reachability) but does not
     ``reset --hard`` an existing one.
     """
-    from flotilla import repo, secrets  # noqa: PLC0415
+    from squadra import repo, secrets  # noqa: PLC0415
 
     vault: str = os.environ.get(secrets.KEY_VAULT_ENV, "").strip()
     if not vault:
         print(
-            f"flotilla fleet-tick: {secrets.KEY_VAULT_ENV} is not set; cannot fetch "
+            f"squadra fleet-tick: {secrets.KEY_VAULT_ENV} is not set; cannot fetch "
             "secrets (this entry is for the Key-Vault-backed fleet-host).",
             file=sys.stderr,
         )
@@ -276,17 +276,17 @@ def _cmd_fleet_tick(extra: Sequence[str]) -> int:
         access = secrets.AzKeyVaultSecrets(vault)
         fleet_secrets = secrets.load_fleet_secrets(access, secrets.secret_names_from_env())
     except secrets.SecretFetchError as exc:
-        print(f"flotilla fleet-tick: {exc}", file=sys.stderr)
+        print(f"squadra fleet-tick: {exc}", file=sys.stderr)
         return 1
     secrets.apply_supervisor_environ(fleet_secrets)
 
     dry_run: bool = "--dry-run" in extra or _env_truthy("FLEET_DRY_RUN")
     synced: bool | None = repo.ensure_app_repo_from_env(mutate=not dry_run)
     if synced is False:
-        print("flotilla fleet-tick: failed to sync the app repo (FLEET_HOME)", file=sys.stderr)
+        print("squadra fleet-tick: failed to sync the app repo (FLEET_HOME)", file=sys.stderr)
         return 1
 
-    from flotilla import supervisor  # noqa: PLC0415
+    from squadra import supervisor  # noqa: PLC0415
 
     return supervisor.main(list(extra))
 
@@ -296,9 +296,9 @@ def _cmd_install_units(args: argparse.Namespace) -> int:
 
     Writing the units neither reloads systemd nor enables the timer — those stay
     deliberate operator steps (``systemctl daemon-reload``; then, only when
-    activating the fleet, ``systemctl enable --now flotilla.timer``).
+    activating the fleet, ``systemctl enable --now squadra.timer``).
     """
-    from flotilla.units import (  # noqa: PLC0415
+    from squadra.units import (  # noqa: PLC0415
         DEFAULT_INTERVAL_SECONDS,
         DEFAULT_SYSTEMD_DIR,
         DEFAULT_USER,
@@ -326,11 +326,11 @@ def _cmd_install_units(args: argparse.Namespace) -> int:
     dest: Path = args.dest if args.dest is not None else DEFAULT_SYSTEMD_DIR
     written: list[Path] = install_units(ctx, dest=dest)
     for path in written:
-        print(f"flotilla: wrote {path}")
+        print(f"squadra: wrote {path}")
     print(
         "next steps: `sudo systemctl daemon-reload`, smoke a dry-run "
-        "(`systemd-run --wait --pipe flotilla fleet-tick --dry-run`), then activate "
-        "with `sudo systemctl enable --now flotilla.timer`."
+        "(`systemd-run --wait --pipe squadra fleet-tick --dry-run`), then activate "
+        "with `sudo systemctl enable --now squadra.timer`."
     )
     return 0
 
@@ -346,7 +346,7 @@ def _cmd_fleetctl(command: str, extra: Sequence[str]) -> int:
 
     Resolves the script from the installed package data and execs ``bash`` with
     ``FLEET_PYTHON`` defaulted to this interpreter (so each tick / runner reaches
-    ``flotilla.*``). On success ``os.execvpe`` replaces this process and does not
+    ``squadra.*``). On success ``os.execvpe`` replaces this process and does not
     return; a missing ``bash`` returns exit code ``127``.
     """
     script: str = str(resolve_script("fleetctl.sh"))
@@ -355,7 +355,7 @@ def _cmd_fleetctl(command: str, extra: Sequence[str]) -> int:
     try:
         os.execvpe("bash", ["bash", script, command, *extra], env)
     except OSError as exc:  # bash missing / not runnable
-        print(f"flotilla: failed to run {script}: {exc}", file=sys.stderr)
+        print(f"squadra: failed to run {script}: {exc}", file=sys.stderr)
         return 127
 
 
@@ -364,11 +364,11 @@ def _cmd_slice(args: argparse.Namespace, extra: Sequence[str]) -> int:
 
     The first positional after ``slice`` is the status subcommand
     (``init``/``update``/``heartbeat``/``show``); everything else passes through
-    to :func:`flotilla.status.main` unchanged.
+    to :func:`squadra.status.main` unchanged.
     """
     if not extra:
         print(
-            f"flotilla slice: expected a subcommand {list(_SLICE_SUBCOMMANDS)}",
+            f"squadra slice: expected a subcommand {list(_SLICE_SUBCOMMANDS)}",
             file=sys.stderr,
         )
         return 2
