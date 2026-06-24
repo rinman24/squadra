@@ -1,7 +1,7 @@
 # Fleet-host on-host smoke (F5 acceptance)
 
 The executable acceptance for the fleet-host runtime (ADR-0002 §11). Run on
-`fleet-host` — Docker and systemd are VM-only; none of this runs in the dev
+the fleet-host VM — Docker and systemd are VM-only; none of this runs in the dev
 container. The Python boundary logic (KV fetch, the PAT-exclusion projection, unit
 rendering, repo sync) is covered by squadra's pytest suite; this runbook is the
 on-host half that pytest cannot reach.
@@ -14,8 +14,8 @@ on-host half that pytest cannot reach.
   squadra is installed into `/opt/squadra/venv` and the units are in
   `/etc/systemd/system/`.
 - The VM's managed identity has a Key Vault **`get`** grant on `fleet-kv`
-  for `anthropic-api-key`, `fleet-ado-pat`, and `squadra-github-pat` (the GitHub PAT
-  used to pip-install squadra from GitHub — migrate-squadra Phase 2b).
+  for `anthropic-api-key` and `fleet-ado-pat` (both fetched at tick time). squadra
+  itself installs from public PyPI, so activation needs no Key Vault secret.
 - The timer is **not** enabled yet (it shouldn't be — activation is the last step).
 
 ## 1. Install goss (pinned + checksum-verified)
@@ -48,14 +48,14 @@ All checks must pass. What they prove:
 | `squadra.timer` present, `Unit=squadra.service` | the schedule is installed |
 | `squadra.timer` **not enabled / not running** | the guardrail — fleet not yet activated |
 | `az login --identity` exits 0 | IMDS reachable; identity assigned |
-| all three KV secrets readable | the `get` grant is in place (incl. `squadra-github-pat`) |
+| both tick-time KV secrets readable | the `get` grant is in place (`anthropic-api-key`, `fleet-ado-pat`) |
 | **dry-run tick under systemd exits 0** | the load-bearing gate — `fleet-tick` fetched secrets from KV, synced the app repo, and planned a (non-mutating) tick under systemd |
 
 ## 3. What is asserted where
 
 - **Agent-env minimization** (the PAT never reaches the contained agent) is the
   highest-value security property. It is proven in pytest — `tests/test_secrets.py::
-  test_agent_environ_never_exposes_the_pat` — and structurally by the app
+  test_agent_environ_never_exposes_the_pat` — and structurally by the consuming repo's
   `.squadra/` compose listing only `ANTHROPIC_API_KEY` on the `agent` service. A
   dry-run tick launches no agent container, so it is not asserted live in goss.
 - **No-secret-on-disk** is enforced by `fleet-tick` (in-process env only) and

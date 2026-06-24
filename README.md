@@ -11,9 +11,10 @@ and GitLab are tracked backlog adapters the same contract-test suite will
 validate. Every fleet process is stateless or short-lived and reconstructs its
 view from the board on each run.
 
-squadra is the packaged, reusable extraction of the fleet originally built in
-the `app` backend (provider-neutral seam: [ADR-0001](docs/adr/adr-0001-board-provider-seam.md)
-and its [design note](docs/design/board-provider-seam.md)). The package ships the
+squadra is the packaged, reusable extraction of a fleet originally built inside
+a private backend project. Its provider-neutral seam is
+[ADR-0001](docs/adr/adr-0001-board-provider-seam.md) and its
+[design note](docs/design/board-provider-seam.md). The package ships the
 **deterministic machinery + its tests + scaffolding** — the agent-side skills
 (`/afk-slice-runner`, `/tdd`, `/qa`, `/cleanup-merged-branches`) are
 consumer-owned and live in the consuming repo. squadra *scaffolds* genericized

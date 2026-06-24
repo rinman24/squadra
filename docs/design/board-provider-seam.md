@@ -3,11 +3,12 @@
 Status: resolved design, pre-implementation. Origin: `/grill-me` session
 "abstract-squadra-step-1", 2026-06-12. This is the working reference the
 implementation PRs draw from; the durable decision record is
-[ADR-0001](../adr/adr-0001-board-provider-seam.md). The fleet's original design predates this extraction and lives in a private backend project.
+[ADR-0001](../adr/adr-0001-board-provider-seam.md). The fleet's original design
+predates this extraction and lives in a private backend project.
 
 ## Goal & scope
 
-Abstract away the your-org/ADO-specific assumptions so squadra is usable by
+Abstract away the project/ADO-specific assumptions so squadra is usable by
 others (the deferred "configure-not-customize" refactor) — step 1 of the
 squadra → public/PyPI path.
 
@@ -212,7 +213,7 @@ GitLab adapters later become two more implementations the same suite validates.
   comment events + tag prefix + `validate_config` + registry + CLI unification +
   `squadra init` scaffolding + the contract-test suite. Docs: this note, ADR-0001,
   README amendments, remove the "Out of scope" stanza from `CLAUDE.md`.
-- **Coupled app PR (small).** Migrate the `/afk-slice-runner` skill's
+- **Coupled PR in the consuming repo (small).** Migrate the `/afk-slice-runner` skill's
   `squadra-status` → `squadra slice`; bump the runtime install pin.
 
 ## Asserted (not separately chosen — flag to revisit)

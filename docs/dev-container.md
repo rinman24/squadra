@@ -1,9 +1,8 @@
 # squadra dev container
 
-squadra runs in its own dev container — a second `docker compose` stack on the shared
-**devbox** Azure VM, fully independent of app's stack (own image, own Claude-home
-volume, no database, no ports). It is **container-scoped**: it never creates, starts, or
-deallocates the VM. VM lifecycle stays owned by app's `scripts/devbox/*`.
+squadra runs in its own dev container — a self-contained `docker compose` stack (own
+image, own Claude-home volume, no database, no ports). It is **container-scoped**: the
+host scripts never create, start, or deallocate the VM they run on.
 
 ## What you get
 
@@ -13,8 +12,7 @@ deallocates the VM. VM lifecycle stays owned by app's `scripts/devbox/*`.
   `--dangerously-skip-permissions` runs.
 - The repo bind-mounted at `/workspaces/squadra`; the in-repo `.venv` is created at
   runtime by `uv sync` (it is not baked into the image).
-- A persistent `squadra_claude_home` volume for Claude auth + memory, isolated from
-  app's `claude_home`.
+- A persistent `squadra_claude_home` volume for Claude auth + memory.
 
 The base image is deliberately **host-agnostic** — no Azure CLI, no project source baked
 in. `gh` is layered on via a devcontainer feature
@@ -23,15 +21,14 @@ migration image-rebuild-free.
 
 ## Prerequisites
 
-- The **devbox** VM is up and you are connected to it. Bring it up / connect with
-  app's `scripts/devbox/up.sh` and `connect-*.sh` (in the app-backend repo). Docker
-  Engine + the compose plugin are installed there as part of that provisioning.
-- A clone of this repo on the VM. If you are reading this, you have one.
+- A host (VM or workstation) with Docker Engine + the compose plugin installed, and you
+  are connected to it.
+- A clone of this repo on the host. If you are reading this, you have one.
 
 ## Daily driver: VS Code "Reopen in Container"
 
 Open the squadra folder on the VM in VS Code (Remote-SSH or the same tunnel you use for
-app) and run **Dev Containers: Reopen in Container**. VS Code reads
+the host) and run **Dev Containers: Reopen in Container**. VS Code reads
 `.devcontainer/devcontainer.json`, builds the image, starts the `squadra` service, and
 runs `uv sync` (the `postCreateCommand`). You land in `/workspaces/squadra` as `dev`
 with the venv ready.
@@ -64,7 +61,7 @@ cp scripts/devbox/config.example.sh scripts/devbox/config.local.sh
 The compose project name is pinned to `squadra` in **both** places —
 `name: squadra` in `.devcontainer/docker-compose.yml` and `-p squadra` in the scripts.
 Keep them equal; otherwise VS Code and the scripts would spawn two separate stacks. With
-it fixed, squadra's stack never collides with app's on the shared Docker daemon.
+it fixed, VS Code and the scripts share one stack and never spawn two on the same daemon.
 
 ## Claude Code auth
 
@@ -104,9 +101,9 @@ authorize. `gh` then configures git's credential helper, so `git push` and
 (`ghcr.io/devcontainers/features/github-cli`). `commit.gpgsign=false` is already handled
 by `postCreate`, so commits don't try to sign.
 
-## Relationship to the VM and app
+## Relationship to the VM
 
 - `stop.sh` is `compose down` — it stops the squadra container only. It does **not**
-  deallocate the VM. To stop billing for the whole box, use app's `scripts/devbox/stop.sh`.
-- squadra and app share the VM's CPU/RAM (D4s_v4: 4 vCPU / 16 GB). squadra is idle
-  unless you are testing; watch memory if you run heavy test loads in both at once.
+  deallocate the VM. To stop billing for the whole box, deallocate the VM through your
+  host's own tooling.
+- squadra is idle unless you are testing; watch memory if you run heavy test loads.

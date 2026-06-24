@@ -1,8 +1,8 @@
 """Host-side app-repo bootstrap: keep ``FLEET_HOME`` a current checkout.
 
-When INFRA #148 hand-provisioned the fleet-host, cloud-init never fired, so the
+When the fleet-host was hand-provisioned, cloud-init never fired, so the
 app-backend checkout the supervisor operates on (``FLEET_HOME``) had to be
-cloned by hand (memory ``fleet-host-needs-manual-clone``). This module
+cloned by hand. This module
 removes that manual step: ``squadra fleet-tick`` calls :func:`ensure_app_repo`
 before each tick, so the host self-heals to a fresh checkout — clone if absent,
 fetch (+ reset to the remote base) if present.
@@ -10,8 +10,8 @@ fetch (+ reset to the remote base) if present.
 Auth is HTTPS + PAT via an *env-var* credential helper: the PAT is read from the
 process environment (``AZURE_DEVOPS_EXT_PAT``, applied by the fleet-tick secret
 bootstrap) at git time and is **never** written to ``.git/config`` or any file —
-the helper string carries only the variable *reference*, not its value (matching
-the repo-local helper pattern in memory ``git-push-https-pat-not-ssh``). Every
+the helper string carries only the variable *reference*, not its value (the
+repo-local env-var helper pattern). Every
 host-side git argv here is built through :mod:`squadra.git_host`, so it pins
 ``core.hooksPath=/dev/null`` (and, on a checkout op, a narrowly-scoped
 ``safe.directory``) — the centralized #193 hardening that keeps a planted hook

@@ -6,10 +6,10 @@
 # sourced after this file) without editing tracked code.
 #
 # These scripts are CONTAINER-SCOPED. They drive `docker compose` for the squadra stack
-# on the devbox HOST and nothing else: they never create, start, or deallocate the
-# VM. VM lifecycle stays owned by app's scripts/devbox/* (migrate-squadra plan,
-# decision #2). There is no Azure CLI dependency here and no per-developer secret, so
-# config.local.sh is OPTIONAL — the defaults below work out of the box.
+# on the HOST and nothing else: they never create, start, or deallocate the VM. VM
+# lifecycle is not managed here. There is no Azure CLI dependency here and no
+# per-developer secret, so config.local.sh is OPTIONAL — the defaults below work out of
+# the box.
 
 # --- repo + compose stack ----------------------------------------------------------
 # Clone source for the clone-if-absent path: the canonical GitHub repo.

@@ -22,7 +22,7 @@ _FL_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${_FL_LIB_DIR}/config.sh"
 
 # config.local.sh is OPTIONAL — these scripts need no secret/subscription. Source it
-# only if present (unlike app's devbox, which requires it for the Azure subscription).
+# only if present (no subscription/secret is required here).
 if [[ -f "${_FL_LIB_DIR}/config.local.sh" ]]; then
   # shellcheck source=/dev/null
   source "${_FL_LIB_DIR}/config.local.sh"
@@ -65,8 +65,8 @@ confirm() {
 }
 
 # --- docker preflight --------------------------------------------------------------
-# These scripts run on the devbox HOST, where Docker Engine + the compose plugin
-# are installed (by app's scripts/devbox provisioning). Fail fast with the fix if not.
+# These scripts run on the HOST, where Docker Engine + the compose plugin are installed.
+# Fail fast with the fix if not.
 require_docker() {
   # A dry run only prints the plan, so it must work without the daemon present.
   if [[ "${SQUADRA_DRY_RUN:-0}" == "1" ]]; then
@@ -75,8 +75,8 @@ require_docker() {
   fi
   command -v docker >/dev/null 2>&1 ||
     die "docker not found on PATH.
-  These scripts run on the devbox HOST (not inside a container). Bring the VM up
-  and install Docker via app's scripts/devbox/up.sh first."
+  These scripts run on the HOST (not inside a container). Install Docker on the host
+  first."
   docker compose version >/dev/null 2>&1 ||
     die "the 'docker compose' plugin is not available (got the legacy docker-compose?)."
 }

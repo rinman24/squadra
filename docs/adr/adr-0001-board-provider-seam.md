@@ -3,12 +3,12 @@
 - Status: **Accepted** — resolved via `/grill-me` 2026-06-12; implemented by PR2
   (the seam + ADO adapter + layered config + unified CLI + contract-test suite).
 - Date: 2026-06-12
-- Context origin: the fleet's original design.
+- Context origin: the fleet's original (pre-extraction) design, recorded in the private backend project.
 - Detail: [docs/design/board-provider-seam.md](../design/board-provider-seam.md).
 
 ## Context
 
-squadra was extracted from `app` carrying ADO-specific assumptions: the
+squadra was extracted from a private backend project carrying ADO-specific assumptions: the
 `AdoClient` Protocol speaks ADO semantics (`"To Do"/"Doing"/"Done"` state literals,
 HTML comments, ADO relation URIs, `fleet:`-prefixed tags, WIQL `WorkItemType='Issue'`,
 target branch `main`), and skill names / branch naming / worktree paths are literals.
@@ -22,7 +22,7 @@ refactor (API → Manager → pure Engines → ResourceAccess → Resource). Thi
 ## Decision
 
 Introduce a provider-agnostic **`BoardAccess`** ResourceAccess seam and lift the
-your-org-specific literals to configuration. Concretely:
+project-specific literals to configuration. Concretely:
 
 1. **`BoardAccess`** (renames `AdoClient`) is the board ResourceAccess contract.
    Core (supervisor + engines) becomes provider-blind:
@@ -59,7 +59,7 @@ tracked follow-ups.
 
 **Delivery**: PR1 = behavior-preserving refactor (module split + rename + engine
 extraction, zero logic change); PR2 = the generalization above; + a small coupled
-app PR (runner skill `squadra-status`→`squadra slice`, runtime-pin bump).
+PR in the consuming repo (runner skill `squadra-status`→`squadra slice`, runtime-pin bump).
 
 ## Consequences
 

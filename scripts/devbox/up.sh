@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# up.sh — bring the squadra dev container up on the devbox host.
+# up.sh — bring the squadra dev container up on the host.
 #
 # Container-scoped: builds the image, starts the single `squadra` service, and creates
-# the in-repo `.venv` (uv sync) inside it. It NEVER touches the VM — that lifecycle stays
-# with app's scripts/devbox/* (migrate-squadra plan, decision #2). The daily driver is
-# VS Code "Reopen in Container"; this script is the host-side equivalent for terminal use.
+# the in-repo `.venv` (uv sync) inside it. It NEVER touches the VM — VM lifecycle is not
+# managed here. The daily driver is VS Code "Reopen in Container"; this script is the
+# host-side equivalent for terminal use.
 #
 # Usage: scripts/devbox/up.sh [--dry-run] [--yes]
 #   --dry-run  print the docker compose commands without executing them
@@ -20,10 +20,10 @@ export SQUADRA_ASSUME_YES=0
 
 usage() {
   cat <<'EOF'
-up.sh — bring the squadra dev container up on the devbox host.
+up.sh — bring the squadra dev container up on the host.
 
 Builds the image, starts the `squadra` service, and runs `uv sync` inside it. Never
-touches the VM (use app's scripts/devbox for VM lifecycle).
+touches the VM (VM lifecycle is not managed here).
 
 Usage: scripts/devbox/up.sh [--dry-run] [--yes]
   --dry-run  print the docker compose commands without executing them

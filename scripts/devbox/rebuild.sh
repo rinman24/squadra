@@ -2,8 +2,8 @@
 # rebuild.sh — rebuild the squadra dev-container image and recreate the container.
 #
 # The daily "I changed the Dockerfile / dependencies and want the running stack rebuilt"
-# verb. Runs locally on the devbox host (no tunnel/ssh — unlike app's rebuild),
-# rebuilds the single squadra image, recreates the container, and re-syncs the venv. The
+# verb. Runs locally on the host (no tunnel/ssh), rebuilds the single squadra image,
+# recreates the container, and re-syncs the venv. The
 # repo bind mount and the squadra_claude_home volume survive a recreate, so no
 # re-bootstrap is needed. Container-scoped: the VM is never touched.
 #

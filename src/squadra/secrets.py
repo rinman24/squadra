@@ -34,7 +34,7 @@ from typing import Final, Protocol
 ANTHROPIC_API_KEY_ENV: Final[str] = "ANTHROPIC_API_KEY"
 ADO_PAT_ENV: Final[str] = "AZURE_DEVOPS_EXT_PAT"
 
-# Key Vault secret names (the live coordinates — memory fleet-host-vm-provisioned).
+# Key Vault secret names (the live coordinates).
 DEFAULT_ANTHROPIC_SECRET_NAME: Final[str] = "anthropic-api-key"
 DEFAULT_ADO_PAT_SECRET_NAME: Final[str] = "fleet-ado-pat"
 

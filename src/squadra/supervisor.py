@@ -196,7 +196,7 @@ def _ado_pat_rejected_message() -> str:
         "remote failed) — skipped the claim/launch decisions; running the non-claim "
         f"decisions only, retrying next tick. Rotate the {secret!r} Key Vault secret "
         "(it is expired or lacks Code (Read & Write)): see the README 'Supervisor' "
-        "section and the app runbook docs/contributing/afk-fleet.md -> "
+        "section and the consuming repo's runbook docs/contributing/afk-fleet.md -> "
         "'Key Vault secrets & PAT rotation'."
     )
 

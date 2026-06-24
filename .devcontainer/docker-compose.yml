@@ -1,11 +1,9 @@
-# squadra dev container — a SECOND compose stack on the shared devbox Docker
-# daemon, fully independent of app's stack (its own image, its own volume, no DB, no
-# ports, no shared services). Container-scoped only: nothing here touches the VM.
+# squadra dev container — a self-contained compose stack (its own image, its own volume,
+# no DB, no ports, no shared services). Container-scoped only: nothing here touches the VM.
 #
 # `name: squadra` pins the compose project name. It MUST match `-p squadra` in
 # scripts/devbox/* and the project name VS Code uses, or "Reopen in Container" and the
-# host scripts would spawn two separate stacks. With the project name fixed, app's
-# stack (project `devcontainer`) and squadra's never collide on the same daemon.
+# host scripts would spawn two separate stacks on the same daemon.
 name: squadra
 
 services:
@@ -17,9 +15,8 @@ services:
       # The repo bind mount. The in-repo `.venv` is created here at runtime by
       # `uv sync` (postCreateCommand / scripts/devbox/up.sh) — not baked into the image.
       - ..:/workspaces/squadra:cached
-      # Persist Claude Code auth + auto-memory across rebuilds, isolated from app's
-      # `claude_home` volume (own memory, no `.claude.json` contention). First recreate
-      # brings this up EMPTY — re-auth once inside the container.
+      # Persist Claude Code auth + auto-memory across rebuilds. First recreate brings this
+      # up EMPTY — re-auth once inside the container.
       - squadra_claude_home:/home/dev/.claude
     command: sleep infinity
     environment:

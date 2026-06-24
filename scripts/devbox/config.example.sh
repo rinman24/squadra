@@ -3,7 +3,7 @@
 # dev-container host scripts.
 #
 # These scripts work out of the box with NO local config: they only drive
-# `docker compose` on the devbox host (no secrets, no Azure subscription). Copy
+# `docker compose` on the host (no secrets, no Azure subscription). Copy
 # this file to config.local.sh (gitignored) ONLY if you need to override a default:
 #
 #     cp scripts/devbox/config.example.sh scripts/devbox/config.local.sh

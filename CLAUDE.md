@@ -1,8 +1,8 @@
 # squadra — project instructions
 
 squadra is the packaged, reusable extraction of the AFK vertical-slice fleet
-(deterministic supervisor + per-slice runner machinery) originally built in the
-`app` backend. It drives an unattended, board-driven Claude
+(deterministic supervisor + per-slice runner machinery) originally built inside
+a private backend project. It drives an unattended, board-driven Claude
 implementation fleet against a **target repository** identified by `FLEET_HOME`.
 
 See `README.md` for how the fleet works and how to run it.

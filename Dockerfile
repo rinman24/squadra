@@ -2,7 +2,7 @@
 #
 # Deliberately carries NO project source, NO baked project venv, and NO host-specific
 # tooling (no Azure CLI, no GitHub CLI). It is "language + dev tooling only" so the
-# ADO -> GitHub migration (migrate-squadra plan, Phase 2) needs no image rebuild:
+# Keeping board ops out of this image (ADO -> GitHub) needs no image rebuild:
 #   - `az` is never installed here — the fleet-host owns board ops, not this container.
 #   - `gh` arrives later as a devcontainer FEATURE (Phase 2), not a base-image layer.
 #
@@ -13,7 +13,7 @@
 # scripts/devbox/up.sh for where the runtime sync happens.
 FROM python:3.11-bookworm
 
-# No .pyc, unbuffered stdout, longer pip timeout (parity with the app dev image).
+# No .pyc, unbuffered stdout, longer pip timeout.
 # UV_PYTHON_DOWNLOADS=never -> uv uses the base image's Python 3.11, never its own.
 # UV_PROJECT_ENVIRONMENT is intentionally UNSET so uv targets the in-repo `.venv`.
 ENV PYTHONUNBUFFERED=TRUE \
@@ -37,7 +37,7 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/*
 
 # Install uv from its pinned, auditable distroless image (no curl-pipe-bash).
-# Renovate/Dependabot's dockerfile manager bumps this tag. Matches the app pin.
+# Renovate/Dependabot's dockerfile manager bumps this tag.
 COPY --from=ghcr.io/astral-sh/uv:0.11.21@sha256:ff07b86af50d4d9391d9daf4ff89ce427bc544f9aae87057e69a1cc0aa369946 /uv /uvx /bin/
 
 # Dev toolchain (NO az, NO gh — see header):
@@ -77,7 +77,7 @@ RUN git config --system push.autoSetupRemote true
 # bind mount needs no chown (chowning a bind mount would mutate the host tree). The
 # `.claude` mountpoint is pre-created owned by `dev` so the named volume mounted over it
 # (docker-compose.yml) inherits dev ownership instead of root:root. Passwordless sudo is
-# the accepted trade-off for the skip-permissions posture (mirrors app ADR-0005).
+# the accepted trade-off for the skip-permissions posture.
 RUN groupadd -g 1000 dev \
     && useradd -u 1000 -g 1000 -m -s /bin/bash dev \
     && echo 'dev ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/dev \
