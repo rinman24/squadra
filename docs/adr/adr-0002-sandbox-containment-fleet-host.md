@@ -181,20 +181,25 @@ the code cites them (e.g. `§5`, `§11`, `decision 2`).
 - **Keep the tmux ticker on the fleet-host** — rejected: a oneshot service under a
   timer is crash-only by construction and needs no tmux/cron on the VM (§11, §16).
 
-## Addendum — squadra package source moved to GitHub (2026-06-24)
+## Addendum — squadra installs from public PyPI (2026-06-24)
 
-migrate-squadra Phase 2b moved the squadra **package** from Azure DevOps to a
-private GitHub repo (`github.com/rinman24/squadra`). The fleet-host now holds **two**
-Key Vault PATs (migrate-squadra decision #8), each scoped to one job:
+migrate-squadra Phase 2b first moved the squadra **package** off Azure DevOps to a
+private GitHub repo and the fleet-host pip-installed it with a `squadra-github-pat`
+Key Vault secret (git+HTTPS via an env-var credential helper). squadra has since been
+**published on public PyPI** (MIT, no third-party runtime deps), so that GitHub-PAT
+step is retired:
 
-- `squadra-github-pat` — a GitHub fine-grained PAT (Contents: read on the squadra
-  repo). Read by `fleet-host-activate.sh` to `pip install` squadra from GitHub
-  (`SQUADRA_REPO_URL`), via the same env-var credential helper (username
-  `x-access-token`), never argv or disk.
+- `fleet-host-activate.sh` now installs squadra **credential-free** from PyPI:
+  `pip install --upgrade --force-reinstall "squadra==${SQUADRA_VERSION}"`. The version
+  is pinned via `SQUADRA_VERSION` (env file) defaulting to `/opt/squadra/PINNED_VERSION`
+  — the version-pin successor to the old commit pin. Activation reads **nothing** from
+  Key Vault and needs no GitHub/ADO credential. The `squadra-github-pat` secret and
+  `SQUADRA_REPO_URL`/`FLEET_GITHUB_PAT_SECRET` env vars are gone.
 - `fleet-ado-pat` — the Azure DevOps PAT, unchanged: fetched at tick time
   (`squadra.secrets`) for the gswa-backend clone (`FLEET_HOME` / `FLEET_APP_REPO_URL`)
   and the ADO board ops. The §11 agent-env PAT-exclusion is unchanged.
 
-The activate-time install secret (GitHub) and the tick-time runtime secret (ADO) are
-deliberately distinct, so the GitHub PAT never enters the supervisor/agent env.
-gswa-backend and the board stay on Azure DevOps; only squadra's source host moved.
+The fleet-host now holds a single tick-time secret pairing in Key Vault
+(`anthropic-api-key` + `fleet-ado-pat`); there is no install-time credential at all.
+gswa-backend and the board stay on Azure DevOps; only squadra's *distribution* moved
+to PyPI.

@@ -21,10 +21,10 @@ file:
       - "Type=oneshot"
       - "/squadra fleet-tick"
       - "Environment=FLEET_KEY_VAULT="
-      # No secret material is ever written into the unit (ADR-0002 §11) — neither the
-      # ADO PAT (tick-time) nor the GitHub PAT (activate-time squadra install).
+      # No secret material is ever written into the unit (ADR-0002 §11): the ADO PAT
+      # is fetched in-process at tick time, never persisted. (squadra installs from
+      # public PyPI, so there is no install-time credential to leak either.)
       - "!/AZURE_DEVOPS_EXT_PAT/"
-      - "!/GITHUB_PAT/"
   /etc/systemd/system/squadra.timer:
     exists: true
     contains:
@@ -50,17 +50,13 @@ command:
   az-managed-identity-login:
     exec: "az login --identity --only-show-errors --output none"
     exit-status: 0
-  # The identity has `get` on all three fleet secrets in Key Vault.
+  # The identity has `get` on both TICK-time fleet secrets in Key Vault. (squadra
+  # installs from public PyPI, so activation needs no Key Vault secret.)
   kv-anthropic-key-readable:
     exec: 'az keyvault secret show --vault-name "$FLEET_KEY_VAULT" --name anthropic-api-key --query value --output tsv'
     exit-status: 0
   kv-ado-pat-readable:
     exec: 'az keyvault secret show --vault-name "$FLEET_KEY_VAULT" --name fleet-ado-pat --query value --output tsv'
-    exit-status: 0
-  # The GitHub PAT (Contents: read on the squadra repo) used to pip-install squadra
-  # from GitHub after the ADO->GitHub migration (migrate-squadra Phase 2b).
-  kv-github-pat-readable:
-    exec: 'az keyvault secret show --vault-name "$FLEET_KEY_VAULT" --name squadra-github-pat --query value --output tsv'
     exit-status: 0
   # The load-bearing end-to-end gate: a dry-run tick runs UNDER systemd (transient
   # unit, no enabled timer), which exercises fleet-tick's KV secret fetch + app-repo

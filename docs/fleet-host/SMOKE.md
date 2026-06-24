@@ -14,8 +14,8 @@ on-host half that pytest cannot reach.
   squadra is installed into `/opt/squadra/venv` and the units are in
   `/etc/systemd/system/`.
 - The VM's managed identity has a Key Vault **`get`** grant on `gswa-fleet-kv-07c17c`
-  for `anthropic-api-key`, `fleet-ado-pat`, and `squadra-github-pat` (the GitHub PAT
-  used to pip-install squadra from GitHub — migrate-squadra Phase 2b).
+  for `anthropic-api-key` and `fleet-ado-pat` (both fetched at tick time). squadra
+  itself installs from public PyPI, so activation needs no Key Vault secret.
 - The timer is **not** enabled yet (it shouldn't be — activation is the last step).
 
 ## 1. Install goss (pinned + checksum-verified)
@@ -48,7 +48,7 @@ All checks must pass. What they prove:
 | `squadra.timer` present, `Unit=squadra.service` | the schedule is installed |
 | `squadra.timer` **not enabled / not running** | the guardrail — fleet not yet activated |
 | `az login --identity` exits 0 | IMDS reachable; identity assigned |
-| all three KV secrets readable | the `get` grant is in place (incl. `squadra-github-pat`) |
+| both tick-time KV secrets readable | the `get` grant is in place (`anthropic-api-key`, `fleet-ado-pat`) |
 | **dry-run tick under systemd exits 0** | the load-bearing gate — `fleet-tick` fetched secrets from KV, synced the app repo, and planned a (non-mutating) tick under systemd |
 
 ## 3. What is asserted where
