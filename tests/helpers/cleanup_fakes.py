@@ -1,6 +1,6 @@
 """An in-memory ``CleanupAccess`` fake for the deterministic-cleanup contract suite.
 
-:class:`FakeCleanup` conforms structurally to :class:`flotilla.cleanup.CleanupAccess`
+:class:`FakeCleanup` conforms structurally to :class:`squadra.cleanup.CleanupAccess`
 and records what it was asked to do, so the contract suite can assert the
 deterministic behavior (branch deleted, worktree removed/pruned, project torn
 down) without a live git checkout or docker daemon — and without any LLM call.
@@ -10,7 +10,7 @@ partial-result semantics.
 
 from dataclasses import dataclass, field
 
-from flotilla.cleanup import CleanupResult
+from squadra.cleanup import CleanupResult
 
 
 @dataclass

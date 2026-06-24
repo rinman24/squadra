@@ -14,7 +14,7 @@ import subprocess
 
 import pytest
 
-from flotilla.domain import (
+from squadra.domain import (
     ExecResult,
     SandboxAbsent,
     SandboxExited,
@@ -22,15 +22,15 @@ from flotilla.domain import (
     SandboxSpec,
     SandboxStatus,
 )
-from flotilla.sandbox import ComposeSandbox, DryRunSandbox, status_from_inspect
+from squadra.sandbox import ComposeSandbox, DryRunSandbox, status_from_inspect
 from tests.helpers.sandbox_fakes import FakeSandbox
 
 
 def _spec() -> SandboxSpec:
     return SandboxSpec(
         item_id=141,
-        project="flotilla-slice-141",
-        compose_file=Path("/work/.flotilla/compose.yaml"),
+        project="squadra-slice-141",
+        compose_file=Path("/work/.squadra/compose.yaml"),
         worktree=Path("/work"),
     )
 
@@ -71,8 +71,8 @@ def test_launch_builds_and_ups_the_compose_project() -> None:
     # the runner receives args WITHOUT the "docker" prefix (it prepends it, like
     # AzCliAdo's run prepends "az"); project-scoped, agent-as-command up -d --build
     assert argv[0] == "compose"
-    assert "-p flotilla-slice-141" in joined
-    assert "-f /work/.flotilla/compose.yaml" in joined
+    assert "-p squadra-slice-141" in joined
+    assert "-f /work/.squadra/compose.yaml" in joined
     assert "up" in argv
     assert "-d" in argv
     assert "--build" in argv
@@ -141,7 +141,7 @@ def test_teardown_composes_down_with_volumes() -> None:
     argv: list[str] = docker.calls[-1]
     assert "down" in argv
     assert "-v" in argv
-    assert "-p flotilla-slice-141" in " ".join(argv)
+    assert "-p squadra-slice-141" in " ".join(argv)
 
 
 def test_teardown_reports_failure_on_nonzero_exit() -> None:
@@ -157,13 +157,13 @@ def test_teardown_reports_failure_on_nonzero_exit() -> None:
 def test_exec_runs_the_command_in_the_agent_service() -> None:
     docker = _CannedDocker(results={"exec": (0, "READY\n")})
     sandbox = ComposeSandbox(run=docker)
-    result: ExecResult = sandbox.exec(_spec(), ("cat", "/work/.flotilla/outcome.json"))
+    result: ExecResult = sandbox.exec(_spec(), ("cat", "/work/.squadra/outcome.json"))
     assert result == ExecResult(exit_code=0, stdout="READY\n")
     argv: list[str] = docker.calls[-1]
     assert "exec" in argv
     assert "agent" in argv
     # the command travels through verbatim, after the service
-    assert argv[-2:] == ["cat", "/work/.flotilla/outcome.json"]
+    assert argv[-2:] == ["cat", "/work/.squadra/outcome.json"]
 
 
 def test_exec_propagates_a_nonzero_exit_code() -> None:
@@ -206,14 +206,14 @@ def test_status_from_inspect_missing_exit_code_defaults_to_zero() -> None:
 
 def test_dry_run_inspect_passes_through() -> None:
     inner = FakeSandbox()
-    inner.seed("flotilla-slice-141", SandboxRunning())
+    inner.seed("squadra-slice-141", SandboxRunning())
     sandbox = DryRunSandbox(inner)
     assert isinstance(sandbox.inspect(_spec()), SandboxRunning)
 
 
 def test_dry_run_logs_pass_through() -> None:
     inner = FakeSandbox()
-    inner.seed_logs("flotilla-slice-141", "agent output\n")
+    inner.seed_logs("squadra-slice-141", "agent output\n")
     sandbox = DryRunSandbox(inner)
     assert sandbox.logs(_spec()) == "agent output\n"
 
@@ -225,7 +225,7 @@ def test_dry_run_launch_is_a_logged_noop(capsys: pytest.CaptureFixture[str]) -> 
     assert inner.launches == []  # the inner adapter was never touched
     out: str = capsys.readouterr().out
     assert "[dry-run] WOULD" in out
-    assert "flotilla-slice-141" in out
+    assert "squadra-slice-141" in out
 
 
 def test_dry_run_teardown_is_a_logged_noop(capsys: pytest.CaptureFixture[str]) -> None:
@@ -248,7 +248,7 @@ def test_dry_run_exec_is_a_logged_noop(capsys: pytest.CaptureFixture[str]) -> No
 def test_dry_run_blocks_every_mutation_but_no_read(capsys: pytest.CaptureFixture[str]) -> None:
     # the dry-run boundary blocks exactly the three mutations and no read
     inner = FakeSandbox()
-    inner.seed("flotilla-slice-141", SandboxRunning())
+    inner.seed("squadra-slice-141", SandboxRunning())
     sandbox = DryRunSandbox(inner)
     sandbox.launch(_spec())
     sandbox.teardown(_spec())
@@ -257,4 +257,4 @@ def test_dry_run_blocks_every_mutation_but_no_read(capsys: pytest.CaptureFixture
     sandbox.logs(_spec())
     assert (inner.launches, inner.teardowns, inner.execs) == ([], [], [])
     # the running seed was never torn down by the dry-run teardown
-    assert isinstance(inner.statuses["flotilla-slice-141"], SandboxRunning)
+    assert isinstance(inner.statuses["squadra-slice-141"], SandboxRunning)

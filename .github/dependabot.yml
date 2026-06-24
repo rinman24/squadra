@@ -1,4 +1,4 @@
-# Dependabot configuration for flotilla.
+# Dependabot configuration for squadra.
 # https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 version: 2
 
@@ -19,7 +19,7 @@ updates:
           - "*"
 
   # Python dependencies via the native uv ecosystem (reads pyproject.toml + uv.lock).
-  # flotilla has zero third-party runtime deps; everything updatable lives in the PEP 735
+  # squadra has zero third-party runtime deps; everything updatable lives in the PEP 735
   # [dependency-groups] `dev` group (ruff, pyright, pytest), so the group below targets
   # development dependencies and batches them into one weekly PR.
   - package-ecosystem: "uv"

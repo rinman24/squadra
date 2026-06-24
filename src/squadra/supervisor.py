@@ -2,24 +2,24 @@
 
 A deterministic, stateless, token-free scheduled script (no LLM in the tick
 itself). Each tick reconstructs its entire view from observed reality and drives
-one pure, subsuming FSM (:class:`flotilla.engines.LifecycleEngine`, ADR-0002
+one pure, subsuming FSM (:class:`squadra.engines.LifecycleEngine`, ADR-0002
 decision 3) per slice:
 
 1. **gather facts** — for every fleet-relevant slice (the fleet-claimed ACTIVE /
    DONE items and the QUEUED claim candidates) the orchestrator assembles a
-   :class:`~flotilla.domain.LifecycleFacts` host-side from board truth, the slice
+   :class:`~squadra.domain.LifecycleFacts` host-side from board truth, the slice
    ``status.json`` breadcrumb, ``SandboxAccess.inspect`` (container liveness/exit,
    subsuming the old ``pid_alive``), the heartbeat age, the bind-mounted
    ``outcome.json`` manifest, the commit count in ``base..HEAD``, the egress-proxy
    deny log, and the completed-PR query.
 2. **decide** — ``LifecycleEngine.decide(facts)`` projects each slice onto one
-   :class:`~flotilla.domain.State` plus the ordered :data:`~flotilla.domain.
+   :class:`~squadra.domain.State` plus the ordered :data:`~squadra.domain.
    LifecycleAction` intents to run. This single engine subsumes the legacy
    finalize / reap / claim passes.
 3. **execute** — the orchestrator maps each intent onto the ``BoardAccess`` /
    ``SandboxAccess`` / ``CleanupAccess`` / ``WorktreeAccess`` seams. The claim
    **budget** is the one cross-slice constraint that stays orchestrator-side: the
-   engine emits a per-slice :class:`~flotilla.domain.SignalClaimable`; the
+   engine emits a per-slice :class:`~squadra.domain.SignalClaimable`; the
    orchestrator claims up to ``cap`` (``FLEET_MAX_RUNNERS=0`` suppresses claims
    only — finalize/reap still mutate; for a tick that cannot mutate, dry-run).
 
@@ -52,7 +52,7 @@ probes, and local status/marker writes — is suppressed at the ``TickSeams`` bo
 (``dry_run_seams``), so the tick physically cannot mutate. ``FLEET_MAX_RUNNERS=0``
 is *not* a safe smoke: it only zeroes the claim budget. Use a dry run.
 
-Run one tick: ``python -m flotilla.supervisor`` (normally via ``flotilla tick``).
+Run one tick: ``python -m squadra.supervisor`` (normally via ``squadra tick``).
 """
 
 import argparse
@@ -67,11 +67,11 @@ import subprocess
 import sys
 from typing import Final
 
-from flotilla.board import BoardAccess, BoardValidationError, TagWriteError, build_board
-from flotilla.cleanup import CleanupAccess, DeterministicCleanup
-from flotilla.config import FlotillaConfig, load_config
-from flotilla.constants import FLEET_DRY_RUN, FLEET_MODEL
-from flotilla.domain import (
+from squadra.board import BoardAccess, BoardValidationError, TagWriteError, build_board
+from squadra.cleanup import CleanupAccess, DeterministicCleanup
+from squadra.config import SquadraConfig, load_config
+from squadra.constants import FLEET_DRY_RUN, FLEET_MODEL
+from squadra.domain import (
     AwaitAgent,
     Claimed,
     CommentEvent,
@@ -104,15 +104,15 @@ from flotilla.domain import (
     WorkItem,
     WorkItemLinks,
 )
-from flotilla.dry_run import DryRunCleanup, DryRunWorktree
-from flotilla.engines import LifecycleEngine, slice_branch
-from flotilla.git_host import host_git_argv
-from flotilla.manifest import ManifestRead, read_manifest, write_slice_context
-from flotilla.repo import remote_auth_ok, target_remote_url
-from flotilla.sandbox import ComposeSandbox, DryRunSandbox, SandboxAccess
-from flotilla.secrets import secret_names_from_env
-from flotilla.status import FleetStatus, StatusUpdate, load_or_none, update
-from flotilla.worktree import GitWorktreeAccess, WorktreeAccess
+from squadra.dry_run import DryRunCleanup, DryRunWorktree
+from squadra.engines import LifecycleEngine, slice_branch
+from squadra.git_host import host_git_argv
+from squadra.manifest import ManifestRead, read_manifest, write_slice_context
+from squadra.repo import remote_auth_ok, target_remote_url
+from squadra.sandbox import ComposeSandbox, DryRunSandbox, SandboxAccess
+from squadra.secrets import secret_names_from_env
+from squadra.status import FleetStatus, StatusUpdate, load_or_none, update
+from squadra.worktree import GitWorktreeAccess, WorktreeAccess
 
 CLAIMED_AT_FILENAME: Final[str] = "claimed-at"
 COMPOSE_FILENAME: Final[str] = "compose.yaml"
@@ -166,7 +166,7 @@ def _claude_auth_ok(
 
 
 def _resolve_fleet_home() -> Path:
-    """Resolve ``FLEET_HOME`` for the default probe (the repo flotilla operates on)."""
+    """Resolve ``FLEET_HOME`` for the default probe (the repo squadra operates on)."""
     raw: str | None = os.environ.get("FLEET_HOME")
     return Path(raw) if raw is not None and raw.strip() else Path.cwd()
 
@@ -311,7 +311,7 @@ class SliceView:
     """One slice's gathered view this tick.
 
     Carries the board item, the bucket it was read from, its ``status.json``
-    breadcrumb, the gathered :class:`~flotilla.domain.LifecycleFacts`, and the
+    breadcrumb, the gathered :class:`~squadra.domain.LifecycleFacts`, and the
     engine's decision.
     """
 
@@ -321,12 +321,12 @@ class SliceView:
     facts: LifecycleFacts
     decision: LifecycleDecision
 
-    def branch(self, config: FlotillaConfig) -> str:
+    def branch(self, config: SquadraConfig) -> str:
         """Return the slice's current branch (status fast-path, else derived)."""
         return _branch_for(self.item, self.status, config)
 
 
-def run_tick(seams: TickSeams, config: FlotillaConfig) -> int:
+def run_tick(seams: TickSeams, config: SquadraConfig) -> int:
     """Run one serialized supervisor tick (gather facts → decide → execute)."""
     with supervisor_lock(config.fleet_root) as acquired:
         if not acquired:
@@ -353,9 +353,7 @@ def run_tick(seams: TickSeams, config: FlotillaConfig) -> int:
     return 0
 
 
-def _execute_non_claim(
-    seams: TickSeams, config: FlotillaConfig, views: Sequence[SliceView]
-) -> None:
+def _execute_non_claim(seams: TickSeams, config: SquadraConfig, views: Sequence[SliceView]) -> None:
     """Run the finalize + reap decisions only — the degraded auth-probe path.
 
     Every claim/launch decision is dropped so no slice is claimed, but in-flight
@@ -364,7 +362,7 @@ def _execute_non_claim(
     _execute(seams, config, [v for v in views if not _is_claim(v)])
 
 
-def _gather(seams: TickSeams, config: FlotillaConfig, engine: LifecycleEngine) -> list[SliceView]:
+def _gather(seams: TickSeams, config: SquadraConfig, engine: LifecycleEngine) -> list[SliceView]:
     """Build the per-slice fact set + decision for every fleet-relevant slice.
 
     The fleet-relevant set is the union of the ACTIVE and DONE buckets (in-flight
@@ -395,7 +393,7 @@ def _gather(seams: TickSeams, config: FlotillaConfig, engine: LifecycleEngine) -
 
 def _build_facts(
     seams: TickSeams,
-    config: FlotillaConfig,
+    config: SquadraConfig,
     item: WorkItem,
     lifecycle: Lifecycle,
     status: FleetStatus | None,
@@ -470,7 +468,7 @@ def _container_facts(status: SandboxStatus) -> tuple[bool, bool, int | None]:
 
 
 def _predecessors_done(
-    seams: TickSeams, config: FlotillaConfig, item: WorkItem, lifecycle: Lifecycle
+    seams: TickSeams, config: SquadraConfig, item: WorkItem, lifecycle: Lifecycle
 ) -> bool:
     """Whether a queued candidate is unblocked (all predecessors done, in scope).
 
@@ -488,7 +486,7 @@ def _predecessors_done(
     )
 
 
-def _heartbeat_stale(item_id: int, status: FleetStatus | None, config: FlotillaConfig) -> bool:
+def _heartbeat_stale(item_id: int, status: FleetStatus | None, config: SquadraConfig) -> bool:
     """Whether the best liveness evidence is older than the staleness threshold.
 
     Mirrors the legacy reap age check: the status heartbeat, else the claimed-at
@@ -501,7 +499,7 @@ def _heartbeat_stale(item_id: int, status: FleetStatus | None, config: FlotillaC
 
 
 def _liveness_age_seconds(
-    item_id: int, status: FleetStatus | None, config: FlotillaConfig
+    item_id: int, status: FleetStatus | None, config: SquadraConfig
 ) -> float | None:
     """Age of the best liveness evidence; ``None`` when there is none at all."""
     raw: str | None = None
@@ -520,26 +518,26 @@ def _liveness_age_seconds(
     return (datetime.now(UTC) - stamped).total_seconds()
 
 
-def _branch_for(item: WorkItem, status: FleetStatus | None, config: FlotillaConfig) -> str:
+def _branch_for(item: WorkItem, status: FleetStatus | None, config: SquadraConfig) -> str:
     """Resolve the slice's current branch (status fast-path, else derived from id+title)."""
     if status is not None:
         return status.branch
     return slice_branch(item.item_id, item.title, 1, config.branch_template)
 
 
-def _spec_for(item_id: int, branch: str, config: FlotillaConfig) -> SandboxSpec:
+def _spec_for(item_id: int, branch: str, config: SquadraConfig) -> SandboxSpec:
     """Build the per-slice ephemeral sandbox spec for ``item_id`` on ``branch``."""
     worktree: Path = _worktree_for(branch, config)
     return SandboxSpec(
         item_id=item_id,
-        project=f"flotilla-slice-{item_id}",
-        compose_file=worktree / ".flotilla" / COMPOSE_FILENAME,
+        project=f"squadra-slice-{item_id}",
+        compose_file=worktree / ".squadra" / COMPOSE_FILENAME,
         worktree=worktree,
         agent_service=AGENT_SERVICE,
     )
 
 
-def _worktree_for(branch: str, config: FlotillaConfig) -> Path:
+def _worktree_for(branch: str, config: SquadraConfig) -> Path:
     """Return the host path bind-mounted as the agent's ``/work`` for ``branch``."""
     return config.fleet_home / config.worktree_dir / branch.replace("/", "+")
 
@@ -547,7 +545,7 @@ def _worktree_for(branch: str, config: FlotillaConfig) -> Path:
 # --- execution: map each engine intent onto the Access seams ------------------
 
 
-def _execute(seams: TickSeams, config: FlotillaConfig, views: Sequence[SliceView]) -> None:
+def _execute(seams: TickSeams, config: SquadraConfig, views: Sequence[SliceView]) -> None:
     """Run every slice's decided actions, enforcing the cross-slice claim budget.
 
     Non-claim actions run first (finalize, retry, escalate, handoff, teardown);
@@ -571,7 +569,7 @@ def _execute(seams: TickSeams, config: FlotillaConfig, views: Sequence[SliceView
 
 
 def _run_action(
-    seams: TickSeams, config: FlotillaConfig, view: SliceView, action: LifecycleAction
+    seams: TickSeams, config: SquadraConfig, view: SliceView, action: LifecycleAction
 ) -> None:
     """Dispatch one non-claim engine intent onto the Access seams."""
     match action:
@@ -597,7 +595,7 @@ def _run_action(
             return  # claim/launch handled in the budget pass
 
 
-def _finalize(seams: TickSeams, config: FlotillaConfig, view: SliceView, pr_url: str) -> None:
+def _finalize(seams: TickSeams, config: SquadraConfig, view: SliceView, pr_url: str) -> None:
     """Deterministically retire a merged slice: cleanup, drop fleet tags, status→done.
 
     Cleanup is LLM-free (ADR-0002 decision 4): the supervisor knows the merged
@@ -625,7 +623,7 @@ def _finalize(seams: TickSeams, config: FlotillaConfig, view: SliceView, pr_url:
         )
 
 
-def _handoff(seams: TickSeams, config: FlotillaConfig, view: SliceView) -> None:
+def _handoff(seams: TickSeams, config: SquadraConfig, view: SliceView) -> None:
     """Park a cleanly-finished agent run awaiting its PR + tear the sandbox down.
 
     The agent committed and wrote a valid handoff manifest; the supervisor parks
@@ -645,7 +643,7 @@ def _handoff(seams: TickSeams, config: FlotillaConfig, view: SliceView) -> None:
     seams.sandbox.teardown(_spec(view, config))
 
 
-def _park_needs_decision(seams: TickSeams, config: FlotillaConfig, view: SliceView) -> None:
+def _park_needs_decision(seams: TickSeams, config: SquadraConfig, view: SliceView) -> None:
     """Park a ``needs-decision`` run for a human: tag it, no PR, tear the sandbox down."""
     seams.ado.add_tag(view.item.item_id, config.tags.needs_decision)
     if view.status is not None:
@@ -657,7 +655,7 @@ def _park_needs_decision(seams: TickSeams, config: FlotillaConfig, view: SliceVi
     seams.sandbox.teardown(_spec(view, config))
 
 
-def _retry(seams: TickSeams, config: FlotillaConfig, view: SliceView, attempt: int) -> None:
+def _retry(seams: TickSeams, config: SquadraConfig, view: SliceView, attempt: int) -> None:
     """Requeue a failed slice for another attempt (archive worktree, tear down, requeue).
 
     Mirrors the legacy reap's board-side outcome: the dead attempt's worktree is
@@ -689,7 +687,7 @@ def _retry(seams: TickSeams, config: FlotillaConfig, view: SliceView, attempt: i
 
 
 def _escalate(
-    seams: TickSeams, config: FlotillaConfig, view: SliceView, attempt: int, cap: int
+    seams: TickSeams, config: SquadraConfig, view: SliceView, attempt: int, cap: int
 ) -> None:
     """Escalate a slice whose retries are exhausted: tag failed, drop claimed, comment.
 
@@ -708,7 +706,7 @@ def _escalate(
     seams.ado.remove_tag(view.item.item_id, config.tags.claimed)
 
 
-def _escalate_egress(seams: TickSeams, config: FlotillaConfig, view: SliceView, host: str) -> None:
+def _escalate_egress(seams: TickSeams, config: SquadraConfig, view: SliceView, host: str) -> None:
     """Escalate immediately on an egress-denied security signal, naming the host.
 
     Never retried (ADR-0002 decision 6): the slice is tagged failed and gets an
@@ -728,7 +726,7 @@ def _escalate_egress(seams: TickSeams, config: FlotillaConfig, view: SliceView, 
 
 def _claim_up_to_budget(
     seams: TickSeams,
-    config: FlotillaConfig,
+    config: SquadraConfig,
     claimable: Sequence[SliceView],
     inflight: Sequence[int],
 ) -> None:
@@ -763,7 +761,7 @@ def _next_attempt(status: FleetStatus | None) -> int:
 
 
 def _escalate_at_claim(
-    seams: TickSeams, config: FlotillaConfig, view: SliceView, attempt: int
+    seams: TickSeams, config: SquadraConfig, view: SliceView, attempt: int
 ) -> None:
     """Escalate a claimable slice whose next attempt would exceed the cap.
 
@@ -777,7 +775,7 @@ def _escalate_at_claim(
 
 
 def _claim_and_launch(
-    seams: TickSeams, config: FlotillaConfig, view: SliceView, attempt: int
+    seams: TickSeams, config: SquadraConfig, view: SliceView, attempt: int
 ) -> bool:
     """Run the claim protocol for one slice; roll back if create/launch fails.
 
@@ -837,7 +835,7 @@ def _slice_context(seams: TickSeams, item: WorkItem) -> SliceContext:
 # --- claim-work gating for the auth probe (claim-only, ADR-0002 decision 4) ----
 
 
-def _claim_work_pending(views: Sequence[SliceView], config: FlotillaConfig) -> bool:
+def _claim_work_pending(views: Sequence[SliceView], config: SquadraConfig) -> bool:
     """Whether this tick will try to claim+launch — the only claude-dependent work.
 
     Finalize cleanup is deterministic now, so only a claim within budget pays for
@@ -859,7 +857,7 @@ def _is_inflight(view: SliceView, tags: Tags) -> bool:
     return view.lifecycle is Lifecycle.ACTIVE and tags.claimed in view.item.tags
 
 
-def _spec(view: SliceView, config: FlotillaConfig) -> SandboxSpec:
+def _spec(view: SliceView, config: SquadraConfig) -> SandboxSpec:
     """Build the sandbox spec for a slice's current branch."""
     return _spec_for(view.item.item_id, view.branch(config), config)
 
@@ -941,7 +939,7 @@ def _dry_run_auth_ok() -> bool:
 
 def _dry_run_write_context(worktree: Path, _context: object) -> Path:
     """Absorb the slice-context injection, logging it; return the would-be path."""
-    from flotilla.manifest import slice_context_path  # noqa: PLC0415
+    from squadra.manifest import slice_context_path  # noqa: PLC0415
 
     path: Path = slice_context_path(worktree)
     _log(f"[dry-run] WOULD inject slice context at {path}")
@@ -984,7 +982,7 @@ def dry_run_seams(seams: TickSeams) -> TickSeams:
     )
 
 
-def build_seams(config: FlotillaConfig, *, dry_run: bool = False) -> TickSeams:
+def build_seams(config: SquadraConfig, *, dry_run: bool = False) -> TickSeams:
     """Build the production seams; with ``dry_run``, wrap them so nothing can mutate."""
     seams = TickSeams(
         ado=build_board(config),
@@ -1006,7 +1004,7 @@ def build_seams(config: FlotillaConfig, *, dry_run: bool = False) -> TickSeams:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run one supervisor tick against the configured board and sandbox substrate."""
     parser = argparse.ArgumentParser(
-        prog="flotilla-supervisor",
+        prog="squadra-supervisor",
         description="One AFK-fleet supervisor tick (ADR-0002 / ADR-0001).",
     )
     parser.add_argument("--fleet-root", type=Path, default=None)
@@ -1021,7 +1019,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "FLEET_DRY_RUN=1 is equivalent",
     )
     args: argparse.Namespace = parser.parse_args(argv)
-    config: FlotillaConfig = load_config(
+    config: SquadraConfig = load_config(
         fleet_root=args.fleet_root, fleet_home=args.fleet_home, provider=args.provider
     )
     dry_run: bool = bool(args.dry_run) or FLEET_DRY_RUN

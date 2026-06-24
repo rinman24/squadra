@@ -1,4 +1,4 @@
-"""Unit tests for the host-side app-repo bootstrap (``flotilla.repo``).
+"""Unit tests for the host-side app-repo bootstrap (``squadra.repo``).
 
 Drives :func:`ensure_app_repo` against a canned git runner (no live git) and a
 temp ``fleet_home`` to cover the clone-if-absent / fetch-(reset)-if-present
@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from pathlib import Path
 import subprocess
 
-from flotilla.repo import (
+from squadra.repo import (
     ensure_app_repo,
     ensure_app_repo_from_env,
     remote_auth_ok,

@@ -4,8 +4,8 @@ The supervisor injects a read-only ``slice.json`` (the **slice context**: Issue 
 Tasks + predecessor states it read host-side) into the bind-mounted ``/work``
 before launch, and reads + validates the agent's ``outcome.json`` (the **outcome
 manifest**) after exit. The ``(container_exit, manifest_valid, commits)`` triple
-the :class:`~flotilla.engines.LifecycleEngine` keys on consumes
-:func:`~flotilla.manifest.read_manifest`'s ``present`` / ``valid`` /
+the :class:`~squadra.engines.LifecycleEngine` keys on consumes
+:func:`~squadra.manifest.read_manifest`'s ``present`` / ``valid`` /
 ``needs_decision`` projection; the contract here is what G2 produces.
 """
 
@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from flotilla.domain import SliceContext, SliceTask
-from flotilla.manifest import (
+from squadra.domain import SliceContext, SliceTask
+from squadra.manifest import (
     MANIFEST_FILENAME,
     SLICE_CONTEXT_FILENAME,
     ManifestRead,
@@ -26,15 +26,15 @@ from flotilla.manifest import (
 
 @pytest.fixture
 def worktree(tmp_path: Path) -> Path:
-    """An isolated bind-mount worktree root with its ``.flotilla/`` directory."""
+    """An isolated bind-mount worktree root with its ``.squadra/`` directory."""
     root: Path = tmp_path / "work"
-    (root / ".flotilla").mkdir(parents=True)
+    (root / ".squadra").mkdir(parents=True)
     return root
 
 
 def _write_manifest(worktree: Path, payload: object) -> None:
-    """Write a raw ``outcome.json`` payload (valid JSON) into ``.flotilla/``."""
-    (worktree / ".flotilla" / MANIFEST_FILENAME).write_text(json.dumps(payload), encoding="utf-8")
+    """Write a raw ``outcome.json`` payload (valid JSON) into ``.squadra/``."""
+    (worktree / ".squadra" / MANIFEST_FILENAME).write_text(json.dumps(payload), encoding="utf-8")
 
 
 # --- slice context (host -> agent) --------------------------------------------
@@ -48,7 +48,7 @@ def test_write_slice_context_lands_readable_json(worktree: Path) -> None:
         predecessor_states={140: "Done", 141: "Done"},
     )
     path: Path = write_slice_context(worktree, context)
-    assert path == worktree / ".flotilla" / SLICE_CONTEXT_FILENAME
+    assert path == worktree / ".squadra" / SLICE_CONTEXT_FILENAME
     data: dict[str, object] = json.loads(path.read_text(encoding="utf-8"))
     assert data["issue_id"] == 143
     assert data["title"] == "feat: orchestration cutover"
@@ -56,7 +56,7 @@ def test_write_slice_context_lands_readable_json(worktree: Path) -> None:
     assert data["predecessor_states"] == {"140": "Done", "141": "Done"}
 
 
-def test_write_slice_context_creates_the_flotilla_dir(tmp_path: Path) -> None:
+def test_write_slice_context_creates_the_squadra_dir(tmp_path: Path) -> None:
     worktree: Path = tmp_path / "fresh"
     worktree.mkdir()
     context = SliceContext(issue_id=1, title="t", tasks=(), predecessor_states={})
@@ -102,7 +102,7 @@ def test_read_manifest_needs_decision_flag(worktree: Path) -> None:
 
 
 def test_read_manifest_malformed_json_is_present_but_invalid(worktree: Path) -> None:
-    (worktree / ".flotilla" / MANIFEST_FILENAME).write_text("{not json", encoding="utf-8")
+    (worktree / ".squadra" / MANIFEST_FILENAME).write_text("{not json", encoding="utf-8")
     read: ManifestRead = read_manifest(worktree)
     assert read.present is True
     assert read.valid is False

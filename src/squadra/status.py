@@ -14,7 +14,7 @@ interleaved writers never lose fields.
 
 Shell callers (the runner wrapper, skills) use the CLI::
 
-    python -m flotilla.status init|update|heartbeat|show --issue-id N ...
+    python -m squadra.status init|update|heartbeat|show --issue-id N ...
 """
 
 import argparse
@@ -30,7 +30,7 @@ from pathlib import Path
 import sys
 from typing import Final, Literal, cast
 
-from flotilla.constants import FLEET_ROOT, STATUS_FILENAME
+from squadra.constants import FLEET_ROOT, STATUS_FILENAME
 
 Phase = Literal["claiming", "seams", "tdd", "qa", "parked", "done"]
 ParkedState = Literal["needs-decision", "qa-ready", "awaiting-pr-approval", "failed"]

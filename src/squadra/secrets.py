@@ -3,7 +3,7 @@
 On the dedicated fleet-host VM the supervisor authenticates as the VM's
 *managed identity* and reads the fleet's two secrets from Azure Key Vault: the
 Anthropic API key the contained agent needs, and the Azure DevOps PAT the
-supervisor's :class:`~flotilla.board.BoardAccess` uses for host-side
+supervisor's :class:`~squadra.board.BoardAccess` uses for host-side
 board/remote writes. No secret is baked into an image, a unit file, or the
 environment of the VM at provisioning time — they are pulled at tick time.
 
@@ -20,7 +20,7 @@ Two boundaries are load-bearing (ADR-0002 §11):
 
 The fetch seam (:class:`SecretAccess`) is a provider-neutral ``Protocol`` and
 the concrete :class:`AzKeyVaultSecrets` adapter injects its ``az`` command
-runner (the test seam, mirroring :class:`flotilla.sandbox.ComposeSandbox`'s
+runner (the test seam, mirroring :class:`squadra.sandbox.ComposeSandbox`'s
 ``DockerRun``), so unit tests need no live ``az``/IMDS/Key Vault.
 """
 

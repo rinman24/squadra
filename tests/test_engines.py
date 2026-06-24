@@ -1,13 +1,13 @@
-"""Unit tests for the pure decision functions in :mod:`flotilla.engines`.
+"""Unit tests for the pure decision functions in :mod:`squadra.engines`.
 
 The ``is_parked`` / ``is_failed_park`` predicates were retired in the F4 cutover
-(ADR-0002 decision 3): the :class:`~flotilla.engines.LifecycleEngine` folds the
+(ADR-0002 decision 3): the :class:`~squadra.engines.LifecycleEngine` folds the
 deliberate-park / failed-park distinction directly into its fact-derivation, and
 ``tests/test_lifecycle_engine.py`` (#151) exercises that folding. What survives
 here is ``slice_branch``, the branch-naming rule the orchestrator still calls.
 """
 
-from flotilla.engines import slice_branch
+from squadra.engines import slice_branch
 
 
 def test_slice_branch_kebabs_title_after_colon() -> None:

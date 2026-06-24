@@ -12,11 +12,11 @@ from datetime import UTC, datetime
 import fcntl
 from pathlib import Path
 
-from flotilla.config import FlotillaConfig
-from flotilla.constants import SUPERVISOR_LOCK_FILENAME
-from flotilla.domain import Claimed, Lifecycle, RolledBack
-from flotilla.status import FleetStatus, write
-from flotilla.supervisor import CLAIMED_AT_FILENAME, TickSeams, run_tick
+from squadra.config import SquadraConfig
+from squadra.constants import SUPERVISOR_LOCK_FILENAME
+from squadra.domain import Claimed, Lifecycle, RolledBack
+from squadra.status import FleetStatus, write
+from squadra.supervisor import CLAIMED_AT_FILENAME, TickSeams, run_tick
 from tests.helpers.cleanup_fakes import FakeCleanup
 from tests.helpers.fleet_fakes import FakeBoard, FakeIssue
 from tests.helpers.sandbox_fakes import FakeSandbox
@@ -32,10 +32,10 @@ def test_tick_skips_when_lock_held(
     fake_sandbox: FakeSandbox,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     make_issue(5)
-    config: FlotillaConfig = make_config()
+    config: SquadraConfig = make_config()
     fleet_root.mkdir(parents=True)
     with (fleet_root / SUPERVISOR_LOCK_FILENAME).open("w") as holder:
         fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
@@ -49,7 +49,7 @@ def test_claims_unblocked_up_to_cap_in_id_order(
     fake_sandbox: FakeSandbox,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     make_issue(7)
     make_issue(5, title="feat: add scope revocation")
@@ -77,13 +77,13 @@ def test_inflight_claimed_issue_counts_against_cap(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     make_issue(4, state=Lifecycle.ACTIVE, tags=["fleet:claimed"])
     write(make_status(issue_id=4, runner_id="runner-4-a1", last_heartbeat=_now()), fleet_root)
-    from flotilla.domain import SandboxRunning  # noqa: PLC0415
+    from squadra.domain import SandboxRunning  # noqa: PLC0415
 
-    fake_sandbox.seed("flotilla-slice-4", SandboxRunning())
+    fake_sandbox.seed("squadra-slice-4", SandboxRunning())
     make_issue(5)
     make_issue(6)
 
@@ -98,7 +98,7 @@ def test_human_active_issue_does_not_count_against_cap(
     fake_board: FakeBoard,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     make_issue(4, state=Lifecycle.ACTIVE)  # a human moved this; no fleet:claimed tag
     make_issue(5)
@@ -114,7 +114,7 @@ def test_blocked_issue_is_skipped_until_predecessors_done(
     fake_board: FakeBoard,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     make_issue(4, state=Lifecycle.ACTIVE)  # predecessor still in flight (not done)
     make_issue(5, predecessor_ids=(4,))
@@ -132,7 +132,7 @@ def test_fleet_tagged_queued_issue_is_never_claimed(
     fake_sandbox: FakeSandbox,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     make_issue(5, tags=["fleet:failed"])  # already escalated -> terminal, never re-driven
     assert run_tick(make_seams(), make_config()) == 0
@@ -147,21 +147,21 @@ def test_claim_creates_worktree_and_injects_context_before_launch(
     fake_worktree: FakeWorktree,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     tmp_path: Path,
 ) -> None:
     make_issue(5, title="feat: add scope revocation", predecessor_ids=(3,))
     make_issue(3, state=Lifecycle.DONE)
-    config: FlotillaConfig = make_config(fleet_home=tmp_path)
+    config: SquadraConfig = make_config(fleet_home=tmp_path)
 
     contexts: list[tuple[Path, int]] = []
 
     def _record_context(worktree: Path, context: object) -> Path:
-        from flotilla.domain import SliceContext  # noqa: PLC0415
+        from squadra.domain import SliceContext  # noqa: PLC0415
 
         assert isinstance(context, SliceContext)
         contexts.append((worktree, context.issue_id))
-        return worktree / ".flotilla" / "slice.json"
+        return worktree / ".squadra" / "slice.json"
 
     assert run_tick(make_seams(write_context=_record_context), config) == 0
 
@@ -179,7 +179,7 @@ def test_slice_context_carries_predecessor_states(
     fake_board: FakeBoard,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     make_issue(5, predecessor_ids=(3,))
     make_issue(3, state=Lifecycle.DONE)
@@ -187,7 +187,7 @@ def test_slice_context_carries_predecessor_states(
     captured: dict[str, object] = {}
 
     def _capture(worktree: Path, context: object) -> Path:
-        from flotilla.domain import SliceContext  # noqa: PLC0415
+        from squadra.domain import SliceContext  # noqa: PLC0415
 
         assert isinstance(context, SliceContext)
         captured["predecessor_states"] = dict(context.predecessor_states)
@@ -203,7 +203,7 @@ def test_worktree_create_failure_does_not_claim(
     fake_worktree: FakeWorktree,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     make_issue(5, title="feat: x")
     fake_worktree.fail_branches.add("feat/slice-5-x")
@@ -221,11 +221,11 @@ def test_launch_failure_rolls_the_claim_back(
     fake_sandbox: FakeSandbox,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     make_issue(5, title="feat: x")
     make_issue(6, title="feat: y")
-    fake_sandbox.fail_launch.add("flotilla-slice-5")
+    fake_sandbox.fail_launch.add("squadra-slice-5")
 
     assert run_tick(make_seams(), make_config()) == 0
 
@@ -239,7 +239,7 @@ def test_claim_protocol_order_state_then_tag_then_comment(
     fake_board: FakeBoard,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     make_issue(5)
     assert run_tick(make_seams(), make_config()) == 0
@@ -252,7 +252,7 @@ def test_claim_writes_the_claimed_at_marker(
     fake_board: FakeBoard,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     make_issue(5)
     assert run_tick(make_seams(), make_config()) == 0
@@ -269,7 +269,7 @@ def test_retry_uses_next_attempt_and_suffixes_branch(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     # A reaped previous attempt (status attempt=1) -> the next claim runs attempt 2.
     make_issue(41, title="feat: example")
@@ -295,7 +295,7 @@ def test_cap_zero_suppresses_claims_only(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     # cap 0 must NOT claim, but the non-claim decisions still run (finalize here).
     make_issue(5)  # claimable
@@ -317,11 +317,11 @@ def test_parent_scope_filter_limits_claims(
     fake_board: FakeBoard,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     make_issue(5, parent_id=68)
     make_issue(6, parent_id=99)
-    config: FlotillaConfig = make_config(parent_scope_ids=(68,))
+    config: SquadraConfig = make_config(parent_scope_ids=(68,))
 
     assert run_tick(make_seams(), config) == 0
 

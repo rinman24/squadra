@@ -1,9 +1,9 @@
-"""Unit tests for :class:`flotilla.engines.LifecycleEngine` — the derived-state FSM.
+"""Unit tests for :class:`squadra.engines.LifecycleEngine` — the derived-state FSM.
 
 The engine is pure and zero-I/O, so these are plain table-style transition tests:
-build a :class:`~flotilla.domain.LifecycleFacts` via the ``make_facts`` factory,
-call :meth:`~flotilla.engines.LifecycleEngine.decide`, and assert the derived
-:class:`~flotilla.domain.State` and the ordered action intents. The suite is
+build a :class:`~squadra.domain.LifecycleFacts` via the ``make_facts`` factory,
+call :meth:`~squadra.engines.LifecycleEngine.decide`, and assert the derived
+:class:`~squadra.domain.State` and the ordered action intents. The suite is
 organized by the F1 behaviors (one section per ADO Task):
 
 - the typed ``State`` enum + the ``decide`` shape (#149)
@@ -22,7 +22,7 @@ from typing import cast
 
 import pytest
 
-from flotilla.domain import (
+from squadra.domain import (
     AwaitAgent,
     EscalateEgressDenied,
     EscalateExhausted,
@@ -41,7 +41,7 @@ from flotilla.domain import (
     StopContainer,
     SweepLeak,
 )
-from flotilla.engines import LifecycleEngine
+from squadra.engines import LifecycleEngine
 
 # default_facts, make_facts are provided by tests/conftest.py
 

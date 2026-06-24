@@ -1,39 +1,39 @@
 # Design note — provider-agnostic `BoardAccess` seam ("configure-not-customize")
 
 Status: resolved design, pre-implementation. Origin: `/grill-me` session
-"abstract-flotilla-step-1", 2026-06-12. This is the working reference the
+"abstract-squadra-step-1", 2026-06-12. This is the working reference the
 implementation PRs draw from; the durable decision record is
 [ADR-0001](../adr/adr-0001-board-provider-seam.md). The fleet's original design is
 gswa ADR-0007 (+ 2026-06-10 addendum), which lives in the `gswa` repo.
 
 ## Goal & scope
 
-Abstract away the genshift/ADO-specific assumptions so flotilla is usable by
+Abstract away the genshift/ADO-specific assumptions so squadra is usable by
 others (the deferred "configure-not-customize" refactor) — step 1 of the
-flotilla → public/PyPI path.
+squadra → public/PyPI path.
 
 - **Build the provider-agnostic seam now; ship ADO-only.** Prove generality with a
   contract-test suite, not a second shipped adapter.
 - Deferred to tracked backlog items: the **GitHub** adapter (P1), the **GitLab**
   adapter (P1), the pluggable **agent-runner** seam (P1), and the **formal
-  closed-architecture decomposition** (P2). flotilla stays Claude-specific in this
+  closed-architecture decomposition** (P2). squadra stays Claude-specific in this
   step (skill *names* become config; the agent CLI is not abstracted).
 
 ## Architecture — Löwy closed-architecture *alignment* (not decomposition)
 
-flotilla is targeted for an eventual Löwy "Righting Software" closed-architecture
+squadra is targeted for an eventual Löwy "Righting Software" closed-architecture
 refactor (API → Manager → pure Engines → ResourceAccess → Resource, strong DDD).
 This step **aligns** with that target but does **not** do the full package/Manager
 restructure (that is the P2 item). Mapping:
 
-| Layer | flotilla |
+| Layer | squadra |
 |---|---|
 | Resource | ADO / GitHub / GitLab APIs, tmux, git, fs, the `claude` CLI |
 | ResourceAccess | `BoardAccess` (provider adapters), `LauncherAccess`, `CleanupAccess`, `ProcessAccess`, `WorktreeAccess`, `StatusAccess`, `ConfigAccess`, `AuthAccess` — today's `TickSeams` collaborators |
 | Engine (pure) | `ClaimEngine`, `ReapEngine`, `FinalizeEngine`, branch-naming/attempt logic — data in → decision out, no I/O |
 | Manager | tick orchestration (`run_tick`/`*_pass`); becomes a `SupervisorManager` class in the P2 step |
-| API / composition root | the `flotilla` CLI: builds config + the chosen `BoardAccess` + Access objects, injects into orchestration; the provider **registry** lives here |
-| Utilities / contracts | `FlotillaConfig`, logging, the domain model (`Lifecycle`, `WorkItem`, `WorkItemLinks`, comment events) |
+| API / composition root | the `squadra` CLI: builds config + the chosen `BoardAccess` + Access objects, injects into orchestration; the provider **registry** lives here |
+| Utilities / contracts | `SquadraConfig`, logging, the domain model (`Lifecycle`, `WorkItem`, `WorkItemLinks`, comment events) |
 
 ### Module layout (this step)
 
@@ -41,14 +41,14 @@ Flat, role-named modules — no nested `api/manager/engine/access` dirs, no Mana
 class yet (the P2 refactor adds those):
 
 ```
-src/flotilla/
+src/squadra/
 ├── domain.py     # Lifecycle, WorkItem, WorkItemLinks, comment events, outcome DTOs
-├── config.py     # FlotillaConfig + tomllib loader + precedence + validation
+├── config.py     # SquadraConfig + tomllib loader + precedence + validation
 ├── board.py      # BoardAccess Protocol + AzCliAdo adapter + provider registry
 ├── engines.py    # PURE claim/reap/finalize/naming decision functions (no I/O)
 ├── supervisor.py # orchestration (lock, auth preflight, finalize→reap→claim) — proto-Manager
 ├── status.py     # per-slice status.json convention + ops (unchanged contract)
-├── cli.py        # unified argparse `flotilla` (API/composition root)
+├── cli.py        # unified argparse `squadra` (API/composition root)
 └── _scripts/, _resources.py
 ```
 
@@ -122,19 +122,19 @@ Notes:
 Modern layered precedence, **superseding** any "everything required" notion:
 
 ```
-built-in defaults  <  flotilla.toml  <  FLEET_* env  <  CLI flag
+built-in defaults  <  squadra.toml  <  FLEET_* env  <  CLI flag
 ```
 
 - **Required only where un-defaultable**: `provider`, and `[board.states]` *unless*
   the provider's process is inferable (`provider="ado"` defaults to Basic's
   `To Do/Doing/Done`; `github`/`gitlab` must declare states — their statuses are
-  user-defined). flotilla requires the *target* (like a kubeconfig context) and
+  user-defined). squadra requires the *target* (like a kubeconfig context) and
   defaults the *how*.
 - **Safety = validate-against-board, not mandatory typing.** `validate_config()`
   resolves the configured state names / tag prefix / base branch against the live
-  board at `flotilla init --check` and at each tick's startup, and fails loud
+  board at `squadra init --check` and at each tick's startup, and fails loud
   (e.g. "configured active state 'Doing' not found among this project's states").
-- **`flotilla init`** scaffolds a complete annotated `flotilla.toml` (every key with
+- **`squadra init`** scaffolds a complete annotated `squadra.toml` (every key with
   its default, `provider` from `--provider`) + the runner-skill and cleanup-skill
   templates — the whole adoption ritual is one command + a few edits.
 
@@ -151,7 +151,7 @@ active = ["Doing"]
 done   = ["Done"]
 
 [pipeline]
-branch_template = "feat/slice-{id}-{slug}"   # flotilla owns the -a{attempt} retry suffix
+branch_template = "feat/slice-{id}-{slug}"   # squadra owns the -a{attempt} retry suffix
 worktree_dir    = ".claude/worktrees"
 runner_skill    = "/afk-slice-runner"
 tdd_skill       = "/tdd"
@@ -166,28 +166,28 @@ Operational/secret knobs stay **env-only** with today's defaults: `FLEET_MAX_RUN
 
 ## CLI (API layer)
 
-A single argparse `flotilla`, Python-native dispatch:
+A single argparse `squadra`, Python-native dispatch:
 
-- `flotilla init` — scaffold config + skill templates.
-- `flotilla tick` — one supervisor tick (calls `run_tick` directly; no shell).
-- `flotilla start | stop | status | log` — ticker control; tmux ops still shell to
+- `squadra init` — scaffold config + skill templates.
+- `squadra tick` — one supervisor tick (calls `run_tick` directly; no shell).
+- `squadra start | stop | status | log` — ticker control; tmux ops still shell to
   the packaged `fleetctl.sh`, but presented as argparse subcommands (one surface,
   one `--help`).
-- `flotilla slice {init|update|heartbeat|show}` — the per-slice `status.json` ops
+- `squadra slice {init|update|heartbeat|show}` — the per-slice `status.json` ops
   (distinct noun; resolves the `status` overload). Used by `runner-wrap.sh` + the
   runner skill.
 
-Drop the `flotilla-supervisor` / `flotilla-status` **console scripts**; keep the
-`python -m flotilla.supervisor` / `flotilla.status` module entry points (internal).
+Drop the `squadra-supervisor` / `squadra-status` **console scripts**; keep the
+`python -m squadra.supervisor` / `squadra.status` module entry points (internal).
 
 ## Runner skill
 
-`flotilla init` scaffolds a **genericized, consumer-owned** runner-skill template
+`squadra init` scaffolds a **genericized, consumer-owned** runner-skill template
 (provider/repo-agnostic lifecycle: claim-verify → worktree → seams → tdd → qa →
 park) with clearly-marked fill-in sections (`## Gates`, shared-seam conventions)
 that work out of the box. Skill names are config; the wrapper threads the
 `tdd`/`qa` names into the runner prompt (the skill stops hardcoding `/tdd`,`/qa`).
-Scaffolding ≠ owning — flotilla copies the template out, then invokes it only by
+Scaffolding ≠ owning — squadra copies the template out, then invokes it only by
 *skill name* through `claude`; the "machinery + tests" runtime boundary holds
 (README amends to "machinery + tests + scaffolding").
 
@@ -205,21 +205,21 @@ GitLab adapters later become two more implementations the same suite validates.
 
 ## Delivery
 
-- **PR1 (flotilla) — behavior-preserving refactor.** Split `supervisor.py` into
+- **PR1 (squadra) — behavior-preserving refactor.** Split `supervisor.py` into
   `domain`/`config`-stub/`board`/`engines`; rename `AdoClient`→`BoardAccess`;
   extract pure decision functions into `engines.py`. Tests green, **zero** logic
   change — verifiable on the security-sensitive claim/reap/finalize paths.
-- **PR2 (flotilla) — the generalization.** Config system + `Lifecycle` mapping +
+- **PR2 (squadra) — the generalization.** Config system + `Lifecycle` mapping +
   comment events + tag prefix + `validate_config` + registry + CLI unification +
-  `flotilla init` scaffolding + the contract-test suite. Docs: this note, ADR-0001,
+  `squadra init` scaffolding + the contract-test suite. Docs: this note, ADR-0001,
   README amendments, remove the "Out of scope" stanza from `CLAUDE.md`.
 - **Coupled gswa PR (small).** Migrate the `/afk-slice-runner` skill's
-  `flotilla-status` → `flotilla slice`; bump the runtime install pin.
+  `squadra-status` → `squadra slice`; bump the runtime install pin.
 
 ## Asserted (not separately chosen — flag to revisit)
 
-- flotilla owns the `-a{attempt}` retry suffix (fixed rule; not templated).
+- squadra owns the `-a{attempt}` retry suffix (fixed rule; not templated).
 - `parent_scope_ids` replaces `FLEET_EPIC_IDS` (the parent-link claim filter).
-- flotilla starts its own `docs/adr/` (this is ADR-0001).
+- squadra starts its own `docs/adr/` (this is ADR-0001).
 - The Claude auth probe stays as-is (Claude-specific; generalized only by the P1
   agent-runner item).

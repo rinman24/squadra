@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from flotilla.config import FlotillaConfig
-from flotilla.domain import (
+from squadra.config import SquadraConfig
+from squadra.domain import (
     Escalated,
     Finalized,
     Lifecycle,
@@ -25,9 +25,9 @@ from flotilla.domain import (
     SandboxExited,
     SandboxRunning,
 )
-from flotilla.manifest import ManifestRead
-from flotilla.status import FleetStatus, load, write
-from flotilla.supervisor import TickSeams, run_tick
+from squadra.manifest import ManifestRead
+from squadra.status import FleetStatus, load, write
+from squadra.supervisor import TickSeams, run_tick
 from tests.helpers.cleanup_fakes import FakeCleanup
 from tests.helpers.fleet_fakes import FakeBoard, FakeIssue
 from tests.helpers.sandbox_fakes import FakeSandbox
@@ -44,7 +44,7 @@ def _now() -> str:
 
 
 def _project(item_id: int) -> str:
-    return f"flotilla-slice-{item_id}"
+    return f"squadra-slice-{item_id}"
 
 
 # --- finalize parity ----------------------------------------------------------
@@ -57,7 +57,7 @@ def test_finalize_retires_a_merged_done_slice(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     make_issue(
         41,
@@ -88,7 +88,7 @@ def test_finalize_waits_for_the_pr_to_merge(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     # Done + claimed but no completed PR -> AWAITING_PR (deliberate park, no cleanup).
     make_issue(41, state=Lifecycle.DONE, tags=["fleet:claimed"])
@@ -105,7 +105,7 @@ def test_finalize_ignores_done_slices_the_fleet_never_claimed(
     fake_cleanup: FakeCleanup,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     make_issue(9, state=Lifecycle.DONE)  # a human-delivered slice
     assert run_tick(make_seams(), make_config()) == 0
@@ -120,7 +120,7 @@ def test_finalize_partial_cleanup_is_retried_next_tick(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     make_issue(41, state=Lifecycle.DONE, tags=["fleet:claimed"])
     write(make_status(phase="parked", parked_state="awaiting-pr-approval"), fleet_root)
@@ -146,7 +146,7 @@ def test_exited_crash_requeues_and_archives_the_worktree(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     make_issue(41, state=Lifecycle.ACTIVE, tags=["fleet:claimed"])
     write(make_status(phase="tdd", last_heartbeat=_now()), fleet_root)
@@ -175,7 +175,7 @@ def test_running_fresh_container_is_left_alone(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     make_issue(41, state=Lifecycle.ACTIVE, tags=["fleet:claimed"])
     write(make_status(phase="tdd", last_heartbeat=_now()), fleet_root)
@@ -195,7 +195,7 @@ def test_failed_park_with_absent_container_is_a_crash(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     # parked_state=failed + no container (it died) is positive crash evidence,
     # even with a fresh heartbeat — parity with the legacy failed-park reap.
@@ -216,7 +216,7 @@ def test_exhausted_attempt_escalates_to_fleet_failed(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     make_issue(41, state=Lifecycle.ACTIVE, tags=["fleet:claimed"])
     write(make_status(phase="tdd", attempt=3, last_heartbeat=_now()), fleet_root)
@@ -238,7 +238,7 @@ def test_deliberate_park_is_never_reaped(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     # A qa-ready park with a stale heartbeat + an exited container is still a
     # deliberate park (folds the legacy is_parked): never requeued.
@@ -261,7 +261,7 @@ def test_human_active_item_is_invisible_to_the_fleet(
     fake_sandbox: FakeSandbox,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     make_issue(4, state=Lifecycle.ACTIVE)  # no fleet:claimed tag — a human moved it
     assert run_tick(make_seams(), make_config()) == 0
@@ -279,7 +279,7 @@ def test_clean_handoff_parks_awaiting_pr_and_tears_down(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     tmp_path: Path,
 ) -> None:
     # Container exited 0, a valid handoff manifest, commits present -> AGENT_DONE:
@@ -306,7 +306,7 @@ def test_needs_decision_manifest_parks_for_a_human(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     make_issue(41, state=Lifecycle.ACTIVE, tags=["fleet:claimed"])
     write(make_status(phase="tdd", last_heartbeat=_now()), fleet_root)
@@ -329,7 +329,7 @@ def test_egress_denied_escalates_immediately_naming_the_host(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     make_issue(41, state=Lifecycle.ACTIVE, tags=["fleet:claimed"])
@@ -354,7 +354,7 @@ def test_agent_timeout_stops_the_container_then_requeues(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     # A live container with a stale heartbeat is hung: stop it, then retry.
     make_issue(41, state=Lifecycle.ACTIVE, tags=["fleet:claimed"])

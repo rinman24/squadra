@@ -10,9 +10,9 @@ path only and the fleet makes exactly one claude call (the contained runner).
 
 ``DeterministicCleanup`` is the concrete adapter. The git/docker command runner
 is injected as a constructor seam (mirroring ``AzCliAdo.run`` in
-:mod:`flotilla.board`), so unit and contract tests drive it against a fake — no
+:mod:`squadra.board`), so unit and contract tests drive it against a fake — no
 live git or docker daemon is required. The dry-run wrapper lives alongside in
-:mod:`flotilla.dry_run` so a finalize tick physically cannot mutate.
+:mod:`squadra.dry_run` so a finalize tick physically cannot mutate.
 
 The orchestration wiring (F4) — mapping the engine's ``FinalizeCleanup`` action
 onto this seam — is out of scope for this slice.
@@ -24,7 +24,7 @@ from pathlib import Path
 import subprocess
 from typing import Protocol
 
-from flotilla.git_host import host_git_argv
+from squadra.git_host import host_git_argv
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,7 +80,7 @@ class DeterministicCleanup:
     """``CleanupAccess`` backed by git + ``docker compose``, no LLM.
 
     The command runner is injected so tests drive a fake; in production it is
-    :func:`_run_quiet`. ``fleet_home`` is the repo flotilla operates on (the
+    :func:`_run_quiet`. ``fleet_home`` is the repo squadra operates on (the
     ``git -C`` target for the worktree/branch operations).
     """
 

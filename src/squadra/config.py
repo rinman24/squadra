@@ -1,10 +1,10 @@
 """The fleet's effective run configuration — layered, validate-against-board.
 
-``FlotillaConfig`` is the frozen, per-tick configuration the supervisor, the
+``SquadraConfig`` is the frozen, per-tick configuration the supervisor, the
 engines, and the composition root consume. It is assembled with modern layered
 precedence::
 
-    built-in defaults  <  flotilla.toml  <  FLEET_* env  <  CLI flag
+    built-in defaults  <  squadra.toml  <  FLEET_* env  <  CLI flag
 
 Only the un-defaultable is required: the ``provider`` (defaulted to ``ado`` for
 minimum adoption friction) and ``[board.states]`` *unless* the provider's
@@ -13,11 +13,11 @@ other providers must declare their states). Everything else has a default.
 
 Safety is **validate-against-board**, not mandatory typing: ``BoardAccess.
 validate_config()`` resolves the configured state names / base branch against
-the live board at ``flotilla init --check`` and at each tick's startup, and
-fails loud — see :mod:`flotilla.board`. Operational/secret knobs
+the live board at ``squadra init --check`` and at each tick's startup, and
+fails loud — see :mod:`squadra.board`. Operational/secret knobs
 (``FLEET_MAX_RUNNERS``, the intervals, ``FLEET_MAX_ATTEMPTS``, ``FLEET_MODEL``/
 ``FLEET_EFFORT``, ``FLEET_HOME``/``FLEET_ROOT``/``FLEET_PYTHON``, the PAT) stay
-env-only with today's defaults (resolved in :mod:`flotilla.constants`).
+env-only with today's defaults (resolved in :mod:`squadra.constants`).
 """
 
 from collections.abc import Mapping
@@ -27,7 +27,7 @@ from pathlib import Path
 import tomllib
 from typing import Final, cast
 
-from flotilla.constants import (
+from squadra.constants import (
     DEFAULT_TAG_PREFIX,
     FLEET_EFFORT,
     FLEET_MAX_RUNNERS,
@@ -37,9 +37,9 @@ from flotilla.constants import (
     MAX_ATTEMPTS,
     STALENESS_THRESHOLD_SECONDS,
 )
-from flotilla.domain import Lifecycle, Tags
+from squadra.domain import Lifecycle, Tags
 
-CONFIG_FILENAME: Final[str] = "flotilla.toml"
+CONFIG_FILENAME: Final[str] = "squadra.toml"
 DEFAULT_PROVIDER: Final[str] = "ado"
 DEFAULT_BASE_BRANCH: Final[str] = "main"
 DEFAULT_BRANCH_TEMPLATE: Final[str] = "feat/slice-{id}-{slug}"
@@ -65,11 +65,11 @@ _LIFECYCLE_BY_TOML_KEY: Final[Mapping[str, Lifecycle]] = {
 
 
 class ConfigError(ValueError):
-    """Raised when flotilla.toml or the resolved configuration is malformed."""
+    """Raised when squadra.toml or the resolved configuration is malformed."""
 
 
 @dataclass(frozen=True, slots=True)
-class FlotillaConfig:
+class SquadraConfig:
     """One tick's effective configuration (defaults < toml < env < flag, frozen)."""
 
     # [board]
@@ -85,7 +85,7 @@ class FlotillaConfig:
     tdd_skill: str
     qa_skill: str
     cleanup_skill: str
-    # operational (env-only knobs, resolved in flotilla.constants)
+    # operational (env-only knobs, resolved in squadra.constants)
     fleet_root: Path
     fleet_home: Path
     cap: int
@@ -107,12 +107,12 @@ def load_config(
     fleet_home: Path | None = None,
     config_path: Path | None = None,
     provider: str | None = None,
-) -> FlotillaConfig:
+) -> SquadraConfig:
     """Assemble the effective configuration with layered precedence.
 
     ``fleet_root`` / ``fleet_home`` / ``provider`` are the CLI-flag layer (the
-    highest); ``config_path`` overrides where ``flotilla.toml`` is read from
-    (default: ``<fleet_home>/flotilla.toml`` then ``./flotilla.toml``).
+    highest); ``config_path`` overrides where ``squadra.toml`` is read from
+    (default: ``<fleet_home>/squadra.toml`` then ``./squadra.toml``).
     """
     home: Path = fleet_home if fleet_home is not None else _env_fleet_home()
     root: Path = fleet_root if fleet_root is not None else FLEET_ROOT
@@ -123,7 +123,7 @@ def load_config(
     resolved_provider: str = (
         provider or os.environ.get("FLEET_PROVIDER") or _str(board, "provider") or DEFAULT_PROVIDER
     )
-    return FlotillaConfig(
+    return SquadraConfig(
         provider=resolved_provider,
         base_branch=os.environ.get("FLEET_BASE_BRANCH")
         or _str(board, "base_branch")
@@ -151,13 +151,13 @@ def load_config(
 
 
 def _env_fleet_home() -> Path:
-    """Resolve ``FLEET_HOME`` (the repo flotilla operates on), default cwd."""
+    """Resolve ``FLEET_HOME`` (the repo squadra operates on), default cwd."""
     raw: str | None = os.environ.get("FLEET_HOME")
     return Path(raw) if raw is not None and raw.strip() else Path.cwd()
 
 
 def _read_toml(config_path: Path | None, fleet_home: Path) -> Mapping[str, object]:
-    """Read ``flotilla.toml`` from the explicit path, the fleet home, or cwd."""
+    """Read ``squadra.toml`` from the explicit path, the fleet home, or cwd."""
     candidates: list[Path] = (
         [config_path]
         if config_path is not None

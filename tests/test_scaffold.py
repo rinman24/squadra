@@ -1,10 +1,10 @@
-"""Unit tests for ``flotilla.scaffold`` (the ``flotilla init`` scaffolding)."""
+"""Unit tests for ``squadra.scaffold`` (the ``squadra init`` scaffolding)."""
 
 from pathlib import Path
 import tomllib
 
-from flotilla._resources import resolve_template
-from flotilla.config import (
+from squadra._resources import resolve_template
+from squadra.config import (
     CONFIG_FILENAME,
     DEFAULT_CLEANUP_SKILL,
     DEFAULT_QA_SKILL,
@@ -12,19 +12,19 @@ from flotilla.config import (
     DEFAULT_TDD_SKILL,
     load_config,
 )
-from flotilla.domain import Lifecycle
-from flotilla.scaffold import (
+from squadra.domain import Lifecycle
+from squadra.scaffold import (
     CLEANUP_SKILL_FILENAME,
     RUNNER_SKILL_FILENAME,
     init_project,
     main,
-    render_flotilla_toml,
+    render_squadra_toml,
 )
 
 
 def test_render_ado_toml_parses_and_loads(tmp_path: Path) -> None:
     """The default (ado) toml parses and round-trips through load_config."""
-    text: str = render_flotilla_toml("ado")
+    text: str = render_squadra_toml("ado")
     parsed: dict[str, object] = tomllib.loads(text)
     assert isinstance(parsed["board"], dict)
 
@@ -50,7 +50,7 @@ def test_render_nonado_toml_includes_states_placeholder(tmp_path: Path) -> None:
     file both parses as TOML and loads through load_config — load_config requires
     all three buckets for any provider other than ado.
     """
-    text: str = render_flotilla_toml("github")
+    text: str = render_squadra_toml("github")
     parsed: dict[str, object] = tomllib.loads(text)
     board = parsed["board"]
     assert isinstance(board, dict)
@@ -67,7 +67,7 @@ def test_render_nonado_toml_includes_states_placeholder(tmp_path: Path) -> None:
 
 
 def test_init_writes_all_three_artifacts(tmp_path: Path) -> None:
-    """init_project emits flotilla.toml + both skill templates."""
+    """init_project emits squadra.toml + both skill templates."""
     results = init_project(tmp_path, provider="ado")
     assert results == {
         CONFIG_FILENAME: True,

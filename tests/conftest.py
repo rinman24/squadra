@@ -1,4 +1,4 @@
-"""Shared fixtures for flotilla fleet unit tests (ADR-0007 / ADR-0001 tooling)."""
+"""Shared fixtures for squadra fleet unit tests (ADR-0007 / ADR-0001 tooling)."""
 
 from collections.abc import Callable
 import dataclasses
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from flotilla.config import (
+from squadra.config import (
     ADO_BASIC_STATES,
     DEFAULT_BASE_BRANCH,
     DEFAULT_BRANCH_TEMPLATE,
@@ -16,18 +16,18 @@ from flotilla.config import (
     DEFAULT_RUNNER_SKILL,
     DEFAULT_TDD_SKILL,
     DEFAULT_WORKTREE_DIR,
-    FlotillaConfig,
+    SquadraConfig,
 )
-from flotilla.constants import (
+from squadra.constants import (
     DEFAULT_TAG_PREFIX,
     FLEET_EFFORT,
     FLEET_MODEL,
     HEARTBEAT_INTERVAL_SECONDS,
     STALENESS_THRESHOLD_SECONDS,
 )
-from flotilla.domain import Lifecycle, LifecycleFacts
-from flotilla.status import FleetStatus
-from flotilla.supervisor import TickSeams
+from squadra.domain import Lifecycle, LifecycleFacts
+from squadra.status import FleetStatus
+from squadra.supervisor import TickSeams
 from tests.helpers.cleanup_fakes import FakeCleanup
 from tests.helpers.fleet_fakes import FakeBoard, FakeIssue
 from tests.helpers.sandbox_fakes import FakeSandbox
@@ -135,15 +135,15 @@ def make_seams(
 
 
 @pytest.fixture
-def make_config(fleet_root: Path, tmp_path: Path) -> Callable[..., FlotillaConfig]:
-    """Factory fixture — a FlotillaConfig bound to the isolated fleet root.
+def make_config(fleet_root: Path, tmp_path: Path) -> Callable[..., SquadraConfig]:
+    """Factory fixture — a SquadraConfig bound to the isolated fleet root.
 
     Built explicitly (not via ``load_config``) so tests are hermetic — never
     perturbed by ``FLEET_*`` env vars present in the dev container.
     """
 
-    def _factory(**overrides: object) -> FlotillaConfig:
-        base = FlotillaConfig(
+    def _factory(**overrides: object) -> SquadraConfig:
+        base = SquadraConfig(
             provider=DEFAULT_PROVIDER,
             base_branch=DEFAULT_BASE_BRANCH,
             tag_prefix=DEFAULT_TAG_PREFIX,
@@ -175,7 +175,7 @@ def default_facts() -> LifecycleFacts:
 
     The neutral starting point is an in-flight, fleet-claimed slice whose
     container is running and fresh (no failure inputs, no manifest yet): the
-    :class:`~flotilla.domain.State.RUNNING` state. Each test overrides only the
+    :class:`~squadra.domain.State.RUNNING` state. Each test overrides only the
     facts it exercises via the ``make_facts`` factory.
     """
     return LifecycleFacts(
