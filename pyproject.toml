@@ -5,8 +5,33 @@ description = "Deterministic supervisor + per-slice runner machinery for an AFK,
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "GenShift Energy" }]
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = [
+    "claude",
+    "fleet",
+    "supervisor",
+    "automation",
+    "azure-devops",
+    "github",
+    "afk",
+    "agent",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Software Development :: Build Tools",
+]
 # Pure standard library — the fleet machinery has no third-party runtime deps.
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/rinman24/squadra"
+Repository = "https://github.com/rinman24/squadra"
 
 [project.scripts]
 squadra = "squadra.cli:main"
