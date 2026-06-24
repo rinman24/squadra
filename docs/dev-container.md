@@ -16,8 +16,10 @@ deallocates the VM. VM lifecycle stays owned by gswa's `scripts/devbox/*`.
 - A persistent `flotilla_claude_home` volume for Claude auth + memory, isolated from
   gswa's `claude_home`.
 
-The image is deliberately **host-agnostic** — no Azure CLI, no GitHub CLI, no project
-source. That is why the upcoming ADO → GitHub move needs no image rebuild.
+The base image is deliberately **host-agnostic** — no Azure CLI, no project source baked
+in. `gh` is layered on via a devcontainer feature
+(`ghcr.io/devcontainers/features/github-cli`), not the image. That kept the ADO → GitHub
+migration image-rebuild-free.
 
 ## Prerequisites
 
@@ -84,19 +86,23 @@ uv run pytest
 All four should be green. The hermetic shell tests need only `bash` + `tmux` and a
 stubbed `claude` (no network) — all present in the image.
 
-## Pushing to Azure DevOps from inside the container
+## Pushing to GitHub from inside the container
 
-While flotilla is still on ADO, pushing uses HTTPS + a PAT (this container has no SSH
-key). Pass the PAT into the container by exporting it on the host before `up.sh` (compose
-forwards `AZURE_DEVOPS_EXT_PAT`), then configure the repo-local credential helper once:
+Pushing uses HTTPS (this container has no SSH key). Authenticate once with the `gh`
+device flow:
 
 ```bash
-git config --local credential.helper \
-  '!f() { echo "username=pat"; echo "password=${AZURE_DEVOPS_EXT_PAT}"; }; f'
+gh auth login
 ```
 
-After the GitHub migration (migrate-flotilla plan, Phase 2) this is replaced by
-`gh auth login`.
+Choose **GitHub.com** → **HTTPS** → **Login with a web browser**. `gh` prints a one-time
+device code; copy it, open the displayed URL on any machine, paste the code, and
+authorize. `gh` then configures git's credential helper, so `git push` and
+`gh pr create` work for the rest of the session.
+
+`gh` is present in the container via the devcontainer feature
+(`ghcr.io/devcontainers/features/github-cli`). `commit.gpgsign=false` is already handled
+by `postCreate`, so commits don't try to sign.
 
 ## Relationship to the VM and gswa
 

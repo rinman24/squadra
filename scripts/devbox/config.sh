@@ -12,8 +12,8 @@
 # config.local.sh is OPTIONAL — the defaults below work out of the box.
 
 # --- repo + compose stack ----------------------------------------------------------
-# Clone source for the clone-if-absent path. ADO today; Phase 2 repoints this to GitHub.
-FLOTILLA_REPO_URL="${FLOTILLA_REPO_URL:-https://dev.azure.com/genshift/gswa-dev/_git/flotilla}"
+# Clone source for the clone-if-absent path: the canonical GitHub repo.
+FLOTILLA_REPO_URL="${FLOTILLA_REPO_URL:-https://github.com/rinman24/flotilla.git}"
 # The checkout the stack bind-mounts. Defaults to the repo root that contains THIS
 # script, so up/down/rebuild work straight from a checkout; override to point the stack
 # at a clone elsewhere on the host.
