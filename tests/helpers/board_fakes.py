@@ -1,13 +1,13 @@
 """Two deliberately-divergent in-memory ``BoardAccess`` fakes for the contract suite.
 
-Both fakes conform structurally to :class:`flotilla.board.BoardAccess`, but they
+Both fakes conform structurally to :class:`squadra.board.BoardAccess`, but they
 model their native semantics differently on purpose, to prove the seam is
 provider-blind:
 
 - :class:`AdoShapedFakeBoard` mimics Azure DevOps Basic: native states are the
   ADO-Basic strings (``To Do``/``Doing``/``Done``); tags are stored as a single
   ``;``-joined ``System.Tags``-style string; comments render to HTML via the
-  shipped :func:`flotilla.board.render_ado_html`.
+  shipped :func:`squadra.board.render_ado_html`.
 - :class:`GitHubShapedFakeBoard` mimics a GitHub Projects board: arbitrary
   status names (many native names map to one neutral bucket); tags are a
   ``list[str]`` label model; comments render to Markdown via a local
@@ -20,9 +20,9 @@ can inspect recorded comments / tags / state without asserting native dialect.
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from flotilla.board import BoardValidationError, render_ado_html
-from flotilla.config import ADO_BASIC_STATES
-from flotilla.domain import (
+from squadra.board import BoardValidationError, render_ado_html
+from squadra.config import ADO_BASIC_STATES
+from squadra.domain import (
     Claimed,
     CommentEvent,
     Escalated,
@@ -47,7 +47,7 @@ GITHUB_STATES: Mapping[Lifecycle, tuple[str, ...]] = {
 def render_github_markdown(event: CommentEvent, tags: Tags) -> str:
     """Render a structured ``CommentEvent`` to one GitHub Markdown comment.
 
-    Deliberately a distinct dialect from :func:`flotilla.board.render_ado_html`
+    Deliberately a distinct dialect from :func:`squadra.board.render_ado_html`
     (Markdown, not HTML) so the contract suite cannot accidentally depend on
     one provider's markup.
     """

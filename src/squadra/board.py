@@ -18,8 +18,8 @@ import subprocess
 import tempfile
 from typing import Final, Protocol, cast
 
-from flotilla.config import ADO_BASIC_STATES, ConfigError, FlotillaConfig
-from flotilla.domain import (
+from squadra.config import ADO_BASIC_STATES, ConfigError, SquadraConfig
+from squadra.domain import (
     Claimed,
     CommentEvent,
     Escalated,
@@ -385,7 +385,7 @@ class AzCliAdo:
         if missing:
             raise BoardValidationError(
                 f"configured board state(s) {missing} not found among this project's "
-                f"Issue states {sorted(available)}; fix flotilla.toml [board.states]"
+                f"Issue states {sorted(available)}; fix squadra.toml [board.states]"
             )
 
     def _board_state_names(self) -> set[str]:
@@ -484,10 +484,10 @@ class AzCliAdo:
 
 # --- provider registry (composition-root seam) --------------------------------
 
-ProviderFactory = Callable[[FlotillaConfig], BoardAccess]
+ProviderFactory = Callable[[SquadraConfig], BoardAccess]
 
 
-def _build_ado(config: FlotillaConfig) -> BoardAccess:
+def _build_ado(config: SquadraConfig) -> BoardAccess:
     """Construct the ADO adapter from the resolved configuration."""
     return AzCliAdo(states=config.states, base_branch=config.base_branch, tags=config.tags)
 
@@ -497,7 +497,7 @@ def _build_ado(config: FlotillaConfig) -> BoardAccess:
 PROVIDERS: Final[dict[str, ProviderFactory]] = {"ado": _build_ado}
 
 
-def build_board(config: FlotillaConfig) -> BoardAccess:
+def build_board(config: SquadraConfig) -> BoardAccess:
     """Build the configured provider's ``BoardAccess`` adapter (the registry)."""
     try:
         factory: ProviderFactory = PROVIDERS[config.provider]

@@ -18,12 +18,12 @@ dist/
 htmlcov/
 
 # Fleet runtime state — created in the TARGET repo (FLEET_HOME), never here,
-# but ignored defensively in case flotilla is run from its own checkout.
+# but ignored defensively in case squadra is run from its own checkout.
 .claude/fleet/
 
 # Dev-container host scripts: per-developer overrides + local audit breadcrumb
 scripts/devbox/config.local.sh
-scripts/devbox/.flotilla-devbox.log
+scripts/devbox/.squadra-devbox.log
 
 # Editor / OS
 .DS_Store

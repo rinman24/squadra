@@ -1,22 +1,22 @@
 # Slice runner skill (consumer-owned template)
 
 <!--
-  SCAFFOLDED BY `flotilla init`. This is YOUR copy — edit it freely.
+  SCAFFOLDED BY `squadra init`. This is YOUR copy — edit it freely.
 
-  flotilla ships the deterministic machinery (supervisor, status CLI, runner
+  squadra ships the deterministic machinery (supervisor, status CLI, runner
   wrapper); the *skill* that actually implements one board slice is yours,
   because only you know your repo's gates, conventions, and review process.
 
   Wire this file in as the skill named by `[pipeline].runner_skill` in
-  flotilla.toml (default `/afk-slice-runner`). The runner wrapper invokes it
+  squadra.toml (default `/afk-slice-runner`). The runner wrapper invokes it
   headlessly, once per claimed slice, with these prompt arguments:
 
       <runner-skill> issue-id=<id> branch=<branch> attempt=<n> \
                      tdd-skill=<tdd> qa-skill=<qa>
 
   PROVIDER-AGNOSTIC: nothing here is ADO-specific. "The board" means whatever
-  provider flotilla.toml configures; "the slice" is one work item; the fleet
-  tags (e.g. `fleet:qa-ready`) are applied through flotilla's machinery, not by
+  provider squadra.toml configures; "the slice" is one work item; the fleet
+  tags (e.g. `fleet:qa-ready`) are applied through squadra's machinery, not by
   the provider's CLI directly. Keep it that way so this skill survives a
   provider swap.
 -->
@@ -36,12 +36,12 @@ Parse these from the prompt arguments you were invoked with:
 
 ## Status reporting
 
-Report progress through flotilla's status CLI (never edit `status.json` by
+Report progress through squadra's status CLI (never edit `status.json` by
 hand) so the supervisor's heartbeat/reap/finalize logic stays coherent:
 
 ```bash
-# `flotilla-status` if on PATH, else the module form (always available):
-python -m flotilla.status update --issue-id <id> --phase <phase> \
+# `squadra slice` if on PATH, else the module form (always available):
+python -m squadra.status update --issue-id <id> --phase <phase> \
   [--pr-url <url>] [--add-worker <name>] [--parked-state <state>]
 ```
 
@@ -73,7 +73,7 @@ Execute these phases in order. Stop and park on any unrecoverable error.
    - `awaiting-pr-approval` — work is complete, PR is open, awaiting human/CI.
    - `qa-ready` — implementation done, queued for the QA gate to run.
    - `needs-decision` — blocked on a human decision; explain what is needed.
-   Set the park state via `--parked-state` and let flotilla apply the matching
+   Set the park state via `--parked-state` and let squadra apply the matching
    `<tag_prefix><state>` board tag. Do NOT tag the board item directly.
 7. Exit. Exit 0 once parked. The wrapper backstops any non-parked exit as
    `failed`.
@@ -95,5 +95,5 @@ Execute these phases in order. Stop and park on any unrecoverable error.
 
 <!-- FILL IN: branch/commit/PR conventions, required reviewers, labels, and any
      repo-specific guardrails the runner must honor. Keep these provider- and
-     repo-agnostic where flotilla already abstracts them (tags, states, branch
-     template come from flotilla.toml). -->
+     repo-agnostic where squadra already abstracts them (tags, states, branch
+     template come from squadra.toml). -->

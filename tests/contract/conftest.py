@@ -3,10 +3,10 @@
 The ``BoardAccess`` suite runs against BOTH a freshly-seeded ADO-shaped fake and
 a GitHub-shaped fake, under one shared logical seed, via the parametrized
 ``board`` fixture. The deterministic ``CleanupAccess`` suite runs against BOTH
-the real :class:`flotilla.cleanup.DeterministicCleanup` (driven by a recording
+the real :class:`squadra.cleanup.DeterministicCleanup` (driven by a recording
 runner — no live git/docker) and an in-memory fake, via the parametrized
 ``cleanup`` fixture. The ``WorktreeAccess`` suite runs against the real
-:class:`flotilla.worktree.GitWorktreeAccess` (driven by fake git runner + mover)
+:class:`squadra.worktree.GitWorktreeAccess` (driven by fake git runner + mover)
 and an in-memory fake, via the parametrized ``worktree`` fixture. The
 ``SandboxAccess`` suite runs against a freshly-seeded in-memory
 :class:`~tests.helpers.sandbox_fakes.FakeSandbox`, via the ``sandbox`` fixture.
@@ -20,10 +20,10 @@ from pathlib import Path
 
 import pytest
 
-from flotilla.board import BoardAccess
-from flotilla.cleanup import CleanupAccess, DeterministicCleanup
-from flotilla.domain import Lifecycle, SandboxSpec, Tags
-from flotilla.worktree import GitWorktreeAccess, WorktreeAccess
+from squadra.board import BoardAccess
+from squadra.cleanup import CleanupAccess, DeterministicCleanup
+from squadra.domain import Lifecycle, SandboxSpec, Tags
+from squadra.worktree import GitWorktreeAccess, WorktreeAccess
 from tests.helpers.board_fakes import AdoShapedFakeBoard, GitHubShapedFakeBoard
 from tests.helpers.cleanup_fakes import FakeCleanup
 from tests.helpers.sandbox_fakes import FakeSandbox
@@ -123,7 +123,7 @@ def worktree(request: pytest.FixtureRequest) -> WorktreeAccess:
 
 # The shared sandbox seed — one slice's per-slice ephemeral compose project.
 SANDBOX_ITEM_ID: int = 141
-SANDBOX_PROJECT: str = "flotilla-slice-141"
+SANDBOX_PROJECT: str = "squadra-slice-141"
 
 
 @pytest.fixture
@@ -132,7 +132,7 @@ def sandbox_spec() -> SandboxSpec:
     return SandboxSpec(
         item_id=SANDBOX_ITEM_ID,
         project=SANDBOX_PROJECT,
-        compose_file=Path("/work/.flotilla/compose.yaml"),
+        compose_file=Path("/work/.squadra/compose.yaml"),
         worktree=Path("/work"),
     )
 

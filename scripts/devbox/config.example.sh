@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# config.example.sh — template for per-developer overrides of the flotilla
+# config.example.sh — template for per-developer overrides of the squadra
 # dev-container host scripts.
 #
 # These scripts work out of the box with NO local config: they only drive
@@ -12,8 +12,8 @@
 # anything set here wins over the defaults. Examples (uncomment + edit):
 
 # # Point the stack at a clone elsewhere on the host instead of this checkout:
-# FLOTILLA_REPO_DIR="${FLOTILLA_REPO_DIR:-/home/azureuser/flotilla}"
+# SQUADRA_REPO_DIR="${SQUADRA_REPO_DIR:-/home/azureuser/squadra}"
 
 # # Override the clone-if-absent source (the default is the canonical GitHub repo,
-# # https://github.com/rinman24/flotilla.git) to clone from a fork instead:
-# FLOTILLA_REPO_URL="${FLOTILLA_REPO_URL:-https://github.com/<USER>/flotilla.git}"
+# # https://github.com/rinman24/squadra.git) to clone from a fork instead:
+# SQUADRA_REPO_URL="${SQUADRA_REPO_URL:-https://github.com/<USER>/squadra.git}"

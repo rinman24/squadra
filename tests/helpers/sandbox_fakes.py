@@ -5,7 +5,7 @@ Public so test files can annotate fixture parameters with the concrete type
 Instances are provided by fixtures in ``tests/contract/conftest.py``.
 
 :class:`FakeSandbox` conforms structurally to
-:class:`flotilla.sandbox.SandboxAccess`: it holds a seedable per-project
+:class:`squadra.sandbox.SandboxAccess`: it holds a seedable per-project
 ``SandboxStatus`` and canned logs / exec results, and records every mutation
 (``launch`` / ``teardown`` / ``exec``) in order, so tests assert on neutral
 behavior — never a docker-native invocation. It models the agent-as-command
@@ -15,7 +15,7 @@ teardown ``→ absent``.
 
 from dataclasses import dataclass, field
 
-from flotilla.domain import (
+from squadra.domain import (
     ExecResult,
     SandboxAbsent,
     SandboxRunning,
@@ -29,8 +29,8 @@ class FakeSandbox:
     """Configurable in-memory ``SandboxAccess``; records every mutation in order.
 
     ``statuses`` maps a compose project name to its current
-    :class:`~flotilla.domain.SandboxStatus`; unseeded projects read as
-    :class:`~flotilla.domain.SandboxAbsent`. ``launches`` / ``teardowns`` record
+    :class:`~squadra.domain.SandboxStatus`; unseeded projects read as
+    :class:`~squadra.domain.SandboxAbsent`. ``launches`` / ``teardowns`` record
     the specs they were called with, and ``execs`` records ``(project,
     command)``; ``fail_launch`` / ``fail_teardown`` are project-name sets that
     make those mutations report failure.

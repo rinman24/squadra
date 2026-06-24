@@ -16,11 +16,11 @@ from typing import Final
 
 import pytest
 
-from flotilla.config import FlotillaConfig
-from flotilla.constants import FLEET_MODEL
-from flotilla.domain import Finalized, Lifecycle, SandboxRunning
-from flotilla.status import FleetStatus, write
-from flotilla.supervisor import (
+from squadra.config import SquadraConfig
+from squadra.constants import FLEET_MODEL
+from squadra.domain import Finalized, Lifecycle, SandboxRunning
+from squadra.status import FleetStatus, write
+from squadra.supervisor import (
     TickSeams,
     _claude_auth_ok,  # pyright: ignore[reportPrivateUsage]
     run_tick,
@@ -152,7 +152,7 @@ def test_claimable_work_triggers_the_probe(
     fake_board: FakeBoard,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     make_probe: Callable[[bool], _RecordingProbe],
 ) -> None:
     make_issue(50, title="feat: fresh slice")  # claimable within budget
@@ -166,7 +166,7 @@ def test_dead_auth_skips_claim_but_the_slice_stays_queued(
     fake_sandbox: FakeSandbox,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     make_probe: Callable[[bool], _RecordingProbe],
 ) -> None:
     make_issue(50, title="feat: fresh slice")
@@ -186,7 +186,7 @@ def test_dead_auth_still_finalizes_a_merged_slice(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     make_probe: Callable[[bool], _RecordingProbe],
 ) -> None:
     # Finalize cleanup is deterministic (no claude), so a dead-auth tick still
@@ -207,7 +207,7 @@ def test_dead_auth_still_finalizes_a_merged_slice(
 
 def test_idle_tick_never_probes(
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     make_probe: Callable[[bool], _RecordingProbe],
 ) -> None:
     probe: _RecordingProbe = make_probe(False)
@@ -221,7 +221,7 @@ def test_finalize_only_tick_never_probes(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     make_probe: Callable[[bool], _RecordingProbe],
 ) -> None:
     # Only finalize work (no claimable slice): the deterministic finalize needs no
@@ -240,20 +240,20 @@ def test_saturated_tick_never_probes(
     make_issue: Callable[..., FakeIssue],
     make_status: Callable[..., FleetStatus],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     make_probe: Callable[[bool], _RecordingProbe],
 ) -> None:
     # Cap 2, two fresh claimed runners in flight: zero claim budget, a queued
     # candidate alone must not trigger the probe.
     make_issue(41, state=Lifecycle.ACTIVE, tags=["fleet:claimed"])
     write(make_status(last_heartbeat=_now()), fleet_root)
-    fake_sandbox.seed("flotilla-slice-41", SandboxRunning())
+    fake_sandbox.seed("squadra-slice-41", SandboxRunning())
     make_issue(42, state=Lifecycle.ACTIVE, tags=["fleet:claimed"])
     write(
         make_status(issue_id=42, runner_id="runner-42-a1", last_heartbeat=_now()),
         fleet_root,
     )
-    fake_sandbox.seed("flotilla-slice-42", SandboxRunning())
+    fake_sandbox.seed("squadra-slice-42", SandboxRunning())
     make_issue(50, title="feat: fresh slice")
     probe: _RecordingProbe = make_probe(False)
     assert run_tick(make_seams(auth_ok=probe), make_config()) == 0
@@ -264,7 +264,7 @@ def test_dead_auth_emits_one_log_line_naming_the_skipped_claim(
     capsys: pytest.CaptureFixture[str],
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     make_probe: Callable[[bool], _RecordingProbe],
 ) -> None:
     make_issue(50, title="feat: fresh slice")  # pending claim work

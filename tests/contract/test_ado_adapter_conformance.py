@@ -18,9 +18,9 @@ import json
 
 import pytest
 
-from flotilla.board import AzCliAdo, BoardValidationError
-from flotilla.config import ADO_BASIC_STATES
-from flotilla.domain import Lifecycle, WorkItem
+from squadra.board import AzCliAdo, BoardValidationError
+from squadra.config import ADO_BASIC_STATES
+from squadra.domain import Lifecycle, WorkItem
 
 # native ADO-Basic done state ("Done") that DONE maps onto
 _DONE_ITEM_ID: int = 77

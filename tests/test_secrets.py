@@ -1,4 +1,4 @@
-"""Unit tests for the fleet-host secret bootstrap (``flotilla.secrets``).
+"""Unit tests for the fleet-host secret bootstrap (``squadra.secrets``).
 
 Covers the ``az``-backed Key Vault adapter against a canned command runner (no
 live ``az``/IMDS/Key Vault) and the two env projections — with the load-bearing
@@ -10,7 +10,7 @@ import subprocess
 
 import pytest
 
-from flotilla.secrets import (
+from squadra.secrets import (
     ADO_PAT_ENV,
     ANTHROPIC_API_KEY_ENV,
     AzKeyVaultSecrets,

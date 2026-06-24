@@ -1,4 +1,4 @@
-# flotilla CI — lint + strict type-check + tests on every PR into main.
+# squadra CI — lint + strict type-check + tests on every PR into main.
 #
 # Fully self-contained: no secrets, no services. uv provisions Python 3.11
 # (per .python-version) and the dev tools from the locked uv.lock; the hermetic

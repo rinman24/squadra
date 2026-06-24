@@ -1,7 +1,7 @@
 """Dry-run wrappers for the deterministic F3 ResourceAccess seams.
 
-``DryRunCleanup`` / ``DryRunWorktree`` give :class:`flotilla.cleanup.CleanupAccess`
-and :class:`flotilla.worktree.WorktreeAccess` the same ``ReadOnlyBoard`` treatment
+``DryRunCleanup`` / ``DryRunWorktree`` give :class:`squadra.cleanup.CleanupAccess`
+and :class:`squadra.worktree.WorktreeAccess` the same ``ReadOnlyBoard`` treatment
 the board seam gets (ADR-0002 decision 8): every operation on these seams is a
 mutation (deleting a branch, removing/pruning a worktree, tearing a project down,
 creating/archiving a worktree), so each is absorbed — it logs a
@@ -18,8 +18,8 @@ of scope for this slice.
 from datetime import UTC, datetime
 from pathlib import Path
 
-from flotilla.cleanup import CleanupAccess, CleanupResult
-from flotilla.worktree import DEFAULT_BASE_REF, WorktreeAccess, WorktreeCreateResult
+from squadra.cleanup import CleanupAccess, CleanupResult
+from squadra.worktree import DEFAULT_BASE_REF, WorktreeAccess, WorktreeCreateResult
 
 
 def _log(message: str) -> None:

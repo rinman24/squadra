@@ -14,10 +14,10 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from flotilla.config import FlotillaConfig
-from flotilla.domain import Lifecycle, SandboxExited, Tags
-from flotilla.status import write
-from flotilla.supervisor import TickSeams, run_tick
+from squadra.config import SquadraConfig
+from squadra.domain import Lifecycle, SandboxExited, Tags
+from squadra.status import write
+from squadra.supervisor import TickSeams, run_tick
 from tests.helpers.board_fakes import GITHUB_STATES, GitHubShapedFakeBoard
 from tests.helpers.cleanup_fakes import FakeCleanup
 from tests.helpers.sandbox_fakes import FakeSandbox
@@ -46,11 +46,11 @@ def _now() -> str:
 
 def test_tick_claims_a_github_native_item_with_no_state_or_markup_leak(
     fleet_root: Path,
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
 ) -> None:
     board = GitHubShapedFakeBoard(tags=Tags())  # native "Backlog"/"In Progress"/...
     board.add(7, "feat: ship it", Lifecycle.QUEUED)
-    config: FlotillaConfig = make_config(fleet_root=fleet_root)
+    config: SquadraConfig = make_config(fleet_root=fleet_root)
 
     assert run_tick(_seams(board), config) == 0
 
@@ -65,7 +65,7 @@ def test_tick_claims_a_github_native_item_with_no_state_or_markup_leak(
 
 def test_tick_finalizes_a_github_native_done_item(
     fleet_root: Path,
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     make_status: Callable[..., object],
 ) -> None:
     board = GitHubShapedFakeBoard(tags=Tags())
@@ -78,7 +78,7 @@ def test_tick_finalizes_a_github_native_done_item(
         make_status(issue_id=7, runner_id="r-7", branch="feat/slice-7-ship-it"),  # type: ignore[arg-type]
         fleet_root,
     )
-    config: FlotillaConfig = make_config(fleet_root=fleet_root)
+    config: SquadraConfig = make_config(fleet_root=fleet_root)
 
     assert run_tick(_seams(board), config) == 0
 
@@ -88,7 +88,7 @@ def test_tick_finalizes_a_github_native_done_item(
 
 def test_tick_escalates_a_github_native_item_at_the_cap(
     fleet_root: Path,
-    make_config: Callable[..., FlotillaConfig],
+    make_config: Callable[..., SquadraConfig],
     make_status: Callable[..., object],
 ) -> None:
     board = GitHubShapedFakeBoard(tags=Tags())
@@ -105,8 +105,8 @@ def test_tick_escalates_a_github_native_item_at_the_cap(
         fleet_root,
     )
     sandbox = FakeSandbox()
-    sandbox.seed("flotilla-slice-7", SandboxExited(exit_code=1))
-    config: FlotillaConfig = make_config(fleet_root=fleet_root, max_attempts=1)
+    sandbox.seed("squadra-slice-7", SandboxExited(exit_code=1))
+    config: SquadraConfig = make_config(fleet_root=fleet_root, max_attempts=1)
 
     assert run_tick(_seams(board, sandbox), config) == 0
 

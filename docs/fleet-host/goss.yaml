@@ -1,4 +1,4 @@
-# goss.yaml — executable on-host acceptance for the flotilla fleet-host (ADR-0002 §11).
+# goss.yaml — executable on-host acceptance for the squadra fleet-host (ADR-0002 §11).
 #
 # Run on gswa-fleet-host (Docker + systemd are VM-only) after fleet-host-activate.sh:
 #   export FLEET_KEY_VAULT=gswa-fleet-kv-07c17c
@@ -7,7 +7,7 @@
 #
 # This codifies the host-side acceptance. The agent-env minimization (the PAT never
 # reaches the contained agent) is proven in pytest — tests/test_secrets.py
-# (agent_environ) — and by the gswa .flotilla/ compose listing only ANTHROPIC_API_KEY;
+# (agent_environ) — and by the gswa .squadra/ compose listing only ANTHROPIC_API_KEY;
 # a dry-run tick launches no agent container, so it is not asserted live here.
 
 package:
@@ -15,22 +15,22 @@ package:
     installed: true
 
 file:
-  /etc/systemd/system/flotilla.service:
+  /etc/systemd/system/squadra.service:
     exists: true
     contains:
       - "Type=oneshot"
-      - "/flotilla fleet-tick"
+      - "/squadra fleet-tick"
       - "Environment=FLEET_KEY_VAULT="
       # No secret material is ever written into the unit (ADR-0002 §11) — neither the
-      # ADO PAT (tick-time) nor the GitHub PAT (activate-time flotilla install).
+      # ADO PAT (tick-time) nor the GitHub PAT (activate-time squadra install).
       - "!/AZURE_DEVOPS_EXT_PAT/"
       - "!/GITHUB_PAT/"
-  /etc/systemd/system/flotilla.timer:
+  /etc/systemd/system/squadra.timer:
     exists: true
     contains:
-      - "Unit=flotilla.service"
+      - "Unit=squadra.service"
       - "OnUnitActiveSec="
-  /opt/flotilla/venv/bin/flotilla:
+  /opt/squadra/venv/bin/squadra:
     exists: true
     mode: "0755"
 
@@ -39,9 +39,9 @@ service:
     enabled: true
     running: true
   # Installed but deliberately NOT enabled — fleet activation is a separate,
-  # deliberate `systemctl enable --now flotilla.timer` (decision 16). Flip the
+  # deliberate `systemctl enable --now squadra.timer` (decision 16). Flip the
   # expectations below to `true` only after the fleet is intentionally activated.
-  flotilla.timer:
+  squadra.timer:
     enabled: false
     running: false
 
@@ -57,10 +57,10 @@ command:
   kv-ado-pat-readable:
     exec: 'az keyvault secret show --vault-name "$FLEET_KEY_VAULT" --name fleet-ado-pat --query value --output tsv'
     exit-status: 0
-  # The GitHub PAT (Contents: read on the flotilla repo) used to pip-install flotilla
-  # from GitHub after the ADO->GitHub migration (migrate-flotilla Phase 2b).
+  # The GitHub PAT (Contents: read on the squadra repo) used to pip-install squadra
+  # from GitHub after the ADO->GitHub migration (migrate-squadra Phase 2b).
   kv-github-pat-readable:
-    exec: 'az keyvault secret show --vault-name "$FLEET_KEY_VAULT" --name flotilla-github-pat --query value --output tsv'
+    exec: 'az keyvault secret show --vault-name "$FLEET_KEY_VAULT" --name squadra-github-pat --query value --output tsv'
     exit-status: 0
   # The load-bearing end-to-end gate: a dry-run tick runs UNDER systemd (transient
   # unit, no enabled timer), which exercises fleet-tick's KV secret fetch + app-repo
@@ -69,7 +69,7 @@ command:
     exec: >
       systemd-run --wait --collect --quiet
       --setenv=FLEET_KEY_VAULT="$FLEET_KEY_VAULT"
-      --property=EnvironmentFile=/opt/flotilla/fleet-host.env
-      /opt/flotilla/venv/bin/flotilla fleet-tick --dry-run
+      --property=EnvironmentFile=/opt/squadra/fleet-host.env
+      /opt/squadra/venv/bin/squadra fleet-tick --dry-run
     exit-status: 0
     timeout: 120000

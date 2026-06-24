@@ -2,7 +2,7 @@
 # Hermetic regression tests for runner-wrap.sh (the fleet pane command).
 #
 # Runs entirely against a temp fleet root with a stubbed `claude` binary — no
-# network, no ADO, no tmux. The status CLI is the real one (flotilla is
+# network, no ADO, no tmux. The status CLI is the real one (squadra is
 # installed in the test interpreter), so the wrapper↔CLI seam is exercised for
 # real. Entry point: the pytest wrapper tests/test_runner_wrap.py, which pins
 # FLEET_PYTHON to the interpreter running the suite.
@@ -12,8 +12,8 @@ set -u
 PYTHON=${FLEET_PYTHON:-python3}
 # Resolve the packaged runner-wrap.sh exactly the way the supervisor does — via
 # importlib.resources, NOT a repo-relative path.
-WRAP=$("$PYTHON" -c 'import flotilla._resources as r; print(r.resolve_script("runner-wrap.sh"))') || {
-  echo "could not resolve packaged runner-wrap.sh (is flotilla installed in $PYTHON?)" >&2
+WRAP=$("$PYTHON" -c 'import squadra._resources as r; print(r.resolve_script("runner-wrap.sh"))') || {
+  echo "could not resolve packaged runner-wrap.sh (is squadra installed in $PYTHON?)" >&2
   exit 70
 }
 
@@ -51,7 +51,7 @@ mkdir -p "$TMP/bin"
 cat >"$TMP/bin/claude-park" <<EOF
 #!/bin/sh
 printf '%s\n' "\$@" > "$TMP/claude-args"
-"$PYTHON" -m flotilla.status update \
+"$PYTHON" -m squadra.status update \
   --issue-id 41 --fleet-root "\$FLEET_ROOT" \
   --phase parked --parked-state awaiting-pr-approval \
   --pr-url https://pr/41 --add-worker task-1
@@ -68,7 +68,7 @@ EOF
 cat >"$TMP/bin/claude-slow-park" <<EOF
 #!/bin/sh
 sleep 3
-"$PYTHON" -m flotilla.status update \
+"$PYTHON" -m squadra.status update \
   --issue-id 41 --fleet-root "\$FLEET_ROOT" \
   --phase parked --parked-state qa-ready
 exit 0
@@ -77,7 +77,7 @@ EOF
 # Stub: an agent that parks needs-decision but exits non-zero afterwards.
 cat >"$TMP/bin/claude-park-then-die" <<EOF
 #!/bin/sh
-"$PYTHON" -m flotilla.status update \
+"$PYTHON" -m squadra.status update \
   --issue-id 41 --fleet-root "\$FLEET_ROOT" \
   --phase parked --parked-state needs-decision
 exit 3
@@ -114,14 +114,14 @@ assert "park: runner.log written" grep -q 'runner-41-a1' "$ROOT1/41/runner.log"
 assert "park: prompt names the skill and inputs" \
   grep -q '/afk-slice-runner issue-id=41 branch=feat/slice-41-x attempt=1 tdd-skill=/tdd qa-skill=/qa' \
     "$TMP/claude-args"
-assert "park: tdd/qa skills default from flotilla.config" \
+assert "park: tdd/qa skills default from squadra.config" \
   grep -q 'tdd-skill=/tdd qa-skill=/qa' "$TMP/claude-args"
-assert "park: runner skill defaults from flotilla.config" \
+assert "park: runner skill defaults from squadra.config" \
   grep -q '/afk-slice-runner issue-id=' "$TMP/claude-args"
 assert "park: permissions skipped for headless run" \
   grep -q -- '--dangerously-skip-permissions' "$TMP/claude-args"
-CONSTANTS_MODEL=$("$PYTHON" -c 'from flotilla.constants import FLEET_MODEL; print(FLEET_MODEL)')
-CONSTANTS_EFFORT=$("$PYTHON" -c 'from flotilla.constants import FLEET_EFFORT; print(FLEET_EFFORT)')
+CONSTANTS_MODEL=$("$PYTHON" -c 'from squadra.constants import FLEET_MODEL; print(FLEET_MODEL)')
+CONSTANTS_EFFORT=$("$PYTHON" -c 'from squadra.constants import FLEET_EFFORT; print(FLEET_EFFORT)')
 assert "park: --model flag passed" grep -qx -- '--model' "$TMP/claude-args"
 assert "park: model defaults to constants.py" grep -qx -- "$CONSTANTS_MODEL" "$TMP/claude-args"
 assert "park: --effort flag passed" grep -qx -- '--effort' "$TMP/claude-args"
@@ -171,7 +171,7 @@ assert "liveness: heartbeat advanced past started_at" [ "$LAST_HB" != "$STARTED"
 
 ROOT6="$TMP/fleet6"
 CONSTANTS_DEFAULT=$(FLEET_HEARTBEAT_INTERVAL_SECONDS= "$PYTHON" -c \
-  'from flotilla.constants import HEARTBEAT_INTERVAL_SECONDS; print(HEARTBEAT_INTERVAL_SECONDS)')
+  'from squadra.constants import HEARTBEAT_INTERVAL_SECONDS; print(HEARTBEAT_INTERVAL_SECONDS)')
 FLEET_ROOT=$ROOT6 FLEET_CLAUDE_CMD="$TMP/bin/claude-park" FLEET_HEARTBEAT_INTERVAL_SECONDS= \
   bash "$WRAP" 41 feat/slice-41-x 1 >/dev/null 2>&1
 assert "interval-default: wrapper exits 0 with var unset" [ "$?" -eq 0 ]
@@ -191,7 +191,7 @@ assert "model-override: --model uses the env value" \
 assert "model-override: --effort uses the env value" \
   grep -qx -- 'medium' "$TMP/claude-args"
 
-# --- skill overrides: FLEET_*_SKILL win over the flotilla.config defaults --------
+# --- skill overrides: FLEET_*_SKILL win over the squadra.config defaults --------
 
 ROOT8="$TMP/fleet8"
 FLEET_ROOT=$ROOT8 FLEET_CLAUDE_CMD="$TMP/bin/claude-park" \

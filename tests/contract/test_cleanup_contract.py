@@ -1,6 +1,6 @@
 """The ``CleanupAccess`` conformance suite (deterministic, LLM-free).
 
-Runs against BOTH the real :class:`flotilla.cleanup.DeterministicCleanup` (driven
+Runs against BOTH the real :class:`squadra.cleanup.DeterministicCleanup` (driven
 by a recording command runner — no live git/docker) and an in-memory
 :class:`tests.helpers.cleanup_fakes.FakeCleanup`, via the parametrized ``cleanup``
 fixture. Any implementation that passes this suite satisfies the seam contract:
@@ -8,7 +8,7 @@ finalize is a deterministic, best-effort sequence of git/docker operations with 
 per-step result, and never an LLM call.
 """
 
-from flotilla.cleanup import CleanupAccess, CleanupResult
+from squadra.cleanup import CleanupAccess, CleanupResult
 
 # cleanup is provided by tests/contract/conftest.py (parametrized over the real
 # DeterministicCleanup and FakeCleanup)

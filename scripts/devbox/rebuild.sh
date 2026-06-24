@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# rebuild.sh — rebuild the flotilla dev-container image and recreate the container.
+# rebuild.sh — rebuild the squadra dev-container image and recreate the container.
 #
 # The daily "I changed the Dockerfile / dependencies and want the running stack rebuilt"
 # verb. Runs locally on the gswa-devbox host (no tunnel/ssh — unlike gswa's rebuild),
-# rebuilds the single flotilla image, recreates the container, and re-syncs the venv. The
-# repo bind mount and the flotilla_claude_home volume survive a recreate, so no
+# rebuilds the single squadra image, recreates the container, and re-syncs the venv. The
+# repo bind mount and the squadra_claude_home volume survive a recreate, so no
 # re-bootstrap is needed. Container-scoped: the VM is never touched.
 #
 # Usage: scripts/devbox/rebuild.sh [--no-cache] [--force-recreate] [--yes] [--dry-run]
@@ -18,17 +18,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/devbox/lib.sh
 source "${SCRIPT_DIR}/lib.sh"
 
-export FLOTILLA_DRY_RUN=0
-export FLOTILLA_ASSUME_YES=0
+export SQUADRA_DRY_RUN=0
+export SQUADRA_ASSUME_YES=0
 no_cache=0
 recreate_flag=""
 
 usage() {
   cat <<'EOF'
-rebuild.sh — rebuild the flotilla dev-container image and recreate the container.
+rebuild.sh — rebuild the squadra dev-container image and recreate the container.
 
-Rebuilds the single flotilla image and recreates the container; the repo bind mount and
-flotilla_claude_home volume persist. Runs locally on the host (no tunnel). The VM is
+Rebuilds the single squadra image and recreates the container; the repo bind mount and
+squadra_claude_home volume persist. Runs locally on the host (no tunnel). The VM is
 never touched.
 
 Usage: scripts/devbox/rebuild.sh [--no-cache] [--force-recreate] [--yes] [--dry-run]
@@ -44,8 +44,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-cache) no_cache=1 ;;
     --force-recreate) recreate_flag="--force-recreate" ;;
-    --yes | -y) FLOTILLA_ASSUME_YES=1 ;;
-    --dry-run) FLOTILLA_DRY_RUN=1 ;;
+    --yes | -y) SQUADRA_ASSUME_YES=1 ;;
+    --dry-run) SQUADRA_DRY_RUN=1 ;;
     -h | --help) usage 0 ;;
     *) die "unknown argument: $1 (try --help)" ;;
   esac
@@ -65,9 +65,9 @@ fi
 require_docker
 ensure_repo
 
-log "Rebuilding the flotilla stack (variant: ${variant})."
-confirm "Rebuild + recreate the flotilla dev container? This drops any attached VS Code /
-  tmux session (the repo bind mount + flotilla_claude_home volume persist)." ||
+log "Rebuilding the squadra stack (variant: ${variant})."
+confirm "Rebuild + recreate the squadra dev container? This drops any attached VS Code /
+  tmux session (the repo bind mount + squadra_claude_home volume persist)." ||
   die "Aborted; nothing rebuilt."
 
 # `--no-cache` is a build-time flag, so it splits into a `build` then a plain `up -d`
@@ -81,10 +81,10 @@ fi
 
 # Deps may have changed — re-sync the in-repo venv against the locked deps.
 log "Re-syncing the project venv inside the container (uv sync --frozen) ..."
-compose exec -T "${FLOTILLA_SERVICE}" bash -lc 'uv sync --frozen'
+compose exec -T "${SQUADRA_SERVICE}" bash -lc 'uv sync --frozen'
 
 compose ps
 
-if [[ "${FLOTILLA_DRY_RUN}" != "1" ]]; then
-  audit_log "rebuild project=${FLOTILLA_PROJECT_NAME} variant=${variant}"
+if [[ "${SQUADRA_DRY_RUN}" != "1" ]]; then
+  audit_log "rebuild project=${SQUADRA_PROJECT_NAME} variant=${variant}"
 fi

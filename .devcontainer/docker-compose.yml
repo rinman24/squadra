@@ -1,26 +1,26 @@
-# flotilla dev container — a SECOND compose stack on the shared gswa-devbox Docker
+# squadra dev container — a SECOND compose stack on the shared gswa-devbox Docker
 # daemon, fully independent of gswa's stack (its own image, its own volume, no DB, no
 # ports, no shared services). Container-scoped only: nothing here touches the VM.
 #
-# `name: flotilla` pins the compose project name. It MUST match `-p flotilla` in
+# `name: squadra` pins the compose project name. It MUST match `-p squadra` in
 # scripts/devbox/* and the project name VS Code uses, or "Reopen in Container" and the
 # host scripts would spawn two separate stacks. With the project name fixed, gswa's
-# stack (project `devcontainer`) and flotilla's never collide on the same daemon.
-name: flotilla
+# stack (project `devcontainer`) and squadra's never collide on the same daemon.
+name: squadra
 
 services:
-  flotilla:
+  squadra:
     build:
       context: ..
       dockerfile: Dockerfile
     volumes:
       # The repo bind mount. The in-repo `.venv` is created here at runtime by
       # `uv sync` (postCreateCommand / scripts/devbox/up.sh) — not baked into the image.
-      - ..:/workspaces/flotilla:cached
+      - ..:/workspaces/squadra:cached
       # Persist Claude Code auth + auto-memory across rebuilds, isolated from gswa's
       # `claude_home` volume (own memory, no `.claude.json` contention). First recreate
       # brings this up EMPTY — re-auth once inside the container.
-      - flotilla_claude_home:/home/dev/.claude
+      - squadra_claude_home:/home/dev/.claude
     command: sleep infinity
     environment:
       # Optional PAT so a `git push` to the ADO origin works from inside the container
@@ -29,4 +29,4 @@ services:
       AZURE_DEVOPS_EXT_PAT: ${AZURE_DEVOPS_EXT_PAT:-}
 
 volumes:
-  flotilla_claude_home:
+  squadra_claude_home:

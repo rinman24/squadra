@@ -9,12 +9,12 @@ lifecycle, and ``inspect`` derives the agent's liveness/exit from ``docker
 inspect``. The seam **replaces the old ``Launcher`` protocol** and absorbs its
 ``pid_alive`` liveness into ``inspect`` (the ``runner.pid`` sidecar is dropped).
 
-The seam speaks the neutral :class:`~flotilla.domain.SandboxStatus` /
-:class:`~flotilla.domain.ExecResult` vocabulary and takes a
-:class:`~flotilla.domain.SandboxSpec`; it never returns Docker-native strings.
+The seam speaks the neutral :class:`~squadra.domain.SandboxStatus` /
+:class:`~squadra.domain.ExecResult` vocabulary and takes a
+:class:`~squadra.domain.SandboxSpec`; it never returns Docker-native strings.
 ``ComposeSandbox`` is the concrete compose-backed adapter (a later behavior in
 this slice) and ``DryRunSandbox`` the write-blocking dry-run decorator (mirroring
-:class:`flotilla.supervisor.ReadOnlyBoard`).
+:class:`squadra.supervisor.ReadOnlyBoard`).
 """
 
 from collections.abc import Callable, Sequence
@@ -23,7 +23,7 @@ import json
 import subprocess
 from typing import Protocol, cast
 
-from flotilla.domain import (
+from squadra.domain import (
     ExecResult,
     SandboxAbsent,
     SandboxExited,
@@ -88,10 +88,10 @@ def status_from_inspect(state: object) -> SandboxStatus:
 
     ``state`` is the parsed ``.State`` mapping (``{"Status": "...", "ExitCode":
     n, ...}``); ``None`` (no such container) projects to
-    :class:`~flotilla.domain.SandboxAbsent`. A ``running`` status is
-    :class:`~flotilla.domain.SandboxRunning`; any other status (``exited`` /
+    :class:`~squadra.domain.SandboxAbsent`. A ``running`` status is
+    :class:`~squadra.domain.SandboxRunning`; any other status (``exited`` /
     ``dead`` / ``created`` after the one-shot finishes) is treated as an exit and
-    carries the ``.State.ExitCode`` as :class:`~flotilla.domain.SandboxExited`
+    carries the ``.State.ExitCode`` as :class:`~squadra.domain.SandboxExited`
     (defaulting to ``0`` only when the field is genuinely absent).
     """
     if not isinstance(state, dict):
@@ -126,9 +126,9 @@ def _run_docker(args: Sequence[str]) -> "subprocess.CompletedProcess[str]":
 class ComposeSandbox:
     """``SandboxAccess`` backed by ``docker compose`` (the agent-as-command model).
 
-    Each call maps a :class:`~flotilla.domain.SandboxSpec` onto a project-scoped
+    Each call maps a :class:`~squadra.domain.SandboxSpec` onto a project-scoped
     ``docker compose -p <project> -f <compose_file>`` invocation (the
-    target-repo-owned ``.flotilla/`` compose, ADR-0002 §15). ``launch`` builds +
+    target-repo-owned ``.squadra/`` compose, ADR-0002 §15). ``launch`` builds +
     ``up -d`` the project (the agent service's command *is* the runner, so
     bringing it up *is* starting the agent) and returns immediately; ``inspect``
     derives the agent's liveness/exit from ``docker inspect`` of the agent
@@ -154,7 +154,7 @@ class ComposeSandbox:
         """Project the agent container's ``docker inspect .State`` onto a status.
 
         Two reads: ``compose ps -q <agent>`` resolves the container id (empty →
-        :class:`~flotilla.domain.SandboxAbsent`, i.e. never launched or torn
+        :class:`~squadra.domain.SandboxAbsent`, i.e. never launched or torn
         down), then ``docker inspect <id>`` yields ``[0].State`` for
         :func:`status_from_inspect`.
         """
@@ -186,7 +186,7 @@ def _first_state(payload: str) -> object:
 
     ``docker inspect`` returns a one-element array; an empty/garbage payload (no
     such container, or a transient blank read) yields ``None`` →
-    :class:`~flotilla.domain.SandboxAbsent`, never a crash.
+    :class:`~squadra.domain.SandboxAbsent`, never a crash.
     """
     if not payload.strip():
         return None
@@ -211,14 +211,14 @@ def _log(message: str) -> None:
 class DryRunSandbox:
     """``SandboxAccess`` decorator that physically cannot mutate any sandbox.
 
-    The exact write-blocking discipline of :class:`flotilla.supervisor.ReadOnlyBoard`,
+    The exact write-blocking discipline of :class:`squadra.supervisor.ReadOnlyBoard`,
     applied to the sandbox seam: the reads (``inspect`` / ``logs``) delegate to the
     wrapped adapter, while the mutations (``launch`` / ``teardown`` / ``exec``) log
     the action a real tick WOULD have performed and do nothing — the call never
     reaches the wrapped adapter, so a dry-run tick cannot build, tear down, or exec
     into a container. ``launch`` / ``teardown`` report success and ``exec`` returns
     a benign empty result so the planning logic continues unperturbed (mirroring
-    :class:`flotilla.supervisor.DryRunLauncher`).
+    :class:`squadra.supervisor.DryRunLauncher`).
     """
 
     def __init__(self, inner: SandboxAccess) -> None:

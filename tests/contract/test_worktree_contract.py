@@ -1,6 +1,6 @@
 """The ``WorktreeAccess`` conformance suite (host-side create / archive / prune).
 
-Runs against BOTH the real :class:`flotilla.worktree.GitWorktreeAccess` (driven by
+Runs against BOTH the real :class:`squadra.worktree.GitWorktreeAccess` (driven by
 a fake git runner + fake mover — no live git/disk) and an in-memory
 :class:`tests.helpers.worktree_fakes.FakeWorktree`, via the parametrized
 ``worktree`` fixture. Any implementation that passes this suite satisfies the
@@ -10,7 +10,7 @@ attempt is archived under its attempt slot, and stale entries are pruned.
 
 from pathlib import Path
 
-from flotilla.worktree import WorktreeAccess, WorktreeCreateResult
+from squadra.worktree import WorktreeAccess, WorktreeCreateResult
 
 # worktree is provided by tests/contract/conftest.py (parametrized over the real
 # GitWorktreeAccess and FakeWorktree)

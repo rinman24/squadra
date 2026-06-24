@@ -1,6 +1,6 @@
-# flotilla dev container
+# squadra dev container
 
-flotilla runs in its own dev container — a second `docker compose` stack on the shared
+squadra runs in its own dev container — a second `docker compose` stack on the shared
 **gswa-devbox** Azure VM, fully independent of gswa's stack (own image, own Claude-home
 volume, no database, no ports). It is **container-scoped**: it never creates, starts, or
 deallocates the VM. VM lifecycle stays owned by gswa's `scripts/devbox/*`.
@@ -11,9 +11,9 @@ deallocates the VM. VM lifecycle stays owned by gswa's `scripts/devbox/*`.
   `git`, `tmux`, `jq`, Node 20 (so `pyright` runs offline), and the `claude` CLI.
 - A non-root `dev` user (uid 1000) with passwordless sudo, so Claude Code's
   `--dangerously-skip-permissions` runs.
-- The repo bind-mounted at `/workspaces/flotilla`; the in-repo `.venv` is created at
+- The repo bind-mounted at `/workspaces/squadra`; the in-repo `.venv` is created at
   runtime by `uv sync` (it is not baked into the image).
-- A persistent `flotilla_claude_home` volume for Claude auth + memory, isolated from
+- A persistent `squadra_claude_home` volume for Claude auth + memory, isolated from
   gswa's `claude_home`.
 
 The base image is deliberately **host-agnostic** — no Azure CLI, no project source baked
@@ -30,16 +30,16 @@ migration image-rebuild-free.
 
 ## Daily driver: VS Code "Reopen in Container"
 
-Open the flotilla folder on the VM in VS Code (Remote-SSH or the same tunnel you use for
+Open the squadra folder on the VM in VS Code (Remote-SSH or the same tunnel you use for
 gswa) and run **Dev Containers: Reopen in Container**. VS Code reads
-`.devcontainer/devcontainer.json`, builds the image, starts the `flotilla` service, and
-runs `uv sync` (the `postCreateCommand`). You land in `/workspaces/flotilla` as `dev`
+`.devcontainer/devcontainer.json`, builds the image, starts the `squadra` service, and
+runs `uv sync` (the `postCreateCommand`). You land in `/workspaces/squadra` as `dev`
 with the venv ready.
 
 ## Host scripts (terminal equivalent)
 
 Thin `docker compose` wrappers for terminal use on the VM host. They pin the compose
-project name to `flotilla` so they share one stack with VS Code:
+project name to `squadra` so they share one stack with VS Code:
 
 ```bash
 scripts/devbox/up.sh        # build + start + uv sync   (--dry-run, --yes)
@@ -61,20 +61,20 @@ cp scripts/devbox/config.example.sh scripts/devbox/config.local.sh
 
 ### Project name pinning
 
-The compose project name is pinned to `flotilla` in **both** places —
-`name: flotilla` in `.devcontainer/docker-compose.yml` and `-p flotilla` in the scripts.
+The compose project name is pinned to `squadra` in **both** places —
+`name: squadra` in `.devcontainer/docker-compose.yml` and `-p squadra` in the scripts.
 Keep them equal; otherwise VS Code and the scripts would spawn two separate stacks. With
-it fixed, flotilla's stack never collides with gswa's on the shared Docker daemon.
+it fixed, squadra's stack never collides with gswa's on the shared Docker daemon.
 
 ## Claude Code auth
 
-The first time the container is created, `flotilla_claude_home` is empty. Start `claude`
+The first time the container is created, `squadra_claude_home` is empty. Start `claude`
 inside the container and authenticate once; auth and memory then persist across rebuilds
 (the volume survives `stop.sh` / `rebuild.sh`).
 
 ## Validate
 
-Inside the container (VS Code terminal or `docker compose -p flotilla exec flotilla bash`):
+Inside the container (VS Code terminal or `docker compose -p squadra exec squadra bash`):
 
 ```bash
 uv run ruff check .
@@ -106,7 +106,7 @@ by `postCreate`, so commits don't try to sign.
 
 ## Relationship to the VM and gswa
 
-- `stop.sh` is `compose down` — it stops the flotilla container only. It does **not**
+- `stop.sh` is `compose down` — it stops the squadra container only. It does **not**
   deallocate the VM. To stop billing for the whole box, use gswa's `scripts/devbox/stop.sh`.
-- flotilla and gswa share the VM's CPU/RAM (D4s_v4: 4 vCPU / 16 GB). flotilla is idle
+- squadra and gswa share the VM's CPU/RAM (D4s_v4: 4 vCPU / 16 GB). squadra is idle
   unless you are testing; watch memory if you run heavy test loads in both at once.

@@ -36,9 +36,9 @@ def _bool_from_env(name: str, default: bool) -> bool:
 
 
 def _fleet_home() -> Path:
-    """Return the repo flotilla operates on: ``FLEET_HOME`` or the working directory.
+    """Return the repo squadra operates on: ``FLEET_HOME`` or the working directory.
 
-    flotilla is repo-agnostic — it drives whichever checkout ``FLEET_HOME``
+    squadra is repo-agnostic — it drives whichever checkout ``FLEET_HOME``
     points at. With no override it falls back to the current working directory
     (the repo you launched it from); there is no hardcoded default path.
     """
@@ -58,14 +58,14 @@ FLEET_ROOT: Path = Path(os.environ.get("FLEET_ROOT") or (_fleet_home() / ".claud
 # devbox during lint/test, and all runners share one account rate limit
 # (addendum §1). This is the CLAIM BUDGET only — 0 stops new claims but does
 # NOT make a tick safe: finalize and reap still mutate. For a tick that
-# cannot mutate, use FLEET_DRY_RUN / `flotilla tick --dry-run`.
+# cannot mutate, use FLEET_DRY_RUN / `squadra tick --dry-run`.
 FLEET_MAX_RUNNERS: int = _int_from_env("FLEET_MAX_RUNNERS", 2)
 
 # Dry run: the tick runs every pass's read+plan logic and reports the
 # would-be finalize/reap/claim actions, but every side effect — ADO writes,
 # runner launches, claude spawns (cleanup + auth probe), git, worktree moves,
 # local status/marker writes — is suppressed at the TickSeams boundary.
-# Equivalent to the `--dry-run` flag on `flotilla tick` / flotilla-supervisor.
+# Equivalent to the `--dry-run` flag on `squadra tick` / squadra-supervisor.
 FLEET_DRY_RUN: bool = _bool_from_env("FLEET_DRY_RUN", False)
 
 # Liveness: the runner wrapper stamps last_heartbeat every 60s; the watchdog
@@ -90,13 +90,13 @@ FLEET_MODEL: str = _str_from_env("FLEET_MODEL", "claude-opus-4-8")
 FLEET_EFFORT: str = _str_from_env("FLEET_EFFORT", "high")
 
 # Board tag vocabulary. Tags carry a configurable namespace PREFIX (default
-# below; override via flotilla.toml ``[board].tag_prefix`` / ``FLEET_TAG_PREFIX``).
+# below; override via squadra.toml ``[board].tag_prefix`` / ``FLEET_TAG_PREFIX``).
 # The five SUFFIXES are fixed canonical vocabulary across every provider, and
 # detection stays prefix-based (``startswith``). System.State arbitrates claims;
 # the ``claimed`` suffix distinguishes a fleet-claimed item from a human's manual
 # move to the active column. Parked sub-states are tags because ADO's Basic
 # process has only three states (addendum preamble, §2). The fully-qualified
-# tags are assembled by :class:`flotilla.domain.Tags`.
+# tags are assembled by :class:`squadra.domain.Tags`.
 DEFAULT_TAG_PREFIX: str = "fleet:"
 
 TAG_SUFFIX_CLAIMED: str = "claimed"

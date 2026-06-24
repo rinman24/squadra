@@ -5,7 +5,7 @@ Public so test files can annotate fixture parameters with the concrete types
 Instances are provided by fixtures in tests/conftest.py.
 
 ``FakeBoard`` implements the provider-neutral ``BoardAccess`` contract: it
-speaks :class:`~flotilla.domain.Lifecycle`, returns ``WorkItem`` records, and
+speaks :class:`~squadra.domain.Lifecycle`, returns ``WorkItem`` records, and
 stores the structured ``CommentEvent`` objects core emits (no markup) so tests
 assert on event identity, not rendered HTML. The sandbox / cleanup / worktree
 seams have their own fakes in ``sandbox_fakes`` / ``cleanup_fakes`` /
@@ -14,7 +14,7 @@ seams have their own fakes in ``sandbox_fakes`` / ``cleanup_fakes`` /
 
 from dataclasses import dataclass, field
 
-from flotilla.domain import CommentEvent, Lifecycle, WorkItem, WorkItemLinks
+from squadra.domain import CommentEvent, Lifecycle, WorkItem, WorkItemLinks
 
 
 @dataclass
@@ -33,8 +33,8 @@ class FakeBoard:
     """Configurable in-memory ``BoardAccess``; records every mutation in order.
 
     ``calls`` records ``(op, item_id, payload)`` tuples where ``payload`` is the
-    :class:`~flotilla.domain.Lifecycle` for state ops, the tag string for tag
-    ops, the :data:`~flotilla.domain.CommentEvent` for comments, and the queried
+    :class:`~squadra.domain.Lifecycle` for state ops, the tag string for tag
+    ops, the :data:`~squadra.domain.CommentEvent` for comments, and the queried
     ``Lifecycle`` for ``items_in_state`` (with a sentinel item id of 0).
     """
 
