@@ -14,6 +14,6 @@
 # # Point the stack at a clone elsewhere on the host instead of this checkout:
 # FLOTILLA_REPO_DIR="${FLOTILLA_REPO_DIR:-/home/azureuser/flotilla}"
 
-# # After the GitHub migration (migrate-flotilla plan, Phase 2), repoint the
-# # clone-if-absent source:
+# # Override the clone-if-absent source (the default is the canonical GitHub repo,
+# # https://github.com/rinman24/flotilla.git) to clone from a fork instead:
 # FLOTILLA_REPO_URL="${FLOTILLA_REPO_URL:-https://github.com/<USER>/flotilla.git}"

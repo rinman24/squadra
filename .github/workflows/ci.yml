@@ -1,0 +1,59 @@
+# flotilla CI — lint + strict type-check + tests on every PR into main.
+#
+# Fully self-contained: no secrets, no services. uv provisions Python 3.11
+# (per .python-version) and the dev tools from the locked uv.lock; the hermetic
+# shell tests need only bash (present on ubuntu-latest) and run against a
+# stubbed `claude` with no network/ADO/tmux.
+#
+# 1:1 port of azure-pipelines.yml: same gates, same order, one step per gate.
+name: CI
+
+on:
+  pull_request:
+    branches: [ main ]   # only run when the PR targets main (mirrors ADO pr.branches)
+  workflow_dispatch: {}  # allow manual runs (harmless; ADO had trigger: none on push)
+
+jobs:
+  ci:
+    name: Lint + Typecheck + Test (uv)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: uv sync (locked deps + project)
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv sync --frozen
+
+      - name: Ruff (lint)
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run ruff check .
+
+      - name: Ruff (format)
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run ruff format --check .
+
+      - name: Pyright (strict)
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run pyright
+
+      - name: Pytest (unit + hermetic shell tests)
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run pytest
