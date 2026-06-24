@@ -14,7 +14,8 @@ on-host half that pytest cannot reach.
   flotilla is installed into `/opt/flotilla/venv` and the units are in
   `/etc/systemd/system/`.
 - The VM's managed identity has a Key Vault **`get`** grant on `fleet-kv`
-  for `anthropic-api-key` + `fleet-ado-pat`.
+  for `anthropic-api-key`, `fleet-ado-pat`, and `flotilla-github-pat` (the GitHub PAT
+  used to pip-install flotilla from GitHub — migrate-flotilla Phase 2b).
 - The timer is **not** enabled yet (it shouldn't be — activation is the last step).
 
 ## 1. Install goss (pinned + checksum-verified)
@@ -47,7 +48,7 @@ All checks must pass. What they prove:
 | `flotilla.timer` present, `Unit=flotilla.service` | the schedule is installed |
 | `flotilla.timer` **not enabled / not running** | the guardrail — fleet not yet activated |
 | `az login --identity` exits 0 | IMDS reachable; identity assigned |
-| both KV secrets readable | the `get` grant is in place |
+| all three KV secrets readable | the `get` grant is in place (incl. `flotilla-github-pat`) |
 | **dry-run tick under systemd exits 0** | the load-bearing gate — `fleet-tick` fetched secrets from KV, synced the app repo, and planned a (non-mutating) tick under systemd |
 
 ## 3. What is asserted where

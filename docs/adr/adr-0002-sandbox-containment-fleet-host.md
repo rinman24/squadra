@@ -179,3 +179,21 @@ the code cites them (e.g. `§5`, `§11`, `decision 2`).
   process env and execs the tick (§11).
 - **Keep the tmux ticker on the fleet-host** — rejected: a oneshot service under a
   timer is crash-only by construction and needs no tmux/cron on the VM (§11, §16).
+
+## Addendum — flotilla package source moved to GitHub (2026-06-24)
+
+migrate-flotilla Phase 2b moved the flotilla **package** from Azure DevOps to a
+private GitHub repo (`github.com/rinman24/flotilla`). The fleet-host now holds **two**
+Key Vault PATs (migrate-flotilla decision #8), each scoped to one job:
+
+- `flotilla-github-pat` — a GitHub fine-grained PAT (Contents: read on the flotilla
+  repo). Read by `fleet-host-activate.sh` to `pip install` flotilla from GitHub
+  (`FLOTILLA_REPO_URL`), via the same env-var credential helper (username
+  `x-access-token`), never argv or disk.
+- `fleet-ado-pat` — the Azure DevOps PAT, unchanged: fetched at tick time
+  (`flotilla.secrets`) for the app-backend clone (`FLEET_HOME` / `FLEET_APP_REPO_URL`)
+  and the ADO board ops. The §11 agent-env PAT-exclusion is unchanged.
+
+The activate-time install secret (GitHub) and the tick-time runtime secret (ADO) are
+deliberately distinct, so the GitHub PAT never enters the supervisor/agent env.
+app-backend and the board stay on Azure DevOps; only flotilla's source host moved.
