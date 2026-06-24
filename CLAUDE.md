@@ -14,8 +14,7 @@ See `README.md` for how the fleet works and how to run it.
 - Tooling: **ruff** (lint) + **pyright (strict)** + **pytest**, all via `uv run`.
 - Console scripts: `squadra` — the unified argparse CLI
   (`init`/`tick`/`start`/`stop`/`status`/`log` + `squadra slice
-  {init|update|heartbeat|show}`); `squadra-status` is kept as a **deprecated
-  alias** until the coupled app PR lands. `python -m squadra.supervisor` and
+  {init|update|heartbeat|show}`). `python -m squadra.supervisor` and
   `python -m squadra.status` remain as internal module entry points.
 
 ## Layout

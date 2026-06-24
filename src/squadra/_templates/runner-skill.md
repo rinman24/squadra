@@ -40,7 +40,7 @@ Report progress through squadra's status CLI (never edit `status.json` by
 hand) so the supervisor's heartbeat/reap/finalize logic stays coherent:
 
 ```bash
-# `squadra-status` if on PATH, else the module form (always available):
+# `squadra slice` if on PATH, else the module form (always available):
 python -m squadra.status update --issue-id <id> --phase <phase> \
   [--pr-url <url>] [--add-worker <name>] [--parked-state <state>]
 ```

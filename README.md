@@ -53,9 +53,8 @@ A single unified `squadra` CLI is installed (the API / composition root):
 | `squadra slice {init\|update\|heartbeat\|show}` | the per-slice status-file ops (used by the runner wrapper) |
 
 `python -m squadra.supervisor` (one tick) and `python -m squadra.status` (the
-status-file CLI) remain as internal module entry points. The `squadra-status`
-console script is kept as a **deprecated alias** for `squadra slice` until the
-coupled app PR migrates off it.
+status-file CLI) remain as internal module entry points. The deprecated
+`squadra-status` console script has been dropped — use `squadra slice` instead.
 
 ## Configuration
 
@@ -194,8 +193,7 @@ squadra slice show --issue-id 41
 ```
 
 `--fleet-root` overrides the location (used by tests; defaults to
-`$FLEET_HOME/.claude/fleet`). `python -m squadra.status …` is equivalent, as is
-the deprecated `squadra-status …` alias.
+`$FLEET_HOME/.claude/fleet`). `python -m squadra.status …` is equivalent.
 
 ## Constants
 

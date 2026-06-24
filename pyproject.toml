@@ -10,7 +10,6 @@ dependencies = []
 
 [project.scripts]
 squadra = "squadra.cli:main"
-squadra-status = "squadra.cli:deprecated_status_main"
 
 [build-system]
 requires = ["hatchling"]
