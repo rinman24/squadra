@@ -21,8 +21,10 @@ file:
       - "Type=oneshot"
       - "/flotilla fleet-tick"
       - "Environment=FLEET_KEY_VAULT="
-      # No secret material is ever written into the unit (ADR-0002 §11).
+      # No secret material is ever written into the unit (ADR-0002 §11) — neither the
+      # ADO PAT (tick-time) nor the GitHub PAT (activate-time flotilla install).
       - "!/AZURE_DEVOPS_EXT_PAT/"
+      - "!/GITHUB_PAT/"
   /etc/systemd/system/flotilla.timer:
     exists: true
     contains:
@@ -48,12 +50,17 @@ command:
   az-managed-identity-login:
     exec: "az login --identity --only-show-errors --output none"
     exit-status: 0
-  # The identity has `get` on both fleet secrets in Key Vault.
+  # The identity has `get` on all three fleet secrets in Key Vault.
   kv-anthropic-key-readable:
     exec: 'az keyvault secret show --vault-name "$FLEET_KEY_VAULT" --name anthropic-api-key --query value --output tsv'
     exit-status: 0
   kv-ado-pat-readable:
     exec: 'az keyvault secret show --vault-name "$FLEET_KEY_VAULT" --name fleet-ado-pat --query value --output tsv'
+    exit-status: 0
+  # The GitHub PAT (Contents: read on the flotilla repo) used to pip-install flotilla
+  # from GitHub after the ADO->GitHub migration (migrate-flotilla Phase 2b).
+  kv-github-pat-readable:
+    exec: 'az keyvault secret show --vault-name "$FLEET_KEY_VAULT" --name flotilla-github-pat --query value --output tsv'
     exit-status: 0
   # The load-bearing end-to-end gate: a dry-run tick runs UNDER systemd (transient
   # unit, no enabled timer), which exercises fleet-tick's KV secret fetch + app-repo
