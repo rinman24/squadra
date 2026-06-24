@@ -302,23 +302,6 @@ def test_fleetctl_missing_bash_returns_127(monkeypatch: pytest.MonkeyPatch) -> N
     assert rc == 127
 
 
-def test_deprecated_status_main_warns_and_delegates(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    recorded: list[Sequence[str] | None] = []
-
-    def _fake_status_main(argv: Sequence[str] | None = None) -> int:
-        recorded.append(argv)
-        return 7
-
-    monkeypatch.setattr(cli.status, "main", _fake_status_main)
-
-    rc: int = cli.deprecated_status_main(["show", "--issue-id", "5"])
-    assert rc == 7
-    assert recorded == [["show", "--issue-id", "5"]]
-    assert "deprecated" in capsys.readouterr().err
-
-
 def test_no_command_prints_help_and_errors(capsys: pytest.CaptureFixture[str]) -> None:
     rc: int = cli.main([])
     assert rc == 2

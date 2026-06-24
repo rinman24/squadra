@@ -2,7 +2,7 @@
 
 This is the single argparse-native entry point that folds every fleet operation
 into one surface (ADR-0001 decision 3), superseding ADR-0007's thin
-``fleetctl.sh``-execing shim and the separate ``squadra-supervisor`` /
+``fleetctl.sh``-execing shim and the retired ``squadra-supervisor`` /
 ``squadra-status`` console scripts:
 
 - ``squadra init`` — scaffold an annotated ``squadra.toml`` plus the
@@ -26,10 +26,8 @@ into one surface (ADR-0001 decision 3), superseding ADR-0007's thin
   each tick / runner reaches ``squadra.*`` regardless of what ``python3``
   resolves to on PATH. (The fleet-host uses systemd, not this.)
 - ``squadra slice {init|update|heartbeat|show}`` — the per-slice
-  ``status.json`` ops (the new noun replacing the ``squadra-status`` script).
-
-``deprecated_status_main`` keeps the retired ``squadra-status`` console script
-working unchanged: it warns once to stderr, then delegates to ``status.main``.
+  ``status.json`` ops (the new noun replacing the retired ``squadra-status``
+  console script).
 """
 
 import argparse
@@ -81,19 +79,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_slice(namespace, extra)
     parser.print_help(sys.stderr)
     return 2
-
-
-def deprecated_status_main(argv: Sequence[str] | None = None) -> int:
-    """Back-compat shim for the retired ``squadra-status`` console script.
-
-    Prints a one-line deprecation notice to stderr, then delegates to
-    :func:`squadra.status.main` so existing callers keep working unchanged.
-    """
-    print(
-        "squadra-status is deprecated; use `squadra slice ...`",
-        file=sys.stderr,
-    )
-    return status.main(argv)
 
 
 def _build_parser() -> tuple[argparse.ArgumentParser, frozenset[str]]:
