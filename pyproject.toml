@@ -1,6 +1,6 @@
 [project]
 name = "squadra"
-version = "0.1.0"
+version = "0.1.0a1"
 description = "Deterministic supervisor + per-slice runner machinery for an AFK, board-driven Claude implementation fleet (ADR-0007)."
 readme = "README.md"
 requires-python = ">=3.11"
