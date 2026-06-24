@@ -1,0 +1,67 @@
+# squadra release — build sdist+wheel and publish to PyPI via Trusted Publishing.
+#
+# Uses PyPI's OIDC Trusted Publishing (no API token, no username/password): the
+# publish job mints a short-lived OIDC token (`permissions: id-token: write`) that
+# PyPI exchanges for an upload, scoped to this repo + the `pypi` environment.
+#
+# Triggers on a published GitHub Release and on any pushed `v*` tag, so cutting a
+# release or pushing `vX.Y.Z` both ship the artifacts. CI (ci.yml) is unchanged.
+name: Release
+
+on:
+  release:
+    types: [published]
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build sdist + wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Build (sdist + wheel)
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv build
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI (Trusted Publishing)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # The `pypi` environment scopes the Trusted Publisher on PyPI's side.
+    environment: pypi
+
+    # OIDC: the only credential the publish action needs. No PyPI token/secret.
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # No `user`/`password`/`with: password:` — authentication is OIDC only.
