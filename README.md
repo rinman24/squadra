@@ -5,7 +5,7 @@
 
 -----------------
 
-# squadra
+# squadra: Unattended, Board-Driven Code Delivery Across Every Slice
 
 | | |
 | --- | --- |
