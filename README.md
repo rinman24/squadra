@@ -1,5 +1,11 @@
 # squadra
 
+| | |
+| --- | --- |
+| Testing | [![CI - Lint + Typecheck + Test](https://github.com/rinman24/squadra/actions/workflows/ci.yml/badge.svg)](https://github.com/rinman24/squadra/actions/workflows/ci.yml) [![Coverage](https://codecov.io/github/rinman24/squadra/coverage.svg?branch=main)](https://codecov.io/gh/rinman24/squadra) |
+| Package | [![PyPI Latest Release](https://img.shields.io/pypi/v/squadra.svg)](https://pypi.org/project/squadra/) |
+| Meta | [![License - MIT](https://img.shields.io/pypi/l/squadra.svg)](https://github.com/rinman24/squadra/blob/main/LICENSE) [![Last commit](https://img.shields.io/github/last-commit/rinman24/squadra.svg)](https://github.com/rinman24/squadra/commits/main) [![Commit activity](https://img.shields.io/github/commit-activity/m/rinman24/squadra.svg)](https://github.com/rinman24/squadra/graphs/commit-activity) |
+
 Deterministic supervisor + per-slice runner machinery for an **AFK, board-driven
 Claude implementation fleet**. squadra runs the implementation phase of an
 engineering pipeline (`/tdd` → `/qa`) unattended across many vertical slices at
