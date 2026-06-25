@@ -11,6 +11,8 @@ name: CI
 on:
   pull_request:
     branches: [ main ]   # only run when the PR targets main (mirrors ADO pr.branches)
+  push:
+    branches: [ main ]   # keep the default-branch CI + Codecov badges fresh after merge
   workflow_dispatch: {}  # allow manual runs (harmless; ADO had trigger: none on push)
 
 jobs:
@@ -56,4 +58,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          uv run pytest
+          uv run pytest --cov=squadra --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
