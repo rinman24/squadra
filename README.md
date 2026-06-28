@@ -5,7 +5,9 @@
 
 -----------------
 
-# squadra: Unattended, Board-Driven Code Delivery Across Every Slice
+# squadra
+
+**Ships every slice. Unattended.**
 
 | | |
 | --- | --- |
@@ -13,14 +15,14 @@
 | Package | [![PyPI Latest Release](https://img.shields.io/pypi/v/squadra.svg)](https://pypi.org/project/squadra/) |
 | Meta | [![License - MIT](https://img.shields.io/pypi/l/squadra.svg)](https://github.com/rinman24/squadra/blob/main/LICENSE) [![Last commit](https://img.shields.io/github/last-commit/rinman24/squadra.svg)](https://github.com/rinman24/squadra/commits/main) [![Commit activity](https://img.shields.io/github/commit-activity/m/rinman24/squadra.svg)](https://github.com/rinman24/squadra/graphs/commit-activity) |
 
-Deterministic supervisor + per-slice runner machinery for an **AFK, board-driven
-Claude implementation fleet**. squadra runs the implementation phase of an
-engineering pipeline (`/tdd` → `/qa`) unattended across many vertical slices at
-once, with board work-item state as the single source of truth at every tier.
-squadra speaks a provider-neutral 3-bucket `Lifecycle` (queued / active / done);
-a `BoardAccess` adapter translates that to a concrete board's native semantics at
-the boundary. Azure DevOps (the `az` CLI) is the adapter that ships today; GitHub
-and GitLab are tracked backlog adapters the same contract-test suite will
+squadra is deterministic supervisor and per-slice runner machinery for an
+unattended, board-driven Claude implementation fleet. It runs the implementation
+phase (`/tdd` → `/qa`) across many vertical slices at once, hands-off, with board
+work-item state as the single source of truth at every tier. squadra speaks a
+provider-neutral 3-bucket `Lifecycle` (queued / active / done); a `BoardAccess`
+adapter translates that to a concrete board's native semantics at the boundary.
+Provider-neutral by design — Azure DevOps (the `az` CLI) ships today; GitHub and
+GitLab are next, tracked backlog adapters the same contract-test suite will
 validate. Every fleet process is stateless or short-lived and reconstructs its
 view from the board on each run.
 
