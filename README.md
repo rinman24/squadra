@@ -1,6 +1,6 @@
 <picture align="center">
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/rinman24/squadra/main/docs/assets/squadra_white.svg">
-  <img alt="squadra logo" src="https://raw.githubusercontent.com/rinman24/squadra/main/docs/assets/squadra.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/rinman24/squadra/main/docs/assets/logos/squadra_white.svg">
+  <img alt="squadra logo" src="https://raw.githubusercontent.com/rinman24/squadra/main/docs/assets/logos/squadra.svg">
 </picture>
 
 -----------------
