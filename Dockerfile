@@ -1,10 +1,14 @@
 # squadra dev-container image — host-agnostic dev toolchain only.
 #
-# Deliberately carries NO project source, NO baked project venv, and NO host-specific
-# tooling (no Azure CLI, no GitHub CLI). It is "language + dev tooling only" so the
-# Keeping board ops out of this image (ADO -> GitHub) needs no image rebuild:
-#   - `az` is never installed here — the fleet-host owns board ops, not this container.
-#   - `gh` arrives later as a devcontainer FEATURE (Phase 2), not a base-image layer.
+# Deliberately carries NO project source, NO baked project venv, and NO Azure CLI —
+# `az` is never installed here; the fleet-host owns board ops, not this container.
+# `gh` IS baked (below): it originally arrived as a devcontainer feature, but billet
+# brings this container up with raw `docker compose` and never applies features, so
+# anything the container needs day-to-day must live in the image or postCreateCommand.
+#
+# The image also runs an in-container sshd so billet reaches this repo as a Workspace
+# via ProxyJump (see .devcontainer/sshd.conf + dev-entrypoint.sh, from billet's
+# templates/workspace/ adoption kit).
 #
 # The project venv is the in-repo `.venv` (pyproject `venvPath="."`), created at RUNTIME
 # by `uv sync --frozen` against the bind-mounted checkout — byte-identical to CI. We do
@@ -40,27 +44,39 @@ RUN set -eux; \
 # Renovate/Dependabot's dockerfile manager bumps this tag.
 COPY --from=ghcr.io/astral-sh/uv:0.11.21@sha256:ff07b86af50d4d9391d9daf4ff89ce427bc544f9aae87057e69a1cc0aa369946 /uv /uvx /bin/
 
-# Dev toolchain (NO az, NO gh — see header):
-#   - nodejs 20 : `pyright` is a pip wrapper that uses the GLOBAL node when present and
-#                 otherwise DOWNLOADS node on first run; installing node 20 (the version
-#                 the toolchain validates pyright against) keeps `uv run pyright` offline.
-#   - tmux      : the fleet drives runner panes over tmux; dev parity.
-#   - jq        : JSON tooling for shell hooks / skills.
-#   - sudo      : passwordless for `dev` (the non-root + skip-permissions posture below).
-#   - git       : pulled from bookworm-backports for a current build (the stable bookworm
-#                 git is old enough to nag on some hosts). Host-agnostic — git is git.
+# Dev toolchain (NO az — see header):
+#   - nodejs 20        : `pyright` is a pip wrapper that uses the GLOBAL node when present
+#                        and otherwise DOWNLOADS node on first run; installing node 20 (the
+#                        version the toolchain validates pyright against) keeps
+#                        `uv run pyright` offline.
+#   - tmux             : the fleet drives runner panes over tmux; dev parity.
+#   - jq               : JSON tooling for shell hooks / skills.
+#   - sudo             : passwordless for `dev` (the non-root + skip-permissions posture
+#                        below); also lets the entrypoint start the system sshd.
+#   - openssh-server   : the in-container sshd billet connects through (loopback-only,
+#                        hardened by .devcontainer/sshd.conf).
+#   - openssh-client   : outbound ssh/agent tooling for agent-forwarded git.
+#   - gh               : GitHub CLI, baked because billet never applies devcontainer
+#                        features (raw compose) — see header.
+#   - git              : pulled from bookworm-backports for a current build (the stable
+#                        bookworm git is old enough to nag on some hosts).
 # Sources are pinned via signed keyrings (signed-by=), TLS verified (no curl -k).
 RUN set -eux; \
     mkdir -p /etc/apt/keyrings; \
     curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg; \
     echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list; \
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
+    echo "deb [signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list; \
     echo "deb http://deb.debian.org/debian bookworm-backports main" > /etc/apt/sources.list.d/backports.list; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         nodejs \
         tmux \
         jq \
-        sudo; \
+        sudo \
+        openssh-server \
+        openssh-client \
+        gh; \
     apt-get install -y --no-install-recommends -t bookworm-backports \
         git; \
     rm -rf /var/lib/apt/lists/*
@@ -82,7 +98,23 @@ RUN groupadd -g 1000 dev \
     && useradd -u 1000 -g 1000 -m -s /bin/bash dev \
     && echo 'dev ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/dev \
     && chmod 0440 /etc/sudoers.d/dev \
-    && install -d -o dev -g dev -m 0700 /home/dev/.claude
+    && install -d -o dev -g dev -m 0700 /home/dev/.claude \
+    # .ssh pre-created 0700 dev-owned so the runtime authorized_keys bind mount
+    # (docker-compose.yml) lands StrictModes-clean instead of in a root-owned dir.
+    && install -d -o dev -g dev -m 0700 /home/dev/.ssh
+
+# Outbound SSH for `dev`: with billet's agent forwarding, keyless git over SSH works
+# inside the container. accept-new records GitHub's host key on first contact instead of
+# an interactive prompt that would hang a scripted push.
+RUN printf 'Host github.com\n    StrictHostKeyChecking accept-new\n' > /home/dev/.ssh/config \
+    && chown dev:dev /home/dev/.ssh/config \
+    && chmod 0644 /home/dev/.ssh/config
+
+# In-container sshd hardening (key-only, non-root, dev-only, agent-forwarding). Debian's
+# stock sshd_config Includes /etc/ssh/sshd_config.d/*.conf; runtime host keys come from a
+# named volume (see .devcontainer/dev-entrypoint.sh + docker-compose.yml). Copied as root
+# (before USER dev) so it lands under /etc.
+COPY .devcontainer/sshd.conf /etc/ssh/sshd_config.d/squadra.conf
 
 # Point `dev`'s tmux config at the tracked devbox conf. The target resolves at runtime
 # via the /workspaces/squadra bind mount, so editing scripts/devbox/tmux.conf takes

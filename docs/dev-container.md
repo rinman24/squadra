@@ -1,8 +1,10 @@
 # squadra dev container
 
 squadra runs in its own dev container — a self-contained `docker compose` stack (own
-image, own Claude-home volume, no database, no ports). It is **container-scoped**: the
-host scripts never create, start, or deallocate the VM they run on.
+image, own Claude-home volume, no database). The only published port is the in-container
+sshd on the VM loopback, which is how [billet](https://github.com/rinman24/billet)
+reaches this repo as a Workspace. It is **container-scoped**: the host scripts never
+create, start, or deallocate the VM they run on.
 
 ## What you get
 
@@ -13,11 +15,16 @@ host scripts never create, start, or deallocate the VM they run on.
 - The repo bind-mounted at `/workspaces/squadra`; the in-repo `.venv` is created at
   runtime by `uv sync` (it is not baked into the image).
 - A persistent `squadra_claude_home` volume for Claude auth + memory.
+- The `gh` CLI, baked into the image. It started life as a devcontainer feature, but
+  billet brings the container up with raw `docker compose` and never applies features —
+  anything needed day-to-day must live in the image or `postCreateCommand`.
+- An in-container sshd (key-only, `dev`-only, published to the VM loopback) so billet
+  can `connect` via ProxyJump — wired from billet's `templates/workspace/` adoption kit:
+  `.devcontainer/sshd.conf`, `.devcontainer/dev-entrypoint.sh`, the `authorized_keys`
+  bind mount, and persisted host keys on the `squadra-sshd-keys` volume.
 
 The base image is deliberately **host-agnostic** — no Azure CLI, no project source baked
-in. `gh` is layered on via a devcontainer feature
-(`ghcr.io/devcontainers/features/github-cli`), not the image. That kept the ADO → GitHub
-migration image-rebuild-free.
+in.
 
 ## Prerequisites
 
@@ -83,6 +90,37 @@ uv run pytest
 All four should be green. The hermetic shell tests need only `bash` + `tmux` and a
 stubbed `claude` (no network) — all present in the image.
 
+## Running as a billet Workspace
+
+billet clones, builds, bootstraps, and connects this repo on the shared devbox VM,
+reading `.devcontainer/devcontainer.json` as a read-only contract. The operator-side
+`~/.config/billet/config.toml` block:
+
+```toml
+[workspaces.squadra]
+host               = "devbox"
+repo_url           = "git@github.com:rinman24/squadra.git"
+repo_dir           = "squadra"
+container_ssh_port = 2225        # squadra's loopback port; matches the compose default
+tmux_session       = "main"
+host_alias         = "gswa-devbox"
+container_alias    = "squadra-container"
+agent_teams_flag   = ""
+host_bootstrap_cmd = "cp -n .devcontainer/.env.example .devcontainer/.env"
+verify_cmd         = "uv run --frozen pytest --no-cov"
+```
+
+Then `billet add squadra` → `billet start squadra --verify` → `billet ssh-config` →
+`billet connect squadra`. The `host_bootstrap_cmd` copies `.env.example` into the
+gitignored `.devcontainer/.env` on the first cold start, pointing the container sshd at
+the VM's real `authorized_keys` (the tracked stub trusts no keys). Full walkthrough:
+billet's *Adopting a repo as a Workspace* guide.
+
+The compose port default is squadra's **own** assigned port (2225), so a manual
+`scripts/devbox/up.sh` run on the shared devbox never collides with another Workspace;
+under billet the default is irrelevant because `BILLET_CONTAINER_SSH_PORT` is exported
+before every compose call.
+
 ## Pushing to GitHub from inside the container
 
 Pushing uses HTTPS (this container has no SSH key). Authenticate once with the `gh`
@@ -97,9 +135,11 @@ device code; copy it, open the displayed URL on any machine, paste the code, and
 authorize. `gh` then configures git's credential helper, so `git push` and
 `gh pr create` work for the rest of the session.
 
-`gh` is present in the container via the devcontainer feature
-(`ghcr.io/devcontainers/features/github-cli`). `commit.gpgsign=false` is already handled
-by `postCreate`, so commits don't try to sign.
+`gh` is baked into the image. `commit.gpgsign=false` is already handled by
+`postCreate`, so commits don't try to sign.
+
+Alternatively, entering through `billet connect` forwards your ssh-agent into the
+container, so keyless `git push` over SSH works with no `gh` login at all.
 
 ## Relationship to the VM
 
