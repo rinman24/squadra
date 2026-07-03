@@ -29,3 +29,7 @@ scripts/devbox/.squadra-devbox.log
 # Editor / OS
 .DS_Store
 *.swp
+
+# Dev-container per-host env (points sshd at the VM's real authorized_keys;
+# see .devcontainer/.env.example)
+.devcontainer/.env

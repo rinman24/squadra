@@ -1,5 +1,9 @@
-# squadra dev container — a self-contained compose stack (its own image, its own volume,
-# no DB, no ports, no shared services). Container-scoped only: nothing here touches the VM.
+# squadra dev container — a self-contained compose stack (its own image, its own volumes,
+# no DB, no shared services). Container-scoped only: nothing here touches the VM.
+#
+# The one published port is the in-container sshd on the VM LOOPBACK, which is how billet
+# reaches this repo as a Workspace (ProxyJump through the VM host — see billet ADR-0003).
+# It is never internet-facing.
 #
 # `name: squadra` pins the compose project name. It MUST match `-p squadra` in
 # scripts/devbox/* and the project name VS Code uses, or "Reopen in Container" and the
@@ -18,7 +22,28 @@ services:
       # Persist Claude Code auth + auto-memory across rebuilds. First recreate brings this
       # up EMPTY — re-auth once inside the container.
       - squadra_claude_home:/home/dev/.claude
+      # Container sshd trusts the operator's forwarded key via a read-only bind-mount of
+      # the VM's existing authorized_keys — single source of trust. Defaults to the empty
+      # tracked stub so a non-VM build never hard-fails. On the VM set
+      # DEVBOX_AUTHORIZED_KEYS in the gitignored .devcontainer/.env (see .env.example);
+      # billet's host_bootstrap_cmd copies it into place on the first cold start.
+      - ${DEVBOX_AUTHORIZED_KEYS:-./authorized_keys-stub}:/home/dev/.ssh/authorized_keys:ro
+      # Persisted container SSH host keys → stable identity across rebuild/recreate
+      # (stable HostKeyAlias, no known_hosts churn). Generated on first boot if absent.
+      - squadra-sshd-keys:/etc/ssh/host_keys
+    # Bring up the in-container sshd, then run the CMD (`sleep infinity`). `bash <script>`
+    # avoids any dependence on the bind-mounted file's exec bit.
+    entrypoint: ["bash", "/workspaces/squadra/.devcontainer/dev-entrypoint.sh"]
     command: sleep infinity
+    # docker-init (tini) as PID 1 reaps sshd's re-parented per-connection children.
+    init: true
+    # In-container sshd published to the VM loopback ONLY. The port is billet's assigned
+    # loopback port, exported as BILLET_CONTAINER_SSH_PORT before every compose call
+    # (billet ADR-0003). The fallback is squadra's OWN assigned port (2225) — not 2222 —
+    # so a manual `docker compose up` / scripts/devbox/up.sh on the shared devbox cannot
+    # collide with gswa-backend's fixed 2222.
+    ports:
+      - "127.0.0.1:${BILLET_CONTAINER_SSH_PORT:-2225}:22"
     environment:
       # Optional PAT so a `git push` to the ADO origin works from inside the container
       # (the repo-local credential helper reads $AZURE_DEVOPS_EXT_PAT). Leave unset to
@@ -27,3 +52,4 @@ services:
 
 volumes:
   squadra_claude_home:
+  squadra-sshd-keys:
