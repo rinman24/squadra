@@ -12,7 +12,7 @@ create, start, or deallocate the VM they run on.
   `git`, `tmux`, `jq`, Node 20 (so `pyright` runs offline), and the `claude` CLI.
 - A non-root `dev` user (uid 1000) with passwordless sudo, so Claude Code's
   `--dangerously-skip-permissions` runs.
-- The repo bind-mounted at `/workspaces/squadra`; the in-repo `.venv` is created at
+- The repo bind-mounted at `/workspace`; the in-repo `.venv` is created at
   runtime by `uv sync` (it is not baked into the image).
 - A persistent `squadra_claude_home` volume for Claude auth + memory.
 - The `gh` CLI, baked into the image. It started life as a devcontainer feature, but
@@ -37,7 +37,7 @@ in.
 Open the squadra folder on the VM in VS Code (Remote-SSH or the same tunnel you use for
 the host) and run **Dev Containers: Reopen in Container**. VS Code reads
 `.devcontainer/devcontainer.json`, builds the image, starts the `squadra` service, and
-runs `uv sync` (the `postCreateCommand`). You land in `/workspaces/squadra` as `dev`
+runs `uv sync` (the `postCreateCommand`). You land in `/workspace` as `dev`
 with the venv ready.
 
 ## Host scripts (terminal equivalent)

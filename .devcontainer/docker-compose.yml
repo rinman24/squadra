@@ -18,7 +18,7 @@ services:
     volumes:
       # The repo bind mount. The in-repo `.venv` is created here at runtime by
       # `uv sync` (postCreateCommand / scripts/devbox/up.sh) — not baked into the image.
-      - ..:/workspaces/squadra:cached
+      - ..:/workspace:cached
       # Persist Claude Code auth + auto-memory across rebuilds. First recreate brings this
       # up EMPTY — re-auth once inside the container.
       - squadra_claude_home:/home/dev/.claude
@@ -33,7 +33,7 @@ services:
       - squadra-sshd-keys:/etc/ssh/host_keys
     # Bring up the in-container sshd, then run the CMD (`sleep infinity`). `bash <script>`
     # avoids any dependence on the bind-mounted file's exec bit.
-    entrypoint: ["bash", "/workspaces/squadra/.devcontainer/dev-entrypoint.sh"]
+    entrypoint: ["bash", "/workspace/.devcontainer/dev-entrypoint.sh"]
     command: sleep infinity
     # docker-init (tini) as PID 1 reaps sshd's re-parented per-connection children.
     init: true

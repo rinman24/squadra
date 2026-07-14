@@ -2,7 +2,7 @@
     "name": "squadra Dev Container",
     "dockerComposeFile": "docker-compose.yml",
     "service": "squadra",
-    "workspaceFolder": "/workspaces/squadra",
+    "workspaceFolder": "/workspace",
     // Create the in-repo `.venv` (uv sync) and assert gpgsign off on container create.
     // gpgsign is also baked into the image; re-asserting it here is belt-and-suspenders.
     // billet runs this after a cold `billet start`; VS Code runs it on container create.
@@ -23,7 +23,7 @@
                     }
                 },
                 "explorer.compactFolders": false,
-                "python.defaultInterpreterPath": "/workspaces/squadra/.venv/bin/python",
+                "python.defaultInterpreterPath": "/workspace/.venv/bin/python",
                 "python.languageServer": "Pylance",
                 // Type-checking is enforced via `uv run pyright` (strict), not Pylance.
                 "python.analysis.typeCheckingMode": "off",

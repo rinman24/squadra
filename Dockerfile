@@ -100,7 +100,7 @@ RUN git config --system push.autoSetupRemote true
 
 # Non-root user `dev` (uid/gid 1000). REQUIRED, not cosmetic: Claude Code refuses
 # `--dangerously-skip-permissions` as root (uid 0), which is the unattended posture this
-# image targets. uid 1000 aligns with the host's repo owner so the /workspaces/squadra
+# image targets. uid 1000 aligns with the host's repo owner so the /workspace
 # bind mount needs no chown (chowning a bind mount would mutate the host tree). The
 # `.claude` mountpoint is pre-created owned by `dev` so the named volume mounted over it
 # (docker-compose.yml) inherits dev ownership instead of root:root. Passwordless sudo is
@@ -128,16 +128,16 @@ RUN printf 'Host github.com\n    StrictHostKeyChecking accept-new\n' > /home/dev
 COPY .devcontainer/sshd.conf /etc/ssh/sshd_config.d/squadra.conf
 
 # Point `dev`'s tmux config at the tracked devbox conf. The target resolves at runtime
-# via the /workspaces/squadra bind mount, so editing scripts/devbox/tmux.conf takes
+# via the /workspace bind mount, so editing scripts/devbox/tmux.conf takes
 # effect on the next tmux server start with no rebuild. A dangling link at build time is
 # fine — the bind mount supplies the file at runtime.
-RUN ln -s /workspaces/squadra/scripts/devbox/tmux.conf /home/dev/.tmux.conf \
+RUN ln -s /workspace/scripts/devbox/tmux.conf /home/dev/.tmux.conf \
     && chown -h dev:dev /home/dev/.tmux.conf
 
 # Bake `dev`'s git defaults so they survive on every launch path: trust the bind-mounted
 # workspace despite a possible uid mismatch, and disable commit gpg-signing (no key
 # in-container). Run as `dev` (HOME=/home/dev) so they land in /home/dev/.gitconfig.
-RUN su dev -c 'git config --global safe.directory /workspaces/squadra' \
+RUN su dev -c 'git config --global safe.directory /workspace' \
     && su dev -c 'git config --global commit.gpgsign false'
 
 # Install Claude Code via Anthropic's native installer, as `dev`. NOT `npm install -g`:
@@ -151,7 +151,7 @@ RUN su dev -c 'curl -fsSL https://claude.ai/install.sh | bash'
 
 # The bind-mount target. No source is COPYed in (host-agnostic image, see header); the
 # checkout arrives at runtime via the bind mount and the in-repo `.venv` is created then.
-WORKDIR /workspaces/squadra
+WORKDIR /workspace
 
 # Drop to the non-root user — the FINAL directive so it is the default for every entry
 # path (`docker exec` without -u, VS Code "Reopen in Container", the compose `command`).
