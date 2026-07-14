@@ -84,7 +84,7 @@ RUN set -eux; \
 # Code intelligence: pyright-langserver for Claude Code's pyright-lsp plugin (enabled in
 # ~/.claude via the chezmoi dotfiles bootstrap). The plugin has no path setting, so the
 # binary must be on PATH; Node is already installed above, so a root `npm install -g` puts
-# pyright-langserver in /usr/local/bin — on PATH for the runtime `dev` user. Unpinned by
+# pyright-langserver in /usr/bin — on PATH for the runtime `dev` user. Unpinned by
 # design — same "versions float, image tag = reproducibility" stance as node/git above. It's
 # an editor assist; the repo's `uv run pyright` (uv.lock) stays the authoritative gate, so
 # exact parity with the lockfile isn't needed and would only add an unenforced version to
