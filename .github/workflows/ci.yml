@@ -54,6 +54,10 @@ jobs:
           set -euo pipefail
           uv run pyright
 
+      - name: Pyright pin matches uv.lock
+        shell: bash
+        run: bash scripts/check-pyright-pin.sh --dockerfile Dockerfile
+
       - name: Pytest (unit + hermetic shell tests)
         shell: bash
         run: |
