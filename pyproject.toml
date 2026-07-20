@@ -48,9 +48,9 @@ include = ["src/squadra", "tests", "README.md", "CLAUDE.md"]
 
 [dependency-groups]
 dev = [
-    "ruff>=0.11",
-    "pyright>=1.1.390",
-    "pytest>=8",
+    "ruff>=0.15.22",
+    "pyright>=1.1.411",
+    "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
 ]
 
