@@ -113,6 +113,14 @@ RUN set -eux; \
 # holds on every entry path (raw `docker compose up`, VS Code attach, `docker exec`).
 RUN git config --system push.autoSetupRemote true
 
+# chezmoi — the dotfiles engine that applies `rinman24/dotfiles` (tmux.conf + TPM,
+# NeoVim init.lua, Claude Code ~/.claude settings, etc.) at container create. Installed
+# as root to /usr/local/bin (on PATH for `dev`), PINNED to the version the maintainer
+# runs locally so image and host apply identically. The actual `chezmoi init/update
+# --apply` runs in postCreateCommand (.devcontainer/devcontainer.json) — install here,
+# bootstrap there — so dotfiles land on both billet and direct VS Code opens.
+RUN sh -c "$(curl -fsLS get.chezmoi.io)" -- -b /usr/local/bin -t v2.71.0
+
 # Non-root user `dev` (uid/gid 1000). REQUIRED, not cosmetic: Claude Code refuses
 # `--dangerously-skip-permissions` as root (uid 0), which is the unattended posture this
 # image targets. uid 1000 aligns with the host's repo owner so the /workspace
@@ -142,12 +150,9 @@ RUN printf 'Host github.com\n    StrictHostKeyChecking accept-new\n' > /home/dev
 # (before USER dev) so it lands under /etc.
 COPY .devcontainer/sshd.conf /etc/ssh/sshd_config.d/squadra.conf
 
-# Point `dev`'s tmux config at the tracked devbox conf. The target resolves at runtime
-# via the /workspace bind mount, so editing scripts/devbox/tmux.conf takes
-# effect on the next tmux server start with no rebuild. A dangling link at build time is
-# fine — the bind mount supplies the file at runtime.
-RUN ln -s /workspace/scripts/devbox/tmux.conf /home/dev/.tmux.conf \
-    && chown -h dev:dev /home/dev/.tmux.conf
+# NOTE: `dev`'s ~/.tmux.conf (+ TPM) is no longer baked here — it ships from the
+# `rinman24/dotfiles` chezmoi repo, applied by the postCreateCommand chezmoi bootstrap
+# (see .devcontainer/devcontainer.json) alongside the NeoVim/Claude Code dotfiles.
 
 # Bake `dev`'s git defaults so they survive on every launch path: trust the bind-mounted
 # workspace despite a possible uid mismatch, and disable commit gpg-signing (no key
