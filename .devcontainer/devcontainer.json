@@ -3,10 +3,15 @@
     "dockerComposeFile": "docker-compose.yml",
     "service": "squadra",
     "workspaceFolder": "/workspace",
-    // Create the in-repo `.venv` (uv sync) and assert gpgsign off on container create.
-    // gpgsign is also baked into the image; re-asserting it here is belt-and-suspenders.
-    // billet runs this after a cold `billet start`; VS Code runs it on container create.
-    "postCreateCommand": "git config --global commit.gpgsign false && uv sync --frozen",
+    // Create the in-repo `.venv` (uv sync), assert gpgsign off, and apply the
+    // `rinman24/dotfiles` chezmoi profile (tmux.conf + TPM, NeoVim, Claude Code) on
+    // container create. gpgsign is also baked into the image; re-asserting it here is
+    // belt-and-suspenders. billet runs this after a cold `billet start`; VS Code runs it
+    // on container create. The chezmoi step is idempotent — `update --apply` refreshes an
+    // existing checkout, `init --apply rinman24` bootstraps it on first run (resolves to
+    // https://github.com/rinman24/dotfiles over HTTPS). chezmoi is baked into the image
+    // (see ../Dockerfile).
+    "postCreateCommand": "git config --global commit.gpgsign false && uv sync --frozen && export PATH=\"$HOME/.local/bin:$PATH\" && (chezmoi update --apply || chezmoi init --apply rinman24)",
     // NO "features" block on purpose: billet brings this container up with raw
     // `docker compose` and never applies devcontainer features, so `gh` (formerly the
     // github-cli feature) is baked into the image instead. Authenticate with
