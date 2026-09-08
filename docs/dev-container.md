@@ -123,8 +123,8 @@ before every compose call.
 
 ## Pushing to GitHub from inside the container
 
-Pushing uses HTTPS (this container has no SSH key). Authenticate once with the `gh`
-device flow:
+No SSH key is stored in the container. Without a forwarded ssh-agent, pushing uses
+HTTPS — authenticate once with the `gh` device flow:
 
 ```bash
 gh auth login
