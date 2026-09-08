@@ -30,6 +30,11 @@ services:
       # Persisted container SSH host keys → stable identity across rebuild/recreate
       # (stable HostKeyAlias, no known_hosts churn). Generated on first boot if absent.
       - squadra-sshd-keys:/etc/ssh/host_keys
+      # Persist the `gh` credential store (hosts.yml) so a `compose up --build` does not
+      # force `gh auth login` again. The token is the operator's, not the image's, so it
+      # belongs on a volume rather than baked in; the Dockerfile pre-creates the
+      # mountpoint dev-owned 0700.
+      - squadra_gh_config:/home/dev/.config/gh
     # Bring up the in-container sshd, then run the CMD (`sleep infinity`). `bash <script>`
     # avoids any dependence on the bind-mounted file's exec bit.
     entrypoint: ["bash", "/workspace/.devcontainer/dev-entrypoint.sh"]
@@ -52,3 +57,4 @@ services:
 volumes:
   squadra_claude_home:
   squadra-sshd-keys:
+  squadra_gh_config:
