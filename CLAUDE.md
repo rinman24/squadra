@@ -72,7 +72,9 @@ it runs against a stubbed `claude` and a temp fleet root (no network/ADO/tmux).
 - No SSH key is stored in the container, but `billet connect` forwards your
   ssh-agent, so keyless `git push` over an SSH remote works as-is. Without a
   forwarded agent, `gh auth login` (device flow) wires git's credential helper
-  for HTTPS push; it also enables `gh pr`. Commit with `commit.gpgsign=false`.
+  for HTTPS push; it also enables `gh pr`. `commit.gpgsign=false` comes from
+  `~/.config/git/config`, managed by chezmoi from `rinman24/dotfiles` and
+  applied by the container's chezmoi bootstrap.
 - **No Claude/Anthropic authorship trailers** on commits, PR bodies, or tags.
 - On GitHub everything (PR descriptions, issues) renders **Markdown**.
 - `main` is protected by a branch ruleset — require a PR + the GitHub Actions
