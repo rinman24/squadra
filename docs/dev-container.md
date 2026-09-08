@@ -141,8 +141,12 @@ One caveat on the changeover: a token minted before that volume existed lives in
 container's writable layer, so the first rebuild mounts an empty `squadra_gh_config` and
 needs one final `gh auth login`. It persists from then on.
 
-`gh` is baked into the image. `commit.gpgsign=false` is already handled by
-`postCreate`, so commits don't try to sign.
+`gh` is baked into the image. `commit.gpgsign=false` comes from `~/.config/git/config`,
+managed by chezmoi from `rinman24/dotfiles` and applied by the container's chezmoi
+bootstrap — so on any entry path that runs chezmoi, commits don't try to sign. It is no
+longer set by `postCreate` or baked into the image, so a path that skips chezmoi (a bare
+`docker compose up`, or `scripts/devbox/up.sh`, which only syncs the venv) leaves signing
+on and `git commit` will fail for want of a key.
 
 Alternatively, entering through `billet connect` forwards your ssh-agent into the
 container, so keyless `git push` over SSH works with no `gh` login at all.

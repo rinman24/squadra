@@ -159,11 +159,13 @@ COPY .devcontainer/sshd.conf /etc/ssh/sshd_config.d/squadra.conf
 # `rinman24/dotfiles` chezmoi repo, applied by the postCreateCommand chezmoi bootstrap
 # (see .devcontainer/devcontainer.json) alongside the NeoVim/Claude Code dotfiles.
 
-# Bake `dev`'s git defaults so they survive on every launch path: trust the bind-mounted
-# workspace despite a possible uid mismatch, and disable commit gpg-signing (no key
-# in-container). Run as `dev` (HOME=/home/dev) so they land in /home/dev/.gitconfig.
-RUN su dev -c 'git config --global safe.directory /workspace' \
-    && su dev -c 'git config --global commit.gpgsign false'
+# Bake `dev`'s git safe.directory so it survives on every launch path: trust the
+# bind-mounted workspace despite a possible uid mismatch. Run as `dev` (HOME=/home/dev)
+# so it lands in /home/dev/.gitconfig. Personal git preferences are deliberately NOT
+# baked here: `commit.gpgsign=false` (and the git identity) come from
+# ~/.config/git/config, managed by chezmoi from `rinman24/dotfiles` and applied by the
+# container's chezmoi bootstrap (see .devcontainer/devcontainer.json).
+RUN su dev -c 'git config --global safe.directory /workspace'
 
 # Install Claude Code via Anthropic's native installer, as `dev`. NOT `npm install -g`:
 # that lands in a root-owned global dir where the non-root runtime user's background
