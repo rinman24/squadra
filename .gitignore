@@ -26,6 +26,9 @@ htmlcov/
 scripts/devbox/config.local.sh
 scripts/devbox/.squadra-devbox.log
 
+# Local git worktrees (per-branch checkouts under .worktrees/<name>)
+.worktrees/
+
 # Editor / OS
 .DS_Store
 *.swp
