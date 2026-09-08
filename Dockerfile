@@ -135,7 +135,12 @@ RUN groupadd -g 1000 dev \
     && install -d -o dev -g dev -m 0700 /home/dev/.claude \
     # .ssh pre-created 0700 dev-owned so the runtime authorized_keys bind mount
     # (docker-compose.yml) lands StrictModes-clean instead of in a root-owned dir.
-    && install -d -o dev -g dev -m 0700 /home/dev/.ssh
+    && install -d -o dev -g dev -m 0700 /home/dev/.ssh \
+    # .config + .config/gh pre-created 0700 dev-owned so the `gh` credential-store
+    # volume mounted over ~/.config/gh (docker-compose.yml) inherits dev ownership
+    # instead of root:root.
+    && install -d -o dev -g dev -m 0700 /home/dev/.config \
+    && install -d -o dev -g dev -m 0700 /home/dev/.config/gh
 
 # Outbound SSH for `dev`: with billet's agent forwarding, keyless git over SSH works
 # inside the container. accept-new records GitHub's host key on first contact instead of
