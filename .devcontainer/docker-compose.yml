@@ -25,8 +25,7 @@ services:
       # Container sshd trusts the operator's forwarded key via a read-only bind-mount of
       # the VM's existing authorized_keys — single source of trust. Defaults to the empty
       # tracked stub so a non-VM build never hard-fails. On the VM set
-      # BILLET_AUTHORIZED_KEYS in the gitignored .devcontainer/.env (see .env.example);
-      # billet's host_bootstrap_cmd copies it into place on the first cold start.
+      # BILLET_AUTHORIZED_KEYS in the gitignored .devcontainer/.env (see .env.example).
       - ${BILLET_AUTHORIZED_KEYS:-./authorized_keys-stub}:/home/dev/.ssh/authorized_keys:ro
       # Persisted container SSH host keys → stable identity across rebuild/recreate
       # (stable HostKeyAlias, no known_hosts churn). Generated on first boot if absent.
