@@ -69,9 +69,10 @@ it runs against a stubbed `claude` and a temp fleet root (no network/ADO/tmux).
 
 - Type-prefixed commit subjects (`feat:`, `refactor:`, `test:`, `fix:`,
   `docs:`, `ci:` …); each commit a coherent, self-contained unit (no WIP).
-- Authenticate from inside the container via `gh auth login` (device flow),
-  which wires git's credential helper for HTTPS push (this container has no SSH
-  key) and enables `gh pr`. Commit with `commit.gpgsign=false`.
+- No SSH key is stored in the container, but `billet connect` forwards your
+  ssh-agent, so keyless `git push` over an SSH remote works as-is. Without a
+  forwarded agent, `gh auth login` (device flow) wires git's credential helper
+  for HTTPS push; it also enables `gh pr`. Commit with `commit.gpgsign=false`.
 - **No Claude/Anthropic authorship trailers** on commits, PR bodies, or tags.
 - On GitHub everything (PR descriptions, issues) renders **Markdown**.
 - `main` is protected by a branch ruleset — require a PR + the GitHub Actions
