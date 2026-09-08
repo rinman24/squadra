@@ -133,7 +133,13 @@ gh auth login
 Choose **GitHub.com** → **HTTPS** → **Login with a web browser**. `gh` prints a one-time
 device code; copy it, open the displayed URL on any machine, paste the code, and
 authorize. `gh` then configures git's credential helper, so `git push` and
-`gh pr create` work for the rest of the session.
+`gh pr create` work. The credential store (`~/.config/gh/hosts.yml`) sits on the
+`squadra_gh_config` volume, so the login survives rebuilds and recreates — you do it
+once, not once per session.
+
+One caveat on the changeover: a token minted before that volume existed lives in the old
+container's writable layer, so the first rebuild mounts an empty `squadra_gh_config` and
+needs one final `gh auth login`. It persists from then on.
 
 `gh` is baked into the image. `commit.gpgsign=false` is already handled by
 `postCreate`, so commits don't try to sign.
