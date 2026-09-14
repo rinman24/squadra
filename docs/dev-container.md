@@ -21,7 +21,17 @@ create, start, or deallocate the VM they run on.
 - An in-container sshd (key-only, `dev`-only, published to the VM loopback) so billet
   can `connect` via ProxyJump — wired from billet's `templates/workspace/` adoption kit:
   `.devcontainer/sshd.conf`, `.devcontainer/dev-entrypoint.sh`, the `authorized_keys`
-  bind mount, and persisted host keys on the `squadra-sshd-keys` volume.
+  bind mount, and persisted host keys on the `squadra-sshd-keys` volume. That kit is the
+  **Berth**, billet's versioned Workspace runtime contract; the version this repo carries
+  is in `.devcontainer/berth.version` and the entrypoint logs `dev-entrypoint: berth=N` on
+  every start. Re-copy the whole set (version file included) when billet publishes a new
+  Berth.
+- From Berth 1 the entrypoint also repairs mount-time ownership: a named volume mounted
+  where the image did not pre-create the directory dev-owned comes up `root:root` and the
+  tool cannot write it. At start, before the slow `ssh-keygen` step, the entrypoint
+  re-owns each named-volume mount target under `/home/dev` that is a directory, owned by
+  uid 0, **and empty** (`install -d -o dev -g dev -m 0700`); anything else is logged and
+  left alone. Never recursive, never fatal — sshd starts either way.
 
 The base image is deliberately **host-agnostic** — no Azure CLI, no project source baked
 in.
@@ -106,15 +116,21 @@ tmux_session       = "main"
 host_alias         = "gswa-devbox"
 container_alias    = "squadra-container"
 agent_teams_flag   = ""
-host_bootstrap_cmd = "cp -n .devcontainer/.env.example .devcontainer/.env"
 verify_cmd         = "uv run --frozen pytest --no-cov"
 ```
 
 Then `billet add squadra` → `billet start squadra --verify` → `billet ssh-config` →
-`billet connect squadra`. The `host_bootstrap_cmd` copies `.env.example` into the
-gitignored `.devcontainer/.env` on the first cold start, pointing the container sshd at
-the VM's real `authorized_keys` (the tracked stub trusts no keys). Full walkthrough:
-billet's *Adopting a repo as a Workspace* guide.
+`billet connect squadra`. No `host_bootstrap_cmd` is needed: billet exports
+`BILLET_AUTHORIZED_KEYS` (the Host admin user's `~/.ssh/authorized_keys`) and
+`BILLET_CONTAINER_SSH_PORT` itself before every compose call, so the container sshd
+trusts the operator's key with no `.env` involved; the tracked `authorized_keys-stub`
+only ever applies to a build away from the VM. Full walkthrough: billet's *Adopting a
+repo as a Workspace* guide.
+
+If this Workspace's block in `~/.config/billet/config.toml` still carries the old
+`host_bootstrap_cmd = "cp -n .devcontainer/.env.example .devcontainer/.env"` line, delete
+it — `.env.example` no longer exists here. A leftover `.devcontainer/.env` on the Host is
+inert (a shell export outranks compose's `.env` interpolation) and needs no cleanup.
 
 The compose port default is squadra's **own** assigned port (2225), so a manual
 `scripts/devbox/up.sh` run on the shared devbox never collides with another Workspace;
