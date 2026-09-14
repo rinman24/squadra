@@ -19,13 +19,16 @@ services:
       # The repo bind mount. The in-repo `.venv` is created here at runtime by
       # `uv sync` (postCreateCommand / scripts/devbox/up.sh) — not baked into the image.
       - ..:/workspace:cached
-      # Persist Claude Code auth + auto-memory across rebuilds. First recreate brings this
-      # up EMPTY — re-auth once inside the container.
+      # The Claude Locker. Persists the injected token, Claude Code's auth state and
+      # auto-memory across rebuilds. First recreate brings this up EMPTY — re-auth once
+      # inside the container. The image need not pre-create the mountpoint: the Berth
+      # entrypoint re-owns a root-owned, empty Locker to `dev` at container start.
       - squadra_claude_home:/home/dev/.claude
       # Container sshd trusts the operator's forwarded key via a read-only bind-mount of
-      # the VM's existing authorized_keys — single source of trust. Defaults to the empty
-      # tracked stub so a non-VM build never hard-fails. On the VM set
-      # BILLET_AUTHORIZED_KEYS in the gitignored .devcontainer/.env (see .env.example).
+      # the VM's existing authorized_keys — single source of trust. billet exports
+      # BILLET_AUTHORIZED_KEYS (the Host admin user's ~/.ssh/authorized_keys) before every
+      # compose call, so no .env is involved; the default is the empty tracked stub, so a
+      # build away from the VM never hard-fails.
       - ${BILLET_AUTHORIZED_KEYS:-./authorized_keys-stub}:/home/dev/.ssh/authorized_keys:ro
       # Persisted container SSH host keys → stable identity across rebuild/recreate
       # (stable HostKeyAlias, no known_hosts churn). Generated on first boot if absent.
@@ -49,6 +52,12 @@ services:
     ports:
       - "127.0.0.1:${BILLET_CONTAINER_SSH_PORT:-2225}:22"
     environment:
+      # Pin Claude Code's config directory to the Claude Locker above. The value is fixed:
+      # billet's token injection writes ~/.claude/settings.json (billet ADR-0006), so any
+      # other path would split what the injector writes from what `claude` reads. Compose
+      # `environment:` reaches `docker compose exec` directly and ssh login shells via the
+      # entrypoint's /etc/environment snapshot, so both paths agree.
+      CLAUDE_CONFIG_DIR: /home/dev/.claude
       # Optional PAT so a `git push` to the ADO origin works from inside the container
       # (the repo-local credential helper reads $AZURE_DEVOPS_EXT_PAT). Leave unset to
       # skip; empty string here is harmless. Phase 2 swaps this for `gh auth login`.

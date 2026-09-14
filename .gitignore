@@ -33,6 +33,8 @@ scripts/devbox/.squadra-devbox.log
 .DS_Store
 *.swp
 
-# Dev-container per-host env (points sshd at the VM's real authorized_keys;
-# see .devcontainer/.env.example)
+# Dev-container per-host env. Retired with Berth 1 — billet exports
+# BILLET_AUTHORIZED_KEYS itself before every compose call — but a leftover .env from the
+# old workflow may still sit in a Host checkout, and it stays ignored (and inert: a shell
+# export outranks compose's .env interpolation).
 .devcontainer/.env
