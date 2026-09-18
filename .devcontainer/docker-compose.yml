@@ -21,8 +21,9 @@ services:
       - ..:/workspace:cached
       # The Claude Locker. Persists the injected token, Claude Code's auth state and
       # auto-memory across rebuilds. First recreate brings this up EMPTY — re-auth once
-      # inside the container. The image need not pre-create the mountpoint: the Berth
-      # entrypoint re-owns a root-owned, empty Locker to `dev` at container start.
+      # inside the container. Writability is the Berth entrypoint's guarantee: it re-owns
+      # a root-owned, empty Locker to `dev` at container start. The Dockerfile also
+      # pre-creates this mountpoint 0700 dev-owned, which pins the fresh volume's mode.
       - squadra_claude_home:/home/dev/.claude
       # Container sshd trusts the operator's forwarded key via a read-only bind-mount of
       # the VM's existing authorized_keys — single source of trust. billet exports
@@ -35,8 +36,9 @@ services:
       - squadra-sshd-keys:/etc/ssh/host_keys
       # Persist the `gh` credential store (hosts.yml) so a `compose up --build` does not
       # force `gh auth login` again. The token is the operator's, not the image's, so it
-      # belongs on a volume rather than baked in; the Dockerfile pre-creates the
-      # mountpoint dev-owned 0700.
+      # belongs on a volume rather than baked in. Writability is the Berth entrypoint's
+      # guarantee here too; the Dockerfile's pre-creation of the mountpoint dev-owned
+      # 0700 is an additional measure that pins the fresh volume's mode.
       - squadra_gh_config:/home/dev/.config/gh
     # Bring up the in-container sshd, then run the CMD (`sleep infinity`). `bash <script>`
     # avoids any dependence on the bind-mounted file's exec bit.
