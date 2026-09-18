@@ -125,9 +125,11 @@ RUN sh -c "$(curl -fsLS get.chezmoi.io)" -- -b /usr/local/bin -t v2.71.0
 # `--dangerously-skip-permissions` as root (uid 0), which is the unattended posture this
 # image targets. uid 1000 aligns with the host's repo owner so the /workspace
 # bind mount needs no chown (chowning a bind mount would mutate the host tree). The
-# `.claude` mountpoint is pre-created owned by `dev` so the named volume mounted over it
-# (docker-compose.yml) inherits dev ownership instead of root:root. Passwordless sudo is
-# the accepted trade-off for the skip-permissions posture.
+# `.claude` mountpoint is pre-created to pin its MODE, not to guarantee ownership: the
+# Claude Code install below creates ~/.claude anyway (at 0755), and the Berth entrypoint
+# is what guarantees a writable Locker (ADR-0013, .devcontainer/dev-entrypoint.sh). What
+# `install -d` adds is 0700, which Docker's copy-on-empty hands to a fresh named volume.
+# Passwordless sudo is the accepted trade-off for the skip-permissions posture.
 RUN groupadd -g 1000 dev \
     && useradd -u 1000 -g 1000 -m -s /bin/bash dev \
     && echo 'dev ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/dev \
@@ -136,9 +138,10 @@ RUN groupadd -g 1000 dev \
     # .ssh pre-created 0700 dev-owned so the runtime authorized_keys bind mount
     # (docker-compose.yml) lands StrictModes-clean instead of in a root-owned dir.
     && install -d -o dev -g dev -m 0700 /home/dev/.ssh \
-    # .config + .config/gh pre-created 0700 dev-owned so the `gh` credential-store
-    # volume mounted over ~/.config/gh (docker-compose.yml) inherits dev ownership
-    # instead of root:root.
+    # .config + .config/gh pre-created 0700 dev-owned: nothing else creates
+    # ~/.config/gh, so this sets the ownership and mode the `gh` credential-store
+    # volume (docker-compose.yml) inherits on first mount. Belt-and-braces, not
+    # load-bearing — the Berth entrypoint would repair a root-owned, empty Locker.
     && install -d -o dev -g dev -m 0700 /home/dev/.config \
     && install -d -o dev -g dev -m 0700 /home/dev/.config/gh
 
