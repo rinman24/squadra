@@ -20,10 +20,13 @@ services:
       # `uv sync` (postCreateCommand / scripts/devbox/up.sh) — not baked into the image.
       - ..:/workspace:cached
       # The Claude Locker. Persists the injected token, Claude Code's auth state and
-      # auto-memory across rebuilds. First recreate brings this up EMPTY — re-auth once
-      # inside the container. Writability is the Berth entrypoint's guarantee: it re-owns
-      # a root-owned, empty Locker to `dev` at container start. The Dockerfile also
-      # pre-creates this mountpoint 0700 dev-owned, which pins the fresh volume's mode.
+      # auto-memory across rebuilds. A fresh volume is not empty — Docker's copy-on-empty
+      # seeds it from the image's /home/dev/.claude (dev-owned 0700, only the installer's
+      # backups/ downloads/ sessions/) — but it holds no credentials, which are runtime
+      # state: re-auth once inside the container. Writability is the Berth entrypoint's
+      # guarantee: it re-owns a root-owned, empty Locker to `dev` at container start (here
+      # it finds this one already dev-owned and skips it). The Dockerfile's 0700
+      # pre-creation is what pins the fresh volume's mode.
       - squadra_claude_home:/home/dev/.claude
       # Container sshd trusts the operator's forwarded key via a read-only bind-mount of
       # the VM's existing authorized_keys — single source of trust. billet exports
