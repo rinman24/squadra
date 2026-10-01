@@ -9,7 +9,9 @@ create, start, or deallocate the VM they run on.
 ## What you get
 
 - `python:3.11-bookworm` + `uv` (pinned), `ruff` / `pyright` (strict) / `pytest`, plus
-  `git`, `tmux`, `jq`, Node 20 (so `pyright` runs offline), and the `claude` CLI.
+  `git`, `tmux`, `jq`, Node 20 (so `pyright` runs offline), and the `claude` CLI. tmux is
+  a pinned release (3.7c) built from source in the Dockerfile's `tmux-build` stage, not
+  bookworm's apt 3.3a, which is too old for the dotfiles `tmux.conf` (it needs >= 3.6).
 - A non-root `dev` user (uid 1000) with passwordless sudo, so Claude Code's
   `--dangerously-skip-permissions` runs.
 - The repo bind-mounted at `/workspace`; the in-repo `.venv` is created at
