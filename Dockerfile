@@ -15,6 +15,37 @@
 # NOT bake it: WORKDIR is the bind-mount target, so any image-baked `.venv` would be
 # shadowed by the mount at runtime anyway. See .devcontainer/docker-compose.yml and
 # scripts/devbox/up.sh for where the runtime sync happens.
+#
+# One image stage (the last FROM) plus a throwaway `tmux-build` stage that compiles tmux
+# for it.
+
+# tmux, compiled from the pinned release tarball. The operator's dotfiles tmux.conf needs
+# tmux >= 3.6 (menu-*-style is 3.4, copy-mode-position-style is 3.6) and bookworm ships
+# 3.3a (backports: 3.5a), so on apt every `billet connect` printed `invalid option` lines.
+# Built in its own stage so the toolchain stays out of the final image; only the binary is
+# copied over. Bump both ARGs together: TMUX_SHA256 is the release asset's SHA-256.
+FROM python:3.11-bookworm AS tmux-build
+ARG TMUX_VERSION=3.7c
+ARG TMUX_SHA256=7c60cae9a0e25288e2e24750aafc9e8800fc7fd4555e447e1b29ee4201cfb3bf
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        pkg-config \
+        bison \
+        libevent-dev \
+        libncurses-dev; \
+    rm -rf /var/lib/apt/lists/*; \
+    curl -fsSL -o /tmp/tmux.tar.gz \
+        "https://github.com/tmux/tmux/releases/download/${TMUX_VERSION}/tmux-${TMUX_VERSION}.tar.gz"; \
+    echo "${TMUX_SHA256}  /tmp/tmux.tar.gz" | sha256sum -c -; \
+    tar -C /tmp -xzf /tmp/tmux.tar.gz; \
+    cd "/tmp/tmux-${TMUX_VERSION}"; \
+    ./configure --prefix=/usr/local; \
+    make -j"$(nproc)"; \
+    make install; \
+    /usr/local/bin/tmux -V
+
 FROM python:3.11-bookworm
 
 # No .pyc, unbuffered stdout, longer pip timeout.
@@ -49,7 +80,10 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.21@sha256:ff07b86af50d4d9391d9daf4ff89ce42
 #                        and otherwise DOWNLOADS node on first run; installing node 20 (the
 #                        version the toolchain validates pyright against) keeps
 #                        `uv run pyright` offline.
-#   - tmux             : the fleet drives runner panes over tmux; dev parity.
+#   - libevent-core    : runtime library of the tmux copied in from the tmux-build stage
+#                        (the fleet drives runner panes over tmux; dev parity). Not apt
+#                        tmux: bookworm's 3.3a is too old for the dotfiles tmux.conf, see
+#                        the tmux-build stage. ncurses is already in the base image.
 #   - jq               : JSON tooling for shell hooks / skills.
 #   - sudo             : passwordless for `dev` (the non-root + skip-permissions posture
 #                        below); also lets the entrypoint start the system sshd.
@@ -71,7 +105,7 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         nodejs \
-        tmux \
+        libevent-core-2.1-7 \
         jq \
         sudo \
         openssh-server \
@@ -106,6 +140,11 @@ RUN set -eux; \
     ln -s /opt/nvim-linux-x86_64/bin/nvim /usr/local/bin/nvim; \
     rm /tmp/nvim.tar.gz; \
     nvim --version | head -1
+
+# tmux from the tmux-build stage above (its runtime library is in the apt list). Only the
+# binary: the image has no man-db, so a copied man page would have no reader.
+COPY --from=tmux-build /usr/local/bin/tmux /usr/local/bin/tmux
+RUN tmux -V
 
 # Dev-only git ergonomics: a plain `git push` on a new branch auto-creates the same-named
 # upstream instead of erroring. push.default stays `simple`, so a push still only targets
@@ -160,7 +199,8 @@ COPY .devcontainer/sshd.conf /etc/ssh/sshd_config.d/squadra.conf
 
 # NOTE: `dev`'s ~/.tmux.conf (+ TPM) is no longer baked here — it ships from the
 # `rinman24/dotfiles` chezmoi repo, applied by the postCreateCommand chezmoi bootstrap
-# (see .devcontainer/devcontainer.json) alongside the NeoVim/Claude Code dotfiles.
+# (see .devcontainer/devcontainer.json) alongside the NeoVim/Claude Code dotfiles. The
+# image only supplies a tmux new enough to load it (the tmux-build stage).
 
 # Bake `dev`'s git safe.directory so it survives on every launch path: trust the
 # bind-mounted workspace despite a possible uid mismatch. Run as `dev` (HOME=/home/dev)
