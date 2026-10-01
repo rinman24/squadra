@@ -63,10 +63,6 @@ services:
       # `environment:` reaches `docker compose exec` directly and ssh login shells via the
       # entrypoint's /etc/environment snapshot, so both paths agree.
       CLAUDE_CONFIG_DIR: /home/dev/.claude
-      # Optional PAT so a `git push` to the ADO origin works from inside the container
-      # (the repo-local credential helper reads $AZURE_DEVOPS_EXT_PAT). Leave unset to
-      # skip; empty string here is harmless. Phase 2 swaps this for `gh auth login`.
-      AZURE_DEVOPS_EXT_PAT: ${AZURE_DEVOPS_EXT_PAT:-}
 
 volumes:
   squadra_claude_home:
