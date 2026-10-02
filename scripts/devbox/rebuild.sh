@@ -4,7 +4,7 @@
 # The daily "I changed the Dockerfile / dependencies and want the running stack rebuilt"
 # verb. Runs locally on the host (no tunnel/ssh), rebuilds the single squadra image,
 # recreates the container, and re-syncs the venv. The
-# repo bind mount and the squadra_claude_home volume survive a recreate, so no
+# repo bind mount and the claude_home volume survive a recreate, so no
 # re-bootstrap is needed. Container-scoped: the VM is never touched.
 #
 # Usage: scripts/devbox/rebuild.sh [--no-cache] [--force-recreate] [--yes] [--dry-run]
@@ -28,7 +28,7 @@ usage() {
 rebuild.sh — rebuild the squadra dev-container image and recreate the container.
 
 Rebuilds the single squadra image and recreates the container; the repo bind mount and
-squadra_claude_home volume persist. Runs locally on the host (no tunnel). The VM is
+claude_home volume persist. Runs locally on the host (no tunnel). The VM is
 never touched.
 
 Usage: scripts/devbox/rebuild.sh [--no-cache] [--force-recreate] [--yes] [--dry-run]
@@ -67,7 +67,7 @@ ensure_repo
 
 log "Rebuilding the squadra stack (variant: ${variant})."
 confirm "Rebuild + recreate the squadra dev container? This drops any attached VS Code /
-  tmux session (the repo bind mount + squadra_claude_home volume persist)." ||
+  tmux session (the repo bind mount + claude_home volume persist)." ||
   die "Aborted; nothing rebuilt."
 
 # `--no-cache` is a build-time flag, so it splits into a `build` then a plain `up -d`

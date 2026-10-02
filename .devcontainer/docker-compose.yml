@@ -27,7 +27,7 @@ services:
       # guarantee: it re-owns a root-owned, empty Locker to `dev` at container start (here
       # it finds this one already dev-owned and skips it). The Dockerfile's 0700
       # pre-creation is what pins the fresh volume's mode.
-      - squadra_claude_home:/home/dev/.claude
+      - claude_home:/home/dev/.claude
       # Container sshd trusts the operator's forwarded key via a read-only bind-mount of
       # the VM's existing authorized_keys — single source of trust. billet exports
       # BILLET_AUTHORIZED_KEYS (the Host admin user's ~/.ssh/authorized_keys) before every
@@ -36,13 +36,13 @@ services:
       - ${BILLET_AUTHORIZED_KEYS:-./authorized_keys-stub}:/home/dev/.ssh/authorized_keys:ro
       # Persisted container SSH host keys → stable identity across rebuild/recreate
       # (stable HostKeyAlias, no known_hosts churn). Generated on first boot if absent.
-      - squadra-sshd-keys:/etc/ssh/host_keys
+      - sshd_keys:/etc/ssh/host_keys
       # Persist the `gh` credential store (hosts.yml) so a `compose up --build` does not
       # force `gh auth login` again. The token is the operator's, not the image's, so it
       # belongs on a volume rather than baked in. Writability is the Berth entrypoint's
       # guarantee here too; the Dockerfile's pre-creation of the mountpoint dev-owned
       # 0700 is an additional measure that pins the fresh volume's mode.
-      - squadra_gh_config:/home/dev/.config/gh
+      - gh_config:/home/dev/.config/gh
     # Bring up the in-container sshd, then run the CMD (`sleep infinity`). `bash <script>`
     # avoids any dependence on the bind-mounted file's exec bit.
     entrypoint: ["bash", "/workspace/.devcontainer/dev-entrypoint.sh"]
@@ -65,6 +65,6 @@ services:
       CLAUDE_CONFIG_DIR: /home/dev/.claude
 
 volumes:
-  squadra_claude_home:
-  squadra-sshd-keys:
-  squadra_gh_config:
+  claude_home:
+  sshd_keys:
+  gh_config:

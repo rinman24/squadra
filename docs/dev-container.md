@@ -16,14 +16,14 @@ create, start, or deallocate the VM they run on.
   `--dangerously-skip-permissions` runs.
 - The repo bind-mounted at `/workspace`; the in-repo `.venv` is created at
   runtime by `uv sync` (it is not baked into the image).
-- A persistent `squadra_claude_home` volume for Claude auth + memory.
+- A persistent `claude_home` volume for Claude auth + memory.
 - The `gh` CLI, baked into the image. It started life as a devcontainer feature, but
   billet brings the container up with raw `docker compose` and never applies features —
   anything needed day-to-day must live in the image or `postCreateCommand`.
 - An in-container sshd (key-only, `dev`-only, published to the VM loopback) so billet
   can `connect` via ProxyJump — wired from billet's `templates/workspace/` adoption kit:
   `.devcontainer/sshd.conf`, `.devcontainer/dev-entrypoint.sh`, the `authorized_keys`
-  bind mount, and persisted host keys on the `squadra-sshd-keys` volume. That kit is the
+  bind mount, and persisted host keys on the `sshd_keys` volume. That kit is the
   **Berth**, billet's versioned Workspace runtime contract; the version this repo carries
   is in `.devcontainer/berth.version` and the entrypoint logs `dev-entrypoint: berth=N` on
   every start. Re-copy the whole set (version file included) when billet publishes a new
@@ -84,7 +84,7 @@ it fixed, VS Code and the scripts share one stack and never spawn two on the sam
 
 ## Claude Code auth
 
-The first time the container is created, `squadra_claude_home` is empty. Start `claude`
+The first time the container is created, `claude_home` is empty. Start `claude`
 inside the container and authenticate once; auth and memory then persist across rebuilds
 (the volume survives `stop.sh` / `rebuild.sh`).
 
@@ -152,11 +152,11 @@ Choose **GitHub.com** → **HTTPS** → **Login with a web browser**. `gh` print
 device code; copy it, open the displayed URL on any machine, paste the code, and
 authorize. `gh` then configures git's credential helper, so `git push` and
 `gh pr create` work. The credential store (`~/.config/gh/hosts.yml`) sits on the
-`squadra_gh_config` volume, so the login survives rebuilds and recreates — you do it
+`gh_config` volume, so the login survives rebuilds and recreates — you do it
 once, not once per session.
 
 One caveat on the changeover: a token minted before that volume existed lives in the old
-container's writable layer, so the first rebuild mounts an empty `squadra_gh_config` and
+container's writable layer, so the first rebuild mounts an empty `gh_config` and
 needs one final `gh auth login`. It persists from then on.
 
 `gh` is baked into the image. `commit.gpgsign=false` comes from `~/.config/git/config`,
