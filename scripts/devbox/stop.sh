@@ -3,7 +3,7 @@
 #
 # Container-scoped: this is `compose down` for the squadra stack ONLY. It does NOT, and
 # must NOT, deallocate the VM — VM lifecycle is not managed here. Named volumes
-# (squadra_claude_home auth/memory) and the repo bind mount persist; `-v` is deliberately
+# (claude_home auth/memory) and the repo bind mount persist; `-v` is deliberately
 # never passed.
 #
 # Usage: scripts/devbox/stop.sh [--dry-run] [--yes]
@@ -23,7 +23,7 @@ usage() {
 stop.sh — stop the squadra dev container (docker compose down).
 
 Stops + removes the squadra container only. Does NOT deallocate the VM, and does NOT
-remove named volumes (squadra_claude_home persists). VM lifecycle is not managed here.
+remove named volumes (claude_home persists). VM lifecycle is not managed here.
 
 Usage: scripts/devbox/stop.sh [--dry-run] [--yes]
   --dry-run  print the docker compose command without running it
@@ -45,7 +45,7 @@ done
 require_docker
 
 log "Stopping the squadra stack (compose down — the VM is NOT touched)."
-confirm "compose down the squadra stack? (the repo bind mount + squadra_claude_home volume persist)" ||
+confirm "compose down the squadra stack? (the repo bind mount + claude_home volume persist)" ||
   die "Aborted; nothing stopped."
 
 compose down
