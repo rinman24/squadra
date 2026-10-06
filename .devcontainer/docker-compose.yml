@@ -53,7 +53,7 @@ services:
     # loopback port, exported as BILLET_CONTAINER_SSH_PORT before every compose call
     # (billet ADR-0003). The fallback is squadra's OWN assigned port (2225) — not 2222 —
     # so a manual `docker compose up` / scripts/devbox/up.sh on the shared devbox cannot
-    # collide with gswa-backend's fixed 2222.
+    # collide with gswa-backend's 2222 (its assigned port and its own fallback).
     ports:
       - "127.0.0.1:${BILLET_CONTAINER_SSH_PORT:-2225}:22"
     environment:
