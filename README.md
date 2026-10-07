@@ -7,7 +7,7 @@
 
 # squadra
 
-**Ships every slice. Unattended.**
+**Ships every increment. Unattended.**
 
 | | |
 | --- | --- |
@@ -15,9 +15,9 @@
 | Package | [![PyPI Latest Release](https://img.shields.io/pypi/v/squadra.svg)](https://pypi.org/project/squadra/) |
 | Meta | [![License - MIT](https://img.shields.io/pypi/l/squadra.svg)](https://github.com/rinman24/squadra/blob/main/LICENSE) [![Last commit](https://img.shields.io/github/last-commit/rinman24/squadra.svg)](https://github.com/rinman24/squadra/commits/main) [![Commit activity](https://img.shields.io/github/commit-activity/m/rinman24/squadra.svg)](https://github.com/rinman24/squadra/graphs/commit-activity) |
 
-squadra is deterministic supervisor and per-slice runner machinery for an
+squadra is deterministic supervisor and per-increment runner machinery for an
 unattended, board-driven Claude implementation fleet. It runs the implementation
-phase (`/tdd` → `/qa`) across many vertical slices at once, hands-off, with board
+phase (`/tdd` → `/qa`) across many increments at once, hands-off, with board
 work-item state as the single source of truth at every tier. squadra speaks a
 provider-neutral 3-bucket `Lifecycle` (queued / active / done); a `BoardAccess`
 adapter translates that to a concrete board's native semantics at the boundary.
@@ -31,7 +31,7 @@ a private backend project. Its provider-neutral seam is
 [ADR-0001](docs/adr/adr-0001-board-provider-seam.md) and its
 [design note](docs/design/board-provider-seam.md). The package ships the
 **deterministic machinery + its tests + scaffolding** — the agent-side skills
-(`/afk-slice-runner`, `/tdd`, `/qa`, `/cleanup-merged-branches`) are
+(`/afk-increment-runner`, `/tdd`, `/qa`, `/cleanup-merged-branches`) are
 consumer-owned and live in the consuming repo. squadra *scaffolds* genericized
 templates for the ones it drives (`squadra init`), then invokes them only by
 **skill name** through `claude`: scaffolding the template is not owning it, so the
@@ -66,11 +66,11 @@ A single unified `squadra` CLI is installed (the API / composition root):
 | `squadra init [--provider P] [--check]` | scaffold an annotated `squadra.toml`; `--check` validates it against the live board |
 | `squadra tick [--dry-run]` | run one supervisor tick in-process |
 | `squadra {start\|stop\|status\|log}` | hands-on ticker control (shells to the packaged `fleetctl.sh`) |
-| `squadra slice {init\|update\|heartbeat\|show}` | the per-slice status-file ops (used by the runner wrapper) |
+| `squadra increment {init\|update\|heartbeat\|show}` | the per-increment status-file ops (used by the runner wrapper) |
 
 `python -m squadra.supervisor` (one tick) and `python -m squadra.status` (the
 status-file CLI) remain as internal module entry points. The deprecated
-`squadra-status` console script has been dropped — use `squadra slice` instead.
+`squadra-status` console script has been dropped — use `squadra increment` instead.
 
 ## Configuration
 
@@ -88,13 +88,13 @@ built-in defaults  <  squadra.toml  <  FLEET_* env  <  CLI flag
 | Section / key | Default | Meaning |
 |---|---|---|
 | `[board].provider` | `ado` | `ado` \| `github` \| `gitlab`. Selects the `BoardAccess` adapter (registry in the CLI composition root). ADO ships today; GitHub/GitLab are tracked backlog adapters. |
-| `[board].base_branch` | `main` | The branch a slice PR must complete against for finalize-eligibility. |
+| `[board].base_branch` | `main` | The branch an increment PR must complete against for finalize-eligibility. |
 | `[board].tag_prefix` | `fleet:` | Configurable namespace for the fleet's tags; detection is prefix-based (`startswith`). The five suffixes are fixed (see [Tag vocabulary](#tag-vocabulary)). |
-| `[board].parent_scope_ids` | `[]` (whole project) | Optional claim-scope filter — only slices under these parents are claimable. Supersedes the legacy `FLEET_EPIC_IDS` env, which is still honored. |
+| `[board].parent_scope_ids` | `[]` (whole project) | Optional claim-scope filter — only increments under these parents are claimable. Supersedes the legacy `FLEET_EPIC_IDS` env, which is still honored. |
 | `[board.states].queued` / `.active` / `.done` | — | Lists of the board's *native* state names mapped onto the three neutral `Lifecycle` buckets (many-native→one-neutral allowed). **REQUIRED** unless the provider is ADO-Basic, which defaults to `["To Do"]` / `["Doing"]` / `["Done"]`. GitHub/GitLab statuses are user-defined, so they must be declared. |
-| `[pipeline].branch_template` | `feat/slice-{id}-{slug}` | Slice branch naming. squadra owns the `-a{attempt}` retry suffix (fixed rule, not templated). |
-| `[pipeline].worktree_dir` | `.claude/worktrees` | Where slice worktrees are created. |
-| `[pipeline].runner_skill` | `/afk-slice-runner` | Skill the runner wrapper invokes per slice. |
+| `[pipeline].branch_template` | `feat/increment-{id}-{slug}` | Increment branch naming. squadra owns the `-a{attempt}` retry suffix (fixed rule, not templated). |
+| `[pipeline].worktree_dir` | `.claude/worktrees` | Where increment worktrees are created. |
+| `[pipeline].runner_skill` | `/afk-increment-runner` | Skill the runner wrapper invokes per increment. |
 | `[pipeline].tdd_skill` | `/tdd` | TDD skill name, threaded into the runner prompt. |
 | `[pipeline].qa_skill` | `/qa` | QA skill name, threaded into the runner prompt. |
 | `[pipeline].cleanup_skill` | `/cleanup-merged-branches` | Skill the finalize pass runs headlessly per merged branch. |
@@ -112,9 +112,9 @@ active = ["Doing"]
 done   = ["Done"]
 
 [pipeline]
-branch_template = "feat/slice-{id}-{slug}"
+branch_template = "feat/increment-{id}-{slug}"
 worktree_dir    = ".claude/worktrees"
-runner_skill    = "/afk-slice-runner"
+runner_skill    = "/afk-increment-runner"
 tdd_skill       = "/tdd"
 qa_skill        = "/qa"
 cleanup_skill   = "/cleanup-merged-branches"
@@ -131,7 +131,7 @@ Safety is **validate-against-board, not mandatory typing.** `validate_config()`
 resolves the configured state names, tag prefix, and base branch against the
 *live* board — at startup of every tick and on `squadra init --check` — and fails
 loud on any mismatch (e.g. "configured active state 'Doing' not found among this
-project's states"). A typo can't silently strand or mis-claim slices.
+project's states"). A typo can't silently strand or mis-claim increments.
 
 ### Scaffolding (`squadra init`)
 
@@ -155,7 +155,7 @@ board without writing anything.
 
 ## Status file + heartbeat convention
 
-Each in-flight slice has one status file — the *micro view* of its runner:
+Each in-flight increment has one status file — the *micro view* of its runner:
 
 ```
 $FLEET_HOME/.claude/fleet/<issue-id>/status.json
@@ -169,11 +169,11 @@ repo's git (`**/.claude/fleet/`).
 
 | Field | Type | Meaning |
 |---|---|---|
-| `issue_id` | int | The slice's board work-item id |
+| `issue_id` | int | The increment's board work-item id |
 | `runner_id` | str | Unique id of the runner attempt (e.g. `runner-41-a1-…`) |
-| `branch` | str | Slice branch (`feat/slice-<id>-<kebab>`) |
-| `worktree` | str | Absolute path of the slice's git worktree |
-| `pr_url` | str \| null | The slice's PR once opened |
+| `branch` | str | Increment branch (`feat/increment-<id>-<kebab>`) |
+| `worktree` | str | Absolute path of the increment's git worktree |
+| `pr_url` | str \| null | The increment's PR once opened |
 | `phase` | enum | `claiming` → `seams` → `tdd` → `qa` → `parked` → `done` |
 | `parked_state` | enum \| null | `needs-decision`, `qa-ready`, `awaiting-pr-approval`, `failed` — non-null iff `phase` is `parked` |
 | `worker_roster` | list[str] | Worker sub-agents the runner fanned out |
@@ -196,16 +196,16 @@ never see partial JSON; interleaved writers never lose fields.
 Shell callers (the runner wrapper, skills) use the status CLI:
 
 ```bash
-squadra slice init \
+squadra increment init \
   --issue-id 41 --runner-id runner-41-a1 \
-  --branch feat/slice-41-example --worktree "$FLEET_HOME/.claude/worktrees/feat+slice-41-example"
+  --branch feat/increment-41-example --worktree "$FLEET_HOME/.claude/worktrees/feat+increment-41-example"
 
-squadra slice update --issue-id 41 --phase tdd
-squadra slice update --issue-id 41 \
+squadra increment update --issue-id 41 --phase tdd
+squadra increment update --issue-id 41 \
   --phase parked --parked-state awaiting-pr-approval --pr-url <url>
-squadra slice update --issue-id 41 --phase tdd --parked-state none
-squadra slice heartbeat --issue-id 41
-squadra slice show --issue-id 41
+squadra increment update --issue-id 41 --phase tdd --parked-state none
+squadra increment heartbeat --issue-id 41
+squadra increment show --issue-id 41
 ```
 
 `--fleet-root` overrides the location (used by tests; defaults to
@@ -231,7 +231,7 @@ All addendum constants live in `squadra/constants.py` and are env-tunable
 
 The compute tier (`FLEET_MODEL` / `FLEET_EFFORT`) is pinned in `constants.py` and
 applied as explicit `claude --model … --effort …` flags to **every** model-backed
-fleet call — the slice runner, the cleanup pass, and the auth probe (the probe
+fleet call — the increment runner, the cleanup pass, and the auth probe (the probe
 pins `--model` only, since it does no reasoning). This is deliberate: a headless
 `claude -p` otherwise inherits whatever `model` an interactive session's
 `settings.json` happens to pin, so the fleet's tier would be an ambient side
@@ -261,10 +261,10 @@ boundary (ADO → HTML, GitHub → Markdown) — core itself emits no markup.
 Tuning path for the cap (addendum §1): raise as cores/headroom grow; back off on
 CPU saturation or 429s.
 
-## Slice runners
+## Increment runners
 
-A runner is one short-lived, headless Claude session driving one slice. The
-supervisor launches each into its own per-slice ephemeral Docker compose project
+A runner is one short-lived, headless Claude session driving one increment. The
+supervisor launches each into its own per-increment ephemeral Docker compose project
 via `SandboxAccess` (ADR-0002 §5): the compose `agent` service's command *is* the
 deterministic wrapper (`squadra/_scripts/runner-wrap.sh`, resolved from the
 installed package and invoked as `runner-wrap.sh <issue-id> <branch> [attempt]`),
@@ -288,8 +288,8 @@ The wrapper owns everything that must not depend on an LLM:
   `done`); if the session exits in any other phase, the wrapper stamps
   `parked_state=failed` + `last_error` and propagates the non-zero exit.
 
-The `afk-slice-runner` skill (in the consuming repo) is the agent side of the
-contract: verify the claim, enter the slice worktree, write the shared seams
+The `afk-increment-runner` skill (in the consuming repo) is the agent side of the
+contract: verify the claim, enter the increment worktree, write the shared seams
 before any fan-out, execute the configured tdd then qa skills **unchanged**,
 update `phase`/`pr_url`/`worker_roster` at transitions, park with the matching
 fleet tag + comment, exit. Parked states are never a hung session — they are queryable board
@@ -325,17 +325,17 @@ another provider the adapter substitutes that board's configured names.
    first. *Available* = `To Do`, no `fleet:*` tag, every Predecessor-linked Issue
    `Done`. Claim = `To Do → Doing` + tag `fleet:claimed` + a stamped comment,
    plus a local `claimed-at` marker for the watchdog. The branch is derived
-   deterministically: `feat/slice-<id>-<kebab-of-title>` (suffix `-aN` on
+   deterministically: `feat/increment-<id>-<kebab-of-title>` (suffix `-aN` on
    retries).
 4. **Launch** — one `runner-wrap.sh <issue-id> <branch> <attempt>` per claimed
-   slice, as the `agent`-service command of its own per-slice ephemeral Docker
+   increment, as the `agent`-service command of its own per-increment ephemeral Docker
    compose project via `SandboxAccess` (build + `compose up -d`, non-blocking;
-   `docker compose logs` against the slice project is the live view). A failed
+   `docker compose logs` against the increment project is the live view). A failed
    launch rolls the claim back (tag removed, `Doing → To Do`, comment), so no
-   slice is stranded.
+   increment is stranded.
 
 Only **claim/launch** depends on credentials beyond the board reads: a working
-ADO PAT (claiming a slice does host-side git remote ops — worktree create off
+ADO PAT (claiming an increment does host-side git remote ops — worktree create off
 `origin/main`, then push — over HTTPS+PAT, no SSH key) and a working `claude`
 (the contained runner is the fleet's single LLM call — finalize and reap are
 deterministic). A tick with claim work pending runs **two preflights** first, in
@@ -353,7 +353,7 @@ order, and short-circuits on the first failure:
    (dead auth, a transient API outage, and an unavailable model read identically).
 
 On either failed probe the tick **degrades to the reap pass only** — every
-claim/launch decision is dropped (no slice is claimed, no `To Do → Doing`, no
+claim/launch decision is dropped (no increment is claimed, no `To Do → Doing`, no
 `fleet:claimed`), while in-flight finalize and reap still proceed — and retries
 next tick. The PAT failure logs one actionable line naming the `fleet-ado-pat`
 Key Vault secret and the rotation runbook (the consuming repo's
@@ -361,8 +361,8 @@ Key Vault secret and the rotation runbook (the consuming repo's
 probe runs first, so a dead PAT never pays to spawn `claude`. Idle, saturated,
 and finalize-only ticks never pay for either probe.
 
-**Finalize** retires slices that are truly done: Issue `Done` *and* a completed
-PR for the slice branch. For each, it runs the consuming repo's
+**Finalize** retires increments that are truly done: Issue `Done` *and* a completed
+PR for the increment branch. For each, it runs the consuming repo's
 `/cleanup-merged-branches` skill headlessly for that branch, drops every `fleet:*`
 tag, comments the PR link, and sets the status phase to `done`. A failed cleanup
 is retried next tick.
@@ -390,14 +390,14 @@ tick lock and the supervisor log are still written — coordination artifacts,
 not fleet state.
 
 Scoping: `[board].parent_scope_ids` (a list of parent work-item ids, optional)
-restricts claiming to slices under those parents; it supersedes the legacy
+restricts claiming to increments under those parents; it supersedes the legacy
 `FLEET_EPIC_IDS` env (comma-separated Epic ids), which is still honored. Empty
 (the default) means every unblocked `queued` work item in the project is
 eligible.
 
 ### Host-side git hardening (sandbox-escape control)
 
-The slice agent runs in a sandbox with the slice worktree bind-mounted as
+The increment agent runs in a sandbox with the increment worktree bind-mounted as
 `/work`, and it commits there — so a prompt-injected or misbehaving agent can
 plant a git hook (`pre-push`, `post-checkout`, …) or set `core.hooksPath` to an
 agent-controlled directory inside the worktree. Host-side git ops later run
@@ -420,7 +420,7 @@ squadra closes this by routing **every** host-side git invocation through
 Both are transient command-line overrides — never written to `.git/config`, so the
 agent cannot strip them. The worktree create/archive/prune, branch delete, the
 `base..HEAD` commit count, and the app-repo bootstrap all inherit this automatically
-by going through the builder. The host-side **push** of a slice's commits — the
+by going through the builder. The host-side **push** of an increment's commits — the
 credential-holding op the agent does not perform — is not yet wired in code (the
 deferred write-tail in the supervisor's `_handoff`); when it is, it must be built as
 `host_git_argv(*credential_helper, "push", "origin", branch, work_dir=worktree)`, and
@@ -468,14 +468,14 @@ levers compose:
   autostart paths have been retired in favor of systemd.)
 
 Each fire is a fresh supervisor process under the same lock (the timer is only the
-schedule, so crash-only semantics are preserved). In-flight slice state is
+schedule, so crash-only semantics are preserved). In-flight increment state is
 reconstructed from the board plus the bind-mounted `.claude/fleet/` status files,
 so a re-started ticker resumes cleanly.
 
 Watch the fleet: `squadra status` (is-it-running + recent log), `squadra log
 -f` (follow the supervisor log live), the board (`fleet:*` tags) is the macro
-view, per-slice `status.json` is the micro view, `docker compose logs` against a
-slice's compose project is the live agent view.
+view, per-increment `status.json` is the micro view, `docker compose logs` against an
+increment's compose project is the live agent view.
 
 ## Development
 
