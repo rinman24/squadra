@@ -1,6 +1,6 @@
 """squadra — deterministic machinery for an AFK, board-driven Claude fleet.
 
-The supervisor tick and the per-slice runner plumbing, plus the
+The supervisor tick and the per-increment runner plumbing, plus the
 status-file/heartbeat convention they share. Held to the same strict typing and
 lint standards as production code.
 

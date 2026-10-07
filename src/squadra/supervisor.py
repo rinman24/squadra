@@ -3,23 +3,23 @@
 A deterministic, stateless, token-free scheduled script (no LLM in the tick
 itself). Each tick reconstructs its entire view from observed reality and drives
 one pure, subsuming FSM (:class:`squadra.engines.LifecycleEngine`, ADR-0002
-decision 3) per slice:
+decision 3) per increment:
 
-1. **gather facts** — for every fleet-relevant slice (the fleet-claimed ACTIVE /
+1. **gather facts** — for every fleet-relevant increment (the fleet-claimed ACTIVE /
    DONE items and the QUEUED claim candidates) the orchestrator assembles a
-   :class:`~squadra.domain.LifecycleFacts` host-side from board truth, the slice
+   :class:`~squadra.domain.LifecycleFacts` host-side from board truth, the increment
    ``status.json`` breadcrumb, ``SandboxAccess.inspect`` (container liveness/exit,
    subsuming the old ``pid_alive``), the heartbeat age, the bind-mounted
    ``outcome.json`` manifest, the commit count in ``base..HEAD``, the egress-proxy
    deny log, and the completed-PR query.
-2. **decide** — ``LifecycleEngine.decide(facts)`` projects each slice onto one
+2. **decide** — ``LifecycleEngine.decide(facts)`` projects each increment onto one
    :class:`~squadra.domain.State` plus the ordered :data:`~squadra.domain.
    LifecycleAction` intents to run. This single engine subsumes the legacy
    finalize / reap / claim passes.
 3. **execute** — the orchestrator maps each intent onto the ``BoardAccess`` /
    ``SandboxAccess`` / ``CleanupAccess`` / ``WorktreeAccess`` seams. The claim
-   **budget** is the one cross-slice constraint that stays orchestrator-side: the
-   engine emits a per-slice :class:`~squadra.domain.SignalClaimable`; the
+   **budget** is the one cross-increment constraint that stays orchestrator-side: the
+   engine emits a per-increment :class:`~squadra.domain.SignalClaimable`; the
    orchestrator claims up to ``cap`` (``FLEET_MAX_RUNNERS=0`` suppresses claims
    only — finalize/reap still mutate; for a tick that cannot mutate, dry-run).
 
@@ -30,7 +30,7 @@ names are configuration.
 
 Only the **claim/launch** path now needs a working ``claude`` (the contained
 runner is the fleet's single LLM call — finalize cleanup is deterministic, ADR-
-0002 decision 4) *and* a working Azure DevOps PAT (claiming a slice does host-side
+0002 decision 4) *and* a working Azure DevOps PAT (claiming an increment does host-side
 git remote ops — worktree create off ``origin/main``, then push — over HTTPS+PAT,
 no SSH key). A tick with claim work pending preflights both before it claims: the
 PAT via a ``git ls-remote`` against the target remote, then claude via a throwaway
@@ -47,7 +47,7 @@ the board.
 A tick can be a **dry run** (``--dry-run`` / ``FLEET_DRY_RUN=1``): the full
 fact-gather + decide logic runs and reports what a real tick WOULD do, but every
 side effect — board writes, sandbox launch/teardown/exec, deterministic cleanup,
-worktree create/archive/prune, slice-context injection, the PAT + claude auth
+worktree create/archive/prune, increment-context injection, the PAT + claude auth
 probes, and local status/marker writes — is suppressed at the ``TickSeams`` boundary
 (``dry_run_seams``), so the tick physically cannot mutate. ``FLEET_MAX_RUNNERS=0``
 is *not* a safe smoke: it only zeroes the claim budget. Use a dry run.
@@ -81,6 +81,7 @@ from squadra.domain import (
     FinalizeCleanup,
     Finalized,
     HandoffAgentDone,
+    IncrementContext,
     LaunchSandbox,
     Lifecycle,
     LifecycleAction,
@@ -89,7 +90,7 @@ from squadra.domain import (
     NoAction,
     ParkNeedsDecision,
     Reaped,
-    RetrySlice,
+    RetryIncrement,
     RolledBack,
     SandboxAbsent,
     SandboxExited,
@@ -97,7 +98,6 @@ from squadra.domain import (
     SandboxSpec,
     SandboxStatus,
     SignalClaimable,
-    SliceContext,
     StopContainer,
     SweepLeak,
     Tags,
@@ -105,9 +105,9 @@ from squadra.domain import (
     WorkItemLinks,
 )
 from squadra.dry_run import DryRunCleanup, DryRunWorktree
-from squadra.engines import LifecycleEngine, slice_branch
+from squadra.engines import LifecycleEngine, increment_branch
 from squadra.git_host import host_git_argv
-from squadra.manifest import ManifestRead, read_manifest, write_slice_context
+from squadra.manifest import ManifestRead, read_manifest, write_increment_context
 from squadra.repo import remote_auth_ok, target_remote_url
 from squadra.sandbox import ComposeSandbox, DryRunSandbox, SandboxAccess
 from squadra.secrets import secret_names_from_env
@@ -205,9 +205,9 @@ def _ado_pat_rejected_message() -> str:
 
 
 def _read_commits_present(worktree: Path, base_ref: str) -> bool:
-    """Whether ``base_ref..HEAD`` has at least one commit in the slice worktree.
+    """Whether ``base_ref..HEAD`` has at least one commit in the increment worktree.
 
-    The substance half of the completion triple; ``base_ref`` is the ref the slice
+    The substance half of the completion triple; ``base_ref`` is the ref the increment
     branched off (``origin/main``). A worktree that does not exist yet (never
     launched) or a git failure reads as "no commits" — never a crash.
     """
@@ -262,7 +262,7 @@ class TickSeams:
     exec via ``sandbox``; deterministic cleanup via ``cleanup``; worktree create/
     archive/prune via ``worktree``; the PAT probe via ``pat_ok`` and the claude
     auth probe via ``auth_ok`` (each spawns a process and so is itself a side
-    effect a dry run must not perform); slice-context injection via
+    effect a dry run must not perform); increment-context injection via
     ``write_context``; the local fleet-state writes via ``update_status`` /
     ``write_claimed_at``. Keeping this exhaustive is what makes ``dry_run_seams`` a
     write-blocking boundary rather than a flag — never add a side effect without
@@ -280,7 +280,7 @@ class TickSeams:
     worktree: WorktreeAccess
     pat_ok: Callable[[], bool] = field(default=_ado_pat_ok)
     auth_ok: Callable[[], bool] = field(default=_claude_auth_ok)
-    write_context: Callable[..., object] = field(default=write_slice_context)
+    write_context: Callable[..., object] = field(default=write_increment_context)
     read_manifest: Callable[[Path], ManifestRead] = field(default=read_manifest)
     commits_present: Callable[[Path, str], bool] = field(default=_read_commits_present)
     update_status: Callable[[int, StatusUpdate, Path], object] = field(default=update)
@@ -303,12 +303,12 @@ def supervisor_lock(fleet_root: Path) -> Generator[bool, None, None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-# --- a slice's gathered facts + its derived decision --------------------------
+# --- an increment's gathered facts + its derived decision --------------------------
 
 
 @dataclass(frozen=True, slots=True)
-class SliceView:
-    """One slice's gathered view this tick.
+class IncrementView:
+    """One increment's gathered view this tick.
 
     Carries the board item, the bucket it was read from, its ``status.json``
     breadcrumb, the gathered :class:`~squadra.domain.LifecycleFacts`, and the
@@ -322,7 +322,7 @@ class SliceView:
     decision: LifecycleDecision
 
     def branch(self, config: SquadraConfig) -> str:
-        """Return the slice's current branch (status fast-path, else derived)."""
+        """Return the increment's current branch (status fast-path, else derived)."""
         return _branch_for(self.item, self.status, config)
 
 
@@ -333,7 +333,7 @@ def run_tick(seams: TickSeams, config: SquadraConfig) -> int:
             _log("tick skipped — another tick holds the lock")
             return 0
         engine = LifecycleEngine()
-        views: list[SliceView] = _gather(seams, config, engine)
+        views: list[IncrementView] = _gather(seams, config, engine)
         if _claim_work_pending(views, config):
             # Both probes guard the claim/launch path only (finalize + reap never
             # claim and never touch this auth). The PAT probe runs first and
@@ -353,17 +353,21 @@ def run_tick(seams: TickSeams, config: SquadraConfig) -> int:
     return 0
 
 
-def _execute_non_claim(seams: TickSeams, config: SquadraConfig, views: Sequence[SliceView]) -> None:
+def _execute_non_claim(
+    seams: TickSeams, config: SquadraConfig, views: Sequence[IncrementView]
+) -> None:
     """Run the finalize + reap decisions only — the degraded auth-probe path.
 
-    Every claim/launch decision is dropped so no slice is claimed, but in-flight
+    Every claim/launch decision is dropped so no increment is claimed, but in-flight
     finalize and reap still proceed (they never claim and never touch that auth).
     """
     _execute(seams, config, [v for v in views if not _is_claim(v)])
 
 
-def _gather(seams: TickSeams, config: SquadraConfig, engine: LifecycleEngine) -> list[SliceView]:
-    """Build the per-slice fact set + decision for every fleet-relevant slice.
+def _gather(
+    seams: TickSeams, config: SquadraConfig, engine: LifecycleEngine
+) -> list[IncrementView]:
+    """Build the per-increment fact set + decision for every fleet-relevant increment.
 
     The fleet-relevant set is the union of the ACTIVE and DONE buckets (in-flight
     and finalize-eligible) and the QUEUED bucket (claim candidates). Each item is
@@ -374,13 +378,13 @@ def _gather(seams: TickSeams, config: SquadraConfig, engine: LifecycleEngine) ->
     for bucket in (Lifecycle.DONE, Lifecycle.ACTIVE, Lifecycle.QUEUED):
         for item in seams.ado.items_in_state(bucket):
             items[item.item_id] = (item, bucket)
-    views: list[SliceView] = []
+    views: list[IncrementView] = []
     for item_id in sorted(items):
         item, bucket = items[item_id]
         status: FleetStatus | None = load_or_none(item_id, config.fleet_root)
         facts: LifecycleFacts = _build_facts(seams, config, item, bucket, status)
         views.append(
-            SliceView(
+            IncrementView(
                 item=item,
                 lifecycle=bucket,
                 status=status,
@@ -398,7 +402,7 @@ def _build_facts(
     lifecycle: Lifecycle,
     status: FleetStatus | None,
 ) -> LifecycleFacts:
-    """Project one slice's observed reality onto the engine's ``LifecycleFacts``."""
+    """Project one increment's observed reality onto the engine's ``LifecycleFacts``."""
     tags: Tags = config.tags
     is_claimed: bool = tags.claimed in item.tags
     branch: str = _branch_for(item, status, config)
@@ -406,7 +410,7 @@ def _build_facts(
     worktree: Path = _worktree_for(branch, config)
 
     # Container liveness/exit — only meaningful for an in-flight, fleet-claimed
-    # slice; gathering it for the queued/done buckets is pointless I/O.
+    # increment; gathering it for the queued/done buckets is pointless I/O.
     sandbox_status: SandboxStatus = (
         seams.sandbox.inspect(spec)
         if lifecycle is Lifecycle.ACTIVE and is_claimed
@@ -454,7 +458,7 @@ def _build_facts(
 
 
 def _absent_manifest() -> ManifestRead:
-    """Return a neutral "no manifest" read for a slice whose container isn't exited."""
+    """Return a neutral "no manifest" read for an increment whose container isn't exited."""
     return ManifestRead(present=False, valid=False, needs_decision=False, manifest=None)
 
 
@@ -491,7 +495,7 @@ def _heartbeat_stale(item_id: int, status: FleetStatus | None, config: SquadraCo
 
     Mirrors the legacy reap age check: the status heartbeat, else the claimed-at
     marker (a claim whose runner never started). No evidence at all reads as not
-    stale here — a just-claimed slice with no breadcrumb is provisioning, not
+    stale here — a just-claimed increment with no breadcrumb is provisioning, not
     timed out (the engine routes that to PROVISIONING).
     """
     age: float | None = _liveness_age_seconds(item_id, status, config)
@@ -519,18 +523,18 @@ def _liveness_age_seconds(
 
 
 def _branch_for(item: WorkItem, status: FleetStatus | None, config: SquadraConfig) -> str:
-    """Resolve the slice's current branch (status fast-path, else derived from id+title)."""
+    """Resolve the increment's current branch (status fast-path, else derived from id+title)."""
     if status is not None:
         return status.branch
-    return slice_branch(item.item_id, item.title, 1, config.branch_template)
+    return increment_branch(item.item_id, item.title, 1, config.branch_template)
 
 
 def _spec_for(item_id: int, branch: str, config: SquadraConfig) -> SandboxSpec:
-    """Build the per-slice ephemeral sandbox spec for ``item_id`` on ``branch``."""
+    """Build the per-increment ephemeral sandbox spec for ``item_id`` on ``branch``."""
     worktree: Path = _worktree_for(branch, config)
     return SandboxSpec(
         item_id=item_id,
-        project=f"squadra-slice-{item_id}",
+        project=f"squadra-increment-{item_id}",
         compose_file=worktree / ".squadra" / COMPOSE_FILENAME,
         worktree=worktree,
         agent_service=AGENT_SERVICE,
@@ -545,15 +549,15 @@ def _worktree_for(branch: str, config: SquadraConfig) -> Path:
 # --- execution: map each engine intent onto the Access seams ------------------
 
 
-def _execute(seams: TickSeams, config: SquadraConfig, views: Sequence[SliceView]) -> None:
-    """Run every slice's decided actions, enforcing the cross-slice claim budget.
+def _execute(seams: TickSeams, config: SquadraConfig, views: Sequence[IncrementView]) -> None:
+    """Run every increment's decided actions, enforcing the cross-increment claim budget.
 
     Non-claim actions run first (finalize, retry, escalate, handoff, teardown);
     the claim budget is then applied over the engine's ``SignalClaimable`` set so
-    the orchestrator claims at most ``cap - inflight`` slices this tick.
+    the orchestrator claims at most ``cap - inflight`` increments this tick.
     """
     inflight: tuple[int, ...] = tuple(v.item.item_id for v in views if _is_inflight(v, config.tags))
-    claimable: list[SliceView] = []
+    claimable: list[IncrementView] = []
     for view in views:
         for action in view.decision.actions:
             if isinstance(action, SignalClaimable):
@@ -569,7 +573,7 @@ def _execute(seams: TickSeams, config: SquadraConfig, views: Sequence[SliceView]
 
 
 def _run_action(
-    seams: TickSeams, config: SquadraConfig, view: SliceView, action: LifecycleAction
+    seams: TickSeams, config: SquadraConfig, view: IncrementView, action: LifecycleAction
 ) -> None:
     """Dispatch one non-claim engine intent onto the Access seams."""
     match action:
@@ -583,7 +587,7 @@ def _run_action(
             _park_needs_decision(seams, config, view)
         case StopContainer():
             seams.sandbox.teardown(_spec(view, config))
-        case RetrySlice(edge=_, attempt=attempt):
+        case RetryIncrement(edge=_, attempt=attempt):
             _retry(seams, config, view, attempt)
         case EscalateExhausted(edge=_, attempt=attempt, cap=cap):
             _escalate(seams, config, view, attempt, cap)
@@ -595,8 +599,8 @@ def _run_action(
             return  # claim/launch handled in the budget pass
 
 
-def _finalize(seams: TickSeams, config: SquadraConfig, view: SliceView, pr_url: str) -> None:
-    """Deterministically retire a merged slice: cleanup, drop fleet tags, status→done.
+def _finalize(seams: TickSeams, config: SquadraConfig, view: IncrementView, pr_url: str) -> None:
+    """Deterministically retire a merged increment: cleanup, drop fleet tags, status→done.
 
     Cleanup is LLM-free (ADR-0002 decision 4): the supervisor knows the merged
     branch, so it deletes the branch, prunes/removes the worktree, and tears the
@@ -623,15 +627,15 @@ def _finalize(seams: TickSeams, config: SquadraConfig, view: SliceView, pr_url: 
         )
 
 
-def _handoff(seams: TickSeams, config: SquadraConfig, view: SliceView) -> None:
+def _handoff(seams: TickSeams, config: SquadraConfig, view: IncrementView) -> None:
     """Park a cleanly-finished agent run awaiting its PR + tear the sandbox down.
 
     The agent committed and wrote a valid handoff manifest; the supervisor parks
-    the slice ``awaiting-pr-approval`` (a deliberate park, never reaped) and tears
+    the increment ``awaiting-pr-approval`` (a deliberate park, never reaped) and tears
     the project down. The push + PR open + QA Task + work-item links the agent
     used to do itself are the remaining host-side write-tail consumed by G2 (the
     PR title/body travel in the manifest); F4 wires the park + teardown that
-    bracket them so the slice lifecycle is correct end-to-end.
+    bracket them so the increment lifecycle is correct end-to-end.
     """
     seams.ado.add_tag(view.item.item_id, config.tags.awaiting_pr_approval)
     if view.status is not None:
@@ -643,7 +647,7 @@ def _handoff(seams: TickSeams, config: SquadraConfig, view: SliceView) -> None:
     seams.sandbox.teardown(_spec(view, config))
 
 
-def _park_needs_decision(seams: TickSeams, config: SquadraConfig, view: SliceView) -> None:
+def _park_needs_decision(seams: TickSeams, config: SquadraConfig, view: IncrementView) -> None:
     """Park a ``needs-decision`` run for a human: tag it, no PR, tear the sandbox down."""
     seams.ado.add_tag(view.item.item_id, config.tags.needs_decision)
     if view.status is not None:
@@ -655,8 +659,8 @@ def _park_needs_decision(seams: TickSeams, config: SquadraConfig, view: SliceVie
     seams.sandbox.teardown(_spec(view, config))
 
 
-def _retry(seams: TickSeams, config: SquadraConfig, view: SliceView, attempt: int) -> None:
-    """Requeue a failed slice for another attempt (archive worktree, tear down, requeue).
+def _retry(seams: TickSeams, config: SquadraConfig, view: IncrementView, attempt: int) -> None:
+    """Requeue a failed increment for another attempt (archive worktree, tear down, requeue).
 
     Mirrors the legacy reap's board-side outcome: the dead attempt's worktree is
     archived for inspection and pruned, the sandbox is torn down, the status
@@ -687,11 +691,11 @@ def _retry(seams: TickSeams, config: SquadraConfig, view: SliceView, attempt: in
 
 
 def _escalate(
-    seams: TickSeams, config: SquadraConfig, view: SliceView, attempt: int, cap: int
+    seams: TickSeams, config: SquadraConfig, view: IncrementView, attempt: int, cap: int
 ) -> None:
-    """Escalate a slice whose retries are exhausted: tag failed, drop claimed, comment.
+    """Escalate an increment whose retries are exhausted: tag failed, drop claimed, comment.
 
-    Parity with the legacy reap exhaustion path: the slice keeps its native state
+    Parity with the legacy reap exhaustion path: the increment keeps its native state
     (it is not requeued), gains the ``failed`` tag, loses the ``claimed`` tag, and
     gets an ``Escalated`` comment. The dead attempt's resources are reclaimed.
     """
@@ -706,10 +710,12 @@ def _escalate(
     seams.ado.remove_tag(view.item.item_id, config.tags.claimed)
 
 
-def _escalate_egress(seams: TickSeams, config: SquadraConfig, view: SliceView, host: str) -> None:
+def _escalate_egress(
+    seams: TickSeams, config: SquadraConfig, view: IncrementView, host: str
+) -> None:
     """Escalate immediately on an egress-denied security signal, naming the host.
 
-    Never retried (ADR-0002 decision 6): the slice is tagged failed and gets an
+    Never retried (ADR-0002 decision 6): the increment is tagged failed and gets an
     ``Escalated`` comment carrying the denied host in its evidence; the sandbox is
     torn down. The fleet ``claimed`` tag is dropped so the item is no longer
     fleet-owned in flight.
@@ -727,13 +733,13 @@ def _escalate_egress(seams: TickSeams, config: SquadraConfig, view: SliceView, h
 def _claim_up_to_budget(
     seams: TickSeams,
     config: SquadraConfig,
-    claimable: Sequence[SliceView],
+    claimable: Sequence[IncrementView],
     inflight: Sequence[int],
 ) -> None:
-    """Claim+launch at most ``cap - inflight`` slices from the engine's claimable set.
+    """Claim+launch at most ``cap - inflight`` increments from the engine's claimable set.
 
-    The cross-slice claim budget stays orchestrator-side (the engine emits a
-    per-slice ``SignalClaimable``; this is the single place the cap is applied).
+    The cross-increment claim budget stays orchestrator-side (the engine emits a
+    per-increment ``SignalClaimable``; this is the single place the cap is applied).
     ``cap == 0`` claims nothing (claim-suppression only — the non-claim decisions
     already ran). Candidates are claimed in id order (deterministic).
     """
@@ -753,7 +759,7 @@ def _next_attempt(status: FleetStatus | None) -> int:
     """1 for a first claim; the previous attempt + 1 when a prior status exists.
 
     The engine emits ``SignalClaimable`` without an attempt (claimability is
-    attempt-blind); the orchestrator owns the retry numbering, so a slice with a
+    attempt-blind); the orchestrator owns the retry numbering, so an increment with a
     reaped prior attempt (its status records that attempt) claims ``attempt + 1``
     from a fresh worktree — the legacy claim pass's accounting.
     """
@@ -761,33 +767,33 @@ def _next_attempt(status: FleetStatus | None) -> int:
 
 
 def _escalate_at_claim(
-    seams: TickSeams, config: SquadraConfig, view: SliceView, attempt: int
+    seams: TickSeams, config: SquadraConfig, view: IncrementView, attempt: int
 ) -> None:
-    """Escalate a claimable slice whose next attempt would exceed the cap.
+    """Escalate a claimable increment whose next attempt would exceed the cap.
 
     A defensive parity backstop for the legacy claim pass: in the engine-driven
     tick a reap escalates at retry-time (tagging ``failed``, which makes the item
     terminal and never claimable), so this fires only for a manually-requeued
-    over-cap slice — it must never silently claim past the budget.
+    over-cap increment — it must never silently claim past the budget.
     """
     seams.ado.add_tag(view.item.item_id, config.tags.failed)
     seams.ado.add_comment(view.item.item_id, Escalated(attempt=attempt, cap=config.max_attempts))
 
 
 def _claim_and_launch(
-    seams: TickSeams, config: SquadraConfig, view: SliceView, attempt: int
+    seams: TickSeams, config: SquadraConfig, view: IncrementView, attempt: int
 ) -> bool:
-    """Run the claim protocol for one slice; roll back if create/launch fails.
+    """Run the claim protocol for one increment; roll back if create/launch fails.
 
     Protocol parity with the legacy claim pass plus the new commit-only setup: the
-    supervisor creates the slice worktree off fresh ``origin/main`` host-side and
-    injects the read-only slice context *before* the launch (ADR-0002 §§1–2), then
+    supervisor creates the increment worktree off fresh ``origin/main`` host-side and
+    injects the read-only increment context *before* the launch (ADR-0002 §§1–2), then
     moves the board (state→active, claimed tag, ``Claimed`` comment, claimed-at
     marker) and launches the sandbox. A failed worktree-create or launch rolls the
     claim back to QUEUED.
     """
     item: WorkItem = view.item
-    branch: str = slice_branch(item.item_id, item.title, attempt, config.branch_template)
+    branch: str = increment_branch(item.item_id, item.title, attempt, config.branch_template)
     spec: SandboxSpec = _spec_for(item.item_id, branch, config)
     now: str = _utcnow_iso()
     runner_id: str = f"runner-{item.item_id}-a{attempt}"
@@ -797,7 +803,7 @@ def _claim_and_launch(
     ).created:
         _log(f"claim: worktree create failed for #{item.item_id} ({branch}); not claimed")
         return False
-    seams.write_context(spec.worktree, _slice_context(seams, item))
+    seams.write_context(spec.worktree, _increment_context(seams, item))
 
     seams.ado.set_state(item.item_id, Lifecycle.ACTIVE)
     seams.ado.add_tag(item.item_id, config.tags.claimed)
@@ -811,11 +817,11 @@ def _claim_and_launch(
     return False
 
 
-def _slice_context(seams: TickSeams, item: WorkItem) -> SliceContext:
-    """Read the slice's Issue + Tasks + predecessor states for the agent's context.
+def _increment_context(seams: TickSeams, item: WorkItem) -> IncrementContext:
+    """Read the increment's Issue + Tasks + predecessor states for the agent's context.
 
     The contained agent has no board, so the supervisor reads what the agent would
-    have queried and injects it as ``slice.json``. The Tasks listing is left empty
+    have queried and injects it as ``increment.json``. The Tasks listing is left empty
     here — the board seam exposes links, not per-Task detail; G2's runner consumes
     the Issue + predecessor states, and the Task detail is a later seam extension.
     """
@@ -824,7 +830,7 @@ def _slice_context(seams: TickSeams, item: WorkItem) -> SliceContext:
         predecessor: seams.ado.item_state(predecessor).value
         for predecessor in links.predecessor_ids
     }
-    return SliceContext(
+    return IncrementContext(
         issue_id=item.item_id,
         title=item.title,
         tasks=(),
@@ -835,7 +841,7 @@ def _slice_context(seams: TickSeams, item: WorkItem) -> SliceContext:
 # --- claim-work gating for the auth probe (claim-only, ADR-0002 decision 4) ----
 
 
-def _claim_work_pending(views: Sequence[SliceView], config: SquadraConfig) -> bool:
+def _claim_work_pending(views: Sequence[IncrementView], config: SquadraConfig) -> bool:
     """Whether this tick will try to claim+launch — the only claude-dependent work.
 
     Finalize cleanup is deterministic now, so only a claim within budget pays for
@@ -847,18 +853,18 @@ def _claim_work_pending(views: Sequence[SliceView], config: SquadraConfig) -> bo
     return any(_is_claim(v) for v in views)
 
 
-def _is_claim(view: SliceView) -> bool:
-    """Whether a slice's decision is to claim (emits ``SignalClaimable``)."""
+def _is_claim(view: IncrementView) -> bool:
+    """Whether an increment's decision is to claim (emits ``SignalClaimable``)."""
     return any(isinstance(action, SignalClaimable) for action in view.decision.actions)
 
 
-def _is_inflight(view: SliceView, tags: Tags) -> bool:
-    """Whether a slice counts against the claim budget (fleet-claimed + ACTIVE)."""
+def _is_inflight(view: IncrementView, tags: Tags) -> bool:
+    """Whether an increment counts against the claim budget (fleet-claimed + ACTIVE)."""
     return view.lifecycle is Lifecycle.ACTIVE and tags.claimed in view.item.tags
 
 
-def _spec(view: SliceView, config: SquadraConfig) -> SandboxSpec:
-    """Build the sandbox spec for a slice's current branch."""
+def _spec(view: IncrementView, config: SquadraConfig) -> SandboxSpec:
+    """Build the sandbox spec for an increment's current branch."""
     return _spec_for(view.item.item_id, view.branch(config), config)
 
 
@@ -938,11 +944,11 @@ def _dry_run_auth_ok() -> bool:
 
 
 def _dry_run_write_context(worktree: Path, _context: object) -> Path:
-    """Absorb the slice-context injection, logging it; return the would-be path."""
-    from squadra.manifest import slice_context_path  # noqa: PLC0415
+    """Absorb the increment-context injection, logging it; return the would-be path."""
+    from squadra.manifest import increment_context_path  # noqa: PLC0415
 
-    path: Path = slice_context_path(worktree)
-    _log(f"[dry-run] WOULD inject slice context at {path}")
+    path: Path = increment_context_path(worktree)
+    _log(f"[dry-run] WOULD inject increment context at {path}")
     return path
 
 
@@ -962,7 +968,7 @@ def dry_run_seams(seams: TickSeams) -> TickSeams:
     Reads pass through — the tick still gathers facts and decides, reporting the
     would-be actions — but every write (board, sandbox launch/teardown/exec,
     deterministic cleanup, worktree create/archive/prune, the PAT + claude auth
-    probes, slice-context injection, local status/marker files) becomes a logged
+    probes, increment-context injection, local status/marker files) becomes a logged
     ``[dry-run] WOULD …`` no-op. The fact-gathering read seams (``sandbox.inspect``
     / ``logs``, ``read_manifest``, ``commits_present``) stay real: they are pure
     reads and the plan is meaningless without them. The tick lock and supervisor
@@ -995,7 +1001,7 @@ def build_seams(config: SquadraConfig, *, dry_run: bool = False) -> TickSeams:
         return seams
     _log(
         "DRY-RUN tick: reads and planning only — every board write, sandbox launch/"
-        "teardown, deterministic cleanup, worktree change, PAT + claude probe, slice-context "
+        "teardown, deterministic cleanup, worktree change, PAT + claude probe, increment-context "
         "injection, and local fleet-state write is suppressed and logged as '[dry-run] WOULD …'"
     )
     return dry_run_seams(seams)

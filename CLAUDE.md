@@ -1,7 +1,7 @@
 # squadra — project instructions
 
-squadra is the packaged, reusable extraction of the AFK vertical-slice fleet
-(deterministic supervisor + per-slice runner machinery) originally built inside
+squadra is the packaged, reusable extraction of the AFK implementation fleet
+(deterministic supervisor + per-increment runner machinery) originally built inside
 a private backend project. It drives an unattended, board-driven Claude
 implementation fleet against a **target repository** identified by `FLEET_HOME`.
 
@@ -13,7 +13,7 @@ See `README.md` for how the fleet works and how to run it.
 - Build: **uv + Hatchling**, PEP 621 `[project]`, **src layout** (`src/squadra/`).
 - Tooling: **ruff** (lint) + **pyright (strict)** + **pytest**, all via `uv run`.
 - Console scripts: `squadra` — the unified argparse CLI
-  (`init`/`tick`/`start`/`stop`/`status`/`log` + `squadra slice
+  (`init`/`tick`/`start`/`stop`/`status`/`log` + `squadra increment
   {init|update|heartbeat|show}`). `python -m squadra.supervisor` and
   `python -m squadra.status` remain as internal module entry points.
 
@@ -27,7 +27,7 @@ src/squadra/
 ├── config.py           # SquadraConfig + tomllib loader (defaults < toml < env < flag)
 ├── board.py            # BoardAccess seam + AzCliAdo adapter + provider registry
 ├── engines.py          # pure claim/reap/finalize/naming decisions (no I/O)
-├── status.py           # per-slice status.json convention + ops (`squadra slice`)
+├── status.py           # per-increment status.json convention + ops (`squadra increment`)
 ├── supervisor.py       # the deterministic, token-free tick (python -m squadra.supervisor)
 ├── cli.py              # unified argparse `squadra` — the API / composition root
 ├── _resources.py       # resolve packaged shell glue via importlib.resources (+chmod +x)

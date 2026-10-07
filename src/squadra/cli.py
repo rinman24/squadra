@@ -10,7 +10,7 @@ into one surface (ADR-0001 decision 3), superseding the earlier thin
   and optionally validate the config against the live board (``--check``).
 - ``squadra tick`` — run one supervisor tick in-process (no shell). The
   supervisor (and, transitively, the board adapter) is imported lazily inside
-  the handler so importing this module for ``squadra init`` / ``squadra slice``
+  the handler so importing this module for ``squadra init`` / ``squadra increment``
   stays lean and free of the heavyweight tick dependencies.
 - ``squadra fleet-tick`` — the fleet-host tick entry (ADR-0002 §11): fetch the
   PAT + ``ANTHROPIC_API_KEY`` from Key Vault via the VM managed identity and
@@ -25,7 +25,7 @@ into one surface (ADR-0001 decision 3), superseding the earlier thin
   installed package data, with ``FLEET_PYTHON`` defaulted to this interpreter so
   each tick / runner reaches ``squadra.*`` regardless of what ``python3``
   resolves to on PATH. (The fleet-host uses systemd, not this.)
-- ``squadra slice {init|update|heartbeat|show}`` — the per-slice
+- ``squadra increment {init|update|heartbeat|show}`` — the per-increment
   ``status.json`` ops (the new noun replacing the retired ``squadra-status``
   console script).
 """
@@ -41,7 +41,7 @@ from squadra._resources import resolve_script
 from squadra.config import DEFAULT_PROVIDER, ConfigError, load_config
 
 _FLEETCTL_SUBCOMMANDS: tuple[str, ...] = ("start", "stop", "status", "log")
-_SLICE_SUBCOMMANDS: tuple[str, ...] = ("init", "update", "heartbeat", "show")
+_INCREMENT_SUBCOMMANDS: tuple[str, ...] = ("init", "update", "heartbeat", "show")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -75,8 +75,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return extra_handlers[command](extra)
     if command in known:
         return _cmd_fleetctl(command, extra)
-    if command == "slice":
-        return _cmd_slice(namespace, extra)
+    if command == "increment":
+        return _cmd_increment(namespace, extra)
     parser.print_help(sys.stderr)
     return 2
 
@@ -160,7 +160,9 @@ def _build_parser() -> tuple[argparse.ArgumentParser, frozenset[str]]:
 
     for name in _FLEETCTL_SUBCOMMANDS:
         subparsers.add_parser(name, help=f"ticker control: {name} (shells to fleetctl.sh)")
-    subparsers.add_parser("slice", help="per-slice status.json ops {init|update|heartbeat|show}")
+    subparsers.add_parser(
+        "increment", help="per-increment status.json ops {init|update|heartbeat|show}"
+    )
 
     return parser, frozenset(_FLEETCTL_SUBCOMMANDS)
 
@@ -207,7 +209,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
 def _check_config(fleet_home: Path, provider: str) -> int:
     """Build the provider and validate the resolved config against the board."""
     # Imported here (not at module top) so this remains the only place that
-    # pulls in the board adapter; keeps `squadra slice` / `init` lean and lets
+    # pulls in the board adapter; keeps `squadra increment` / `init` lean and lets
     # tests stub the seam without a live az CLI.
     from squadra.board import BoardValidationError, build_board  # noqa: PLC0415
 
@@ -225,7 +227,7 @@ def _cmd_tick(extra: Sequence[str]) -> int:
     """Run one supervisor tick in-process, forwarding ``extra`` to the supervisor.
 
     The supervisor is imported lazily here (never at module load) so importing
-    :mod:`squadra.cli` for ``init``/``slice`` stays free of the tick's board
+    :mod:`squadra.cli` for ``init``/``increment`` stays free of the tick's board
     adapter + tmux dependencies.
     """
     from squadra import supervisor  # noqa: PLC0415
@@ -344,16 +346,16 @@ def _cmd_fleetctl(command: str, extra: Sequence[str]) -> int:
         return 127
 
 
-def _cmd_slice(args: argparse.Namespace, extra: Sequence[str]) -> int:
-    """Delegate a ``slice`` subcommand to the per-slice ``status.json`` CLI.
+def _cmd_increment(args: argparse.Namespace, extra: Sequence[str]) -> int:
+    """Delegate an ``increment`` subcommand to the per-increment ``status.json`` CLI.
 
-    The first positional after ``slice`` is the status subcommand
+    The first positional after ``increment`` is the status subcommand
     (``init``/``update``/``heartbeat``/``show``); everything else passes through
     to :func:`squadra.status.main` unchanged.
     """
     if not extra:
         print(
-            f"squadra slice: expected a subcommand {list(_SLICE_SUBCOMMANDS)}",
+            f"squadra increment: expected a subcommand {list(_INCREMENT_SUBCOMMANDS)}",
             file=sys.stderr,
         )
         return 2

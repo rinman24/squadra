@@ -58,9 +58,9 @@ class _RecordingRunner:
 def test_delete_branch_runs_git_branch_delete() -> None:
     runner = _RecordingRunner()
     cleanup = DeterministicCleanup(fleet_home=_REPO, run=runner)
-    assert cleanup.delete_branch("feat/slice-9-x") is True
+    assert cleanup.delete_branch("feat/increment-9-x") is True
     assert _is_guarded_git(runner.calls[-1])
-    assert _git_subcommand(runner.calls[-1]) == ["branch", "-D", "feat/slice-9-x"]
+    assert _git_subcommand(runner.calls[-1]) == ["branch", "-D", "feat/increment-9-x"]
 
 
 def test_delete_branch_reports_failure_on_nonzero_exit() -> None:
@@ -72,9 +72,9 @@ def test_delete_branch_reports_failure_on_nonzero_exit() -> None:
 def test_remove_worktree_runs_git_worktree_remove_force() -> None:
     runner = _RecordingRunner()
     cleanup = DeterministicCleanup(fleet_home=_REPO, run=runner)
-    assert cleanup.remove_worktree("/wt/slice-9") is True
+    assert cleanup.remove_worktree("/wt/increment-9") is True
     assert _is_guarded_git(runner.calls[-1])
-    assert _git_subcommand(runner.calls[-1]) == ["worktree", "remove", "--force", "/wt/slice-9"]
+    assert _git_subcommand(runner.calls[-1]) == ["worktree", "remove", "--force", "/wt/increment-9"]
 
 
 def test_prune_worktrees_runs_git_worktree_prune() -> None:
@@ -88,22 +88,22 @@ def test_prune_worktrees_runs_git_worktree_prune() -> None:
 def test_compose_down_runs_docker_compose_down_with_volumes() -> None:
     runner = _RecordingRunner()
     cleanup = DeterministicCleanup(fleet_home=_REPO, run=runner)
-    assert cleanup.compose_down("slice-9") is True
+    assert cleanup.compose_down("increment-9") is True
     # docker is not a git op — asserted verbatim (no hooks guard).
-    assert runner.calls[-1] == ["docker", "compose", "-p", "slice-9", "down", "-v"]
+    assert runner.calls[-1] == ["docker", "compose", "-p", "increment-9", "down", "-v"]
 
 
 def test_compose_down_reports_failure_on_nonzero_exit() -> None:
-    runner = _RecordingRunner(fail_on=(("compose", "-p", "slice-9", "down", "-v"),))
+    runner = _RecordingRunner(fail_on=(("compose", "-p", "increment-9", "down", "-v"),))
     cleanup = DeterministicCleanup(fleet_home=_REPO, run=runner)
-    assert cleanup.compose_down("slice-9") is False
+    assert cleanup.compose_down("increment-9") is False
 
 
 def test_finalize_runs_branch_then_worktree_then_compose_in_order() -> None:
     runner = _RecordingRunner()
     cleanup = DeterministicCleanup(fleet_home=_REPO, run=runner)
     result: CleanupResult = cleanup.finalize(
-        branch="feat/slice-9-x", worktree="/wt/slice-9", project="slice-9"
+        branch="feat/increment-9-x", worktree="/wt/increment-9", project="increment-9"
     )
     assert result == CleanupResult(
         branch_deleted=True, worktree_removed=True, pruned=True, compose_down=True
@@ -112,20 +112,20 @@ def test_finalize_runs_branch_then_worktree_then_compose_in_order() -> None:
     git_subs: list[list[str]] = [_git_subcommand(c) for c in runner.calls[:3]]
     assert all(_is_guarded_git(c) for c in runner.calls[:3])
     assert git_subs == [
-        ["branch", "-D", "feat/slice-9-x"],
-        ["worktree", "remove", "--force", "/wt/slice-9"],
+        ["branch", "-D", "feat/increment-9-x"],
+        ["worktree", "remove", "--force", "/wt/increment-9"],
         ["worktree", "prune"],
     ]
-    assert runner.calls[3] == ["docker", "compose", "-p", "slice-9", "down", "-v"]
+    assert runner.calls[3] == ["docker", "compose", "-p", "increment-9", "down", "-v"]
 
 
 def test_finalize_reports_per_step_failure_without_aborting_the_sequence() -> None:
     # The worktree remove fails, but prune + compose-down still run (best effort,
     # deterministic): a leftover worktree must not block tearing the project down.
-    runner = _RecordingRunner(fail_on=(("worktree", "remove", "--force", "/wt/slice-9"),))
+    runner = _RecordingRunner(fail_on=(("worktree", "remove", "--force", "/wt/increment-9"),))
     cleanup = DeterministicCleanup(fleet_home=_REPO, run=runner)
     result: CleanupResult = cleanup.finalize(
-        branch="feat/slice-9-x", worktree="/wt/slice-9", project="slice-9"
+        branch="feat/increment-9-x", worktree="/wt/increment-9", project="increment-9"
     )
     assert result == CleanupResult(
         branch_deleted=True, worktree_removed=False, pruned=True, compose_down=True

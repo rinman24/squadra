@@ -1,22 +1,22 @@
-# Slice runner skill (consumer-owned template)
+# Increment runner skill (consumer-owned template)
 
 <!--
   SCAFFOLDED BY `squadra init`. This is YOUR copy — edit it freely.
 
   squadra ships the deterministic machinery (supervisor, status CLI, runner
   wrapper, host-side manifest I/O); the *skill* that actually implements one
-  board slice is yours, because only you know your repo's gates, conventions,
+  board increment is yours, because only you know your repo's gates, conventions,
   and review process.
 
   Wire this file in as the skill named by `[pipeline].runner_skill` in
-  squadra.toml (default `/afk-slice-runner`). The runner wrapper invokes it
-  headlessly, once per claimed slice, with these prompt arguments:
+  squadra.toml (default `/afk-increment-runner`). The runner wrapper invokes it
+  headlessly, once per claimed increment, with these prompt arguments:
 
       <runner-skill> issue-id=<id> branch=<branch> attempt=<n> \
                      tdd-skill=<tdd> qa-skill=<qa>
 
   PRODUCE-ARTIFACTS CONTRACT: this runner is CONTAINED and CREDENTIAL-FREE. It
-  reads its slice context from a host-injected `.squadra/slice.json` and its
+  reads its increment context from a host-injected `.squadra/increment.json` and its
   ONLY outputs are (1) the commits it makes and (2) a `.squadra/outcome.json`
   manifest it writes as its final act. It performs NO remote/board writes — no
   push, no PR open, no tags, no comments, no state moves. The supervisor (which
@@ -25,7 +25,7 @@
   to this skill.
 
   PROVIDER-AGNOSTIC: nothing here is tied to a specific board provider. "The
-  board" means whatever provider squadra.toml configures; "the slice" is one
+  board" means whatever provider squadra.toml configures; "the increment" is one
   work item; fleet tags (e.g. `fleet:qa-ready`) are applied by the supervisor
   through squadra's machinery, never by you. Keep it that way so this skill
   survives a provider swap.
@@ -33,7 +33,7 @@
 
 ## You are contained — no credentials, no board, no remote
 
-You run inside a per-slice sandbox: **no credentials, no board client, no remote,
+You run inside a per-increment sandbox: **no credentials, no board client, no remote,
 no push.** You therefore perform **zero remote/board writes**. Your entire output
 to the outside world is:
 
@@ -50,7 +50,7 @@ remote/board tail and the finalize tick owns cleanup.
 
 The wrapper passes these in your prompt; parse them:
 
-- `issue-id` — the board work-item id for this slice.
+- `issue-id` — the board work-item id for this increment.
 - `branch` — the feature branch the wrapper already derived for you.
 - `attempt` — the attempt counter (1-based); higher means a prior attempt was
   reaped/retried, so start from a clean worktree.
@@ -60,13 +60,13 @@ The wrapper passes these in your prompt; parse them:
   skill name; do not hardcode `/qa`.** Defaults to `/qa` when unset.
 
 You have **no board access**, so the supervisor read the board for you and
-injected a read-only **`.squadra/slice.json`** in the worktree root. That is your
-slice context (squadra `SliceContext` schema):
+injected a read-only **`.squadra/increment.json`** in the worktree root. That is your
+increment context (squadra `IncrementContext` schema):
 
 ```json
 {
   "issue_id": 146,
-  "title": "Slice G2 — …",
+  "title": "Increment G2 — …",
   "tasks": [ { "task_id": 178, "title": "…", "state": "Doing" } ],
   "predecessor_states": { "143": "Done" }
 }
@@ -78,7 +78,7 @@ Report progress through squadra's status CLI (never edit `status.json` by hand)
 so the supervisor's heartbeat/reap/finalize logic stays coherent:
 
 ```bash
-# `squadra slice` if on PATH, else the module form (always available):
+# `squadra increment` if on PATH, else the module form (always available):
 python -m squadra.status update --issue-id <id> --phase <phase> \
   [--parked-state <state>] [--add-worker <name>] [--last-error <msg>]
 ```
@@ -92,28 +92,28 @@ the PR host-side from your manifest.
 
 Execute these phases in order. Stop and park on any unrecoverable point.
 
-1. **Verify the claim from `.squadra/slice.json`.** Read the Issue, its Tasks, and
+1. **Verify the claim from `.squadra/increment.json`.** Read the Issue, its Tasks, and
    `predecessor_states` from the injected file (you have no board to query). The
-   supervisor only claims unblocked slices, but verify: if any predecessor is
+   supervisor only claims unblocked increments, but verify: if any predecessor is
    **not `Done`**, or the Issue/Tasks are too ambiguous to implement, park
-   `needs-decision` (step 6) instead of guessing. If a guard makes this slice
+   `needs-decision` (step 6) instead of guessing. If a guard makes this increment
    un-runnable in the sandbox (e.g. it requires network egress your sandbox
    blocks), park `needs-decision` with a clear message rather than attempting it.
-2. **You already start on the slice worktree.** Do **not** enter or create a
+2. **You already start on the increment worktree.** Do **not** enter or create a
    worktree. The wrapper created the branch worktree off fresh `origin/main`, put
    your HEAD on the branch, and bind-mounted it; just commit into it. All edits
    happen here, never in the primary checkout.
 3. **Write shared seams BEFORE fan-out.** Set `--phase seams`. If you will
    parallelize work, first write and commit the shared interfaces/types/contracts
-   the parallel tasks depend on, so fanned-out work cannot diverge on the seam. A
-   slice with no shared seams skips this step.
+   the parallel tasks depend on, so fanned-out work cannot diverge on the seam. An
+   increment with no shared seams skips this step.
 4. **Run the tdd skill (produce-artifacts mode).** Set `--phase tdd`, then invoke
-   the skill named by `tdd-skill`. It implements the slice test-first with clean
+   the skill named by `tdd-skill`. It implements the increment test-first with clean
    commits and your gates green — but **no board moves and no PR open**. Instead
    it **drafts the PR title + body** and reports them up to you; hold them for the
    manifest (step 6). Record any spawned workers with `--add-worker`. Workers are
-   collaborators on this one slice — spawn them WITHOUT worktree isolation, only
-   in parallel when file-disjoint. Stay inside your slice; do not start other
+   collaborators on this one increment — spawn them WITHOUT worktree isolation, only
+   in parallel when file-disjoint. Stay inside your increment; do not start other
    work items.
 5. **Run the qa skill (produce-artifacts mode).** Set `--phase qa`, then invoke
    the skill named by `qa-skill`. It writes the QA plan to a file in the worktree
@@ -157,7 +157,7 @@ Choose the outcome:
 - **Normal:** write `pr_title` + `pr_body` (from the tdd skill) and `qa_path`
   (from the qa skill); `parked_state=awaiting-pr-approval`. The supervisor pushes
   the commits, opens the PR with that exact title/body linking the Issue + Tasks,
-  lands the QA task from `qa_path`, and parks the slice awaiting approval.
+  lands the QA task from `qa_path`, and parks the increment awaiting approval.
 - **`needs-decision`:** write only `parked_state=needs-decision` (no PR fields).
   The supervisor opens **no** PR and leaves it for a human; put the exact
   question in `--last-error` and the run log.
@@ -167,7 +167,7 @@ Choose the outcome:
 ## Gates
 
 <!-- FILL IN: your repo's lint / type / test commands. The qa skill (step 5)
-     runs these; the slice is not park-ready until they all pass. Replace the
+     runs these; the increment is not park-ready until they all pass. Replace the
      examples below with your real commands. -->
 
 ```bash

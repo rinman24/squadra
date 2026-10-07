@@ -1,7 +1,7 @@
 """Fleet status-file convention.
 
-One ``status.json`` per slice at ``<fleet-root>/<issue-id>/status.json`` is the
-micro view of a slice runner: runtime phase, parked state, worker roster and
+One ``status.json`` per increment at ``<fleet-root>/<issue-id>/status.json`` is the
+micro view of an increment runner: runtime phase, parked state, worker roster and
 liveness heartbeat. The fleet root lives under the target repo's
 ``.claude/fleet`` (``FLEET_HOME``); on a bind-mounted checkout it survives
 container restart, and it is excluded from git there.
@@ -52,7 +52,7 @@ class FleetStatusError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class FleetStatus:
-    """Schema of a slice's ``status.json`` — field set fixed by the addendum."""
+    """Schema of an increment's ``status.json`` — field set fixed by the addendum."""
 
     issue_id: int
     runner_id: str
@@ -104,14 +104,14 @@ _SCHEMA_KEYS: Final[tuple[str, ...]] = (
 )
 
 
-def slice_dir(issue_id: int, fleet_root: Path = FLEET_ROOT) -> Path:
-    """Return the per-slice artifact directory ``<fleet-root>/<issue-id>``."""
+def increment_dir(issue_id: int, fleet_root: Path = FLEET_ROOT) -> Path:
+    """Return the per-increment artifact directory ``<fleet-root>/<issue-id>``."""
     return fleet_root / str(issue_id)
 
 
 def status_path(issue_id: int, fleet_root: Path = FLEET_ROOT) -> Path:
-    """Return the path of the slice's ``status.json``."""
-    return slice_dir(issue_id, fleet_root) / STATUS_FILENAME
+    """Return the path of the increment's ``status.json``."""
+    return increment_dir(issue_id, fleet_root) / STATUS_FILENAME
 
 
 def new_status(
@@ -121,7 +121,7 @@ def new_status(
     worktree: str,
     attempt: int = 1,
 ) -> FleetStatus:
-    """Build a fresh status for a just-claimed slice (phase ``claiming``)."""
+    """Build a fresh status for a just-claimed increment (phase ``claiming``)."""
     now: str = _utcnow_iso()
     return FleetStatus(
         issue_id=issue_id,
@@ -147,12 +147,12 @@ def write(status: FleetStatus, fleet_root: Path = FLEET_ROOT) -> None:
 
 
 def load(issue_id: int, fleet_root: Path = FLEET_ROOT) -> FleetStatus:
-    """Load and validate a slice's status; raise ``FileNotFoundError`` if absent."""
+    """Load and validate an increment's status; raise ``FileNotFoundError`` if absent."""
     return _read(status_path(issue_id, fleet_root))
 
 
 def load_or_none(issue_id: int, fleet_root: Path = FLEET_ROOT) -> FleetStatus | None:
-    """Load a slice's status, or return ``None`` when no status file exists."""
+    """Load an increment's status, or return ``None`` when no status file exists."""
     try:
         return load(issue_id, fleet_root)
     except FileNotFoundError:
@@ -258,8 +258,8 @@ def _apply(current: FleetStatus, changes: StatusUpdate) -> FleetStatus:
 
 @contextmanager
 def _status_lock(issue_id: int, fleet_root: Path) -> Generator[None, None, None]:
-    """Hold an exclusive sidecar flock for the slice's status file."""
-    directory: Path = slice_dir(issue_id, fleet_root)
+    """Hold an exclusive sidecar flock for the increment's status file."""
+    directory: Path = increment_dir(issue_id, fleet_root)
     directory.mkdir(parents=True, exist_ok=True)
     with (directory / _LOCK_FILENAME).open("w", encoding="utf-8") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
@@ -356,7 +356,7 @@ def _build_parser() -> argparse.ArgumentParser:
     """Build the argparse tree for the four subcommands."""
     parser = argparse.ArgumentParser(
         prog="fleet-status",
-        description="Read and write the per-slice fleet status file.",
+        description="Read and write the per-increment fleet status file.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

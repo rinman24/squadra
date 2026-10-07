@@ -42,12 +42,12 @@ def fleet_root(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def default_status() -> FleetStatus:
-    """Stable, valid status instance for slice item #41."""
+    """Stable, valid status instance for increment item #41."""
     return FleetStatus(
         issue_id=41,
         runner_id="runner-41-a1",
-        branch="feat/slice-41-example",
-        worktree="/work/.claude/worktrees/feat+slice-41-example",
+        branch="feat/increment-41-example",
+        worktree="/work/.claude/worktrees/feat+increment-41-example",
         pr_url=None,
         phase="claiming",
         parked_state=None,
@@ -80,7 +80,9 @@ def make_issue(fake_board: FakeBoard) -> Callable[..., FakeIssue]:
     """Factory fixture — build a board work item (QUEUED, untagged) and seed it."""
 
     def _factory(item_id: int, **overrides: object) -> FakeIssue:
-        base = FakeIssue(item_id=item_id, title=f"feat: slice {item_id}", state=Lifecycle.QUEUED)
+        base = FakeIssue(
+            item_id=item_id, title=f"feat: increment {item_id}", state=Lifecycle.QUEUED
+        )
         issue: FakeIssue = dataclasses.replace(base, **overrides)
         fake_board.add_issue(issue)
         return issue
@@ -171,9 +173,9 @@ def make_config(fleet_root: Path, tmp_path: Path) -> Callable[..., SquadraConfig
 
 @pytest.fixture
 def default_facts() -> LifecycleFacts:
-    """A benign baseline ``LifecycleFacts`` — a fleet-claimed slice mid-run.
+    """A benign baseline ``LifecycleFacts`` — a fleet-claimed increment mid-run.
 
-    The neutral starting point is an in-flight, fleet-claimed slice whose
+    The neutral starting point is an in-flight, fleet-claimed increment whose
     container is running and fresh (no failure inputs, no manifest yet): the
     :class:`~squadra.domain.State.RUNNING` state. Each test overrides only the
     facts it exercises via the ``make_facts`` factory.

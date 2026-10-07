@@ -98,26 +98,26 @@ assert "args: non-numeric attempt exits 64" [ "$?" -eq 64 ]
 
 ROOT1="$TMP/fleet1"
 FLEET_ROOT=$ROOT1 FLEET_CLAUDE_CMD="$TMP/bin/claude-park" \
-  bash "$WRAP" 41 feat/slice-41-x 1 >/dev/null 2>&1
+  bash "$WRAP" 41 feat/increment-41-x 1 >/dev/null 2>&1
 assert "park: wrapper exits 0" [ "$?" -eq 0 ]
 assert "park: phase is parked" [ "$(field "$ROOT1" 41 phase)" = "parked" ]
 assert "park: parked_state preserved" \
   [ "$(field "$ROOT1" 41 parked_state)" = "awaiting-pr-approval" ]
 assert "park: pr_url recorded" [ "$(field "$ROOT1" 41 pr_url)" = "https://pr/41" ]
 assert "park: roster recorded" grep -q 'task-1' "$ROOT1/41/status.json"
-assert "park: branch seeded" [ "$(field "$ROOT1" 41 branch)" = "feat/slice-41-x" ]
+assert "park: branch seeded" [ "$(field "$ROOT1" 41 branch)" = "feat/increment-41-x" ]
 assert "park: worktree derived with /->+" \
-  [ "$(field "$ROOT1" 41 worktree)" = "$FLEET_HOME/.claude/worktrees/feat+slice-41-x" ]
+  [ "$(field "$ROOT1" 41 worktree)" = "$FLEET_HOME/.claude/worktrees/feat+increment-41-x" ]
 assert "park: runner.pid written" grep -qE '^[0-9]+$' "$ROOT1/41/runner.pid"
 refute "park: no pane-id without TMUX_PANE" [ -f "$ROOT1/41/pane-id" ]
 assert "park: runner.log written" grep -q 'runner-41-a1' "$ROOT1/41/runner.log"
 assert "park: prompt names the skill and inputs" \
-  grep -q '/afk-slice-runner issue-id=41 branch=feat/slice-41-x attempt=1 tdd-skill=/tdd qa-skill=/qa' \
+  grep -q '/afk-increment-runner issue-id=41 branch=feat/increment-41-x attempt=1 tdd-skill=/tdd qa-skill=/qa' \
     "$TMP/claude-args"
 assert "park: tdd/qa skills default from squadra.config" \
   grep -q 'tdd-skill=/tdd qa-skill=/qa' "$TMP/claude-args"
 assert "park: runner skill defaults from squadra.config" \
-  grep -q '/afk-slice-runner issue-id=' "$TMP/claude-args"
+  grep -q '/afk-increment-runner issue-id=' "$TMP/claude-args"
 assert "park: permissions skipped for headless run" \
   grep -q -- '--dangerously-skip-permissions' "$TMP/claude-args"
 CONSTANTS_MODEL=$("$PYTHON" -c 'from squadra.constants import FLEET_MODEL; print(FLEET_MODEL)')
@@ -133,16 +133,16 @@ refute "park: heartbeat loop killed on exit" kill -0 "$HB_PID"
 
 ROOT2="$TMP/fleet2"
 FLEET_ROOT=$ROOT2 FLEET_CLAUDE_CMD="$TMP/bin/claude-park" TMUX_PANE='%7' \
-  bash "$WRAP" 41 feat/slice-41-x 1 >/dev/null 2>&1
+  bash "$WRAP" 41 feat/increment-41-x 1 >/dev/null 2>&1
 assert "pane: pane-id recorded from TMUX_PANE" [ "$(cat "$ROOT2/41/pane-id")" = "%7" ]
 
 # --- unexpected death: backstop ---------------------------------------------------
 
 ROOT3="$TMP/fleet3"
 FLEET_ROOT=$ROOT3 FLEET_CLAUDE_CMD="$TMP/bin/claude-die" \
-  bash "$WRAP" 41 feat/slice-41-x 2 >/dev/null 2>&1
+  bash "$WRAP" 41 feat/increment-41-x 2 >/dev/null 2>&1
 assert "die: non-zero exit propagated" [ "$?" -eq 7 ]
-assert "die: backstop parks the slice" [ "$(field "$ROOT3" 41 phase)" = "parked" ]
+assert "die: backstop parks the increment" [ "$(field "$ROOT3" 41 phase)" = "parked" ]
 assert "die: parked_state is failed" [ "$(field "$ROOT3" 41 parked_state)" = "failed" ]
 assert "die: last_error records the rc" \
   grep -q 'runner exited unexpectedly (rc=7' "$ROOT3/41/status.json"
@@ -152,7 +152,7 @@ assert "die: attempt seeded from argv" [ "$(field "$ROOT3" 41 attempt)" = "2" ]
 
 ROOT4="$TMP/fleet4"
 FLEET_ROOT=$ROOT4 FLEET_CLAUDE_CMD="$TMP/bin/claude-park-then-die" \
-  bash "$WRAP" 41 feat/slice-41-x 1 >/dev/null 2>&1
+  bash "$WRAP" 41 feat/increment-41-x 1 >/dev/null 2>&1
 assert "parked-rc: non-zero exit propagated" [ "$?" -eq 3 ]
 assert "parked-rc: agent's parked_state kept" \
   [ "$(field "$ROOT4" 41 parked_state)" = "needs-decision" ]
@@ -161,7 +161,7 @@ assert "parked-rc: agent's parked_state kept" \
 
 ROOT5="$TMP/fleet5"
 FLEET_ROOT=$ROOT5 FLEET_CLAUDE_CMD="$TMP/bin/claude-slow-park" \
-  bash "$WRAP" 41 feat/slice-41-x 1 >/dev/null 2>&1
+  bash "$WRAP" 41 feat/increment-41-x 1 >/dev/null 2>&1
 assert "liveness: wrapper exits 0" [ "$?" -eq 0 ]
 STARTED=$(field "$ROOT5" 41 started_at)
 LAST_HB=$(field "$ROOT5" 41 last_heartbeat)
@@ -173,9 +173,9 @@ ROOT6="$TMP/fleet6"
 CONSTANTS_DEFAULT=$(FLEET_HEARTBEAT_INTERVAL_SECONDS= "$PYTHON" -c \
   'from squadra.constants import HEARTBEAT_INTERVAL_SECONDS; print(HEARTBEAT_INTERVAL_SECONDS)')
 FLEET_ROOT=$ROOT6 FLEET_CLAUDE_CMD="$TMP/bin/claude-park" FLEET_HEARTBEAT_INTERVAL_SECONDS= \
-  bash "$WRAP" 41 feat/slice-41-x 1 >/dev/null 2>&1
+  bash "$WRAP" 41 feat/increment-41-x 1 >/dev/null 2>&1
 assert "interval-default: wrapper exits 0 with var unset" [ "$?" -eq 0 ]
-assert "interval-default: slice still parks" [ "$(field "$ROOT6" 41 phase)" = "parked" ]
+assert "interval-default: increment still parks" [ "$(field "$ROOT6" 41 phase)" = "parked" ]
 assert "interval-default: interval resolved from constants.py" \
   grep -q "heartbeat ${CONSTANTS_DEFAULT}s" "$ROOT6/41/runner.log"
 
@@ -184,7 +184,7 @@ assert "interval-default: interval resolved from constants.py" \
 ROOT7="$TMP/fleet7"
 FLEET_ROOT=$ROOT7 FLEET_CLAUDE_CMD="$TMP/bin/claude-park" \
   FLEET_MODEL=claude-sonnet-4-6 FLEET_EFFORT=medium \
-  bash "$WRAP" 41 feat/slice-41-x 1 >/dev/null 2>&1
+  bash "$WRAP" 41 feat/increment-41-x 1 >/dev/null 2>&1
 assert "model-override: wrapper exits 0" [ "$?" -eq 0 ]
 assert "model-override: --model uses the env value" \
   grep -qx -- 'claude-sonnet-4-6' "$TMP/claude-args"
@@ -196,13 +196,13 @@ assert "model-override: --effort uses the env value" \
 ROOT8="$TMP/fleet8"
 FLEET_ROOT=$ROOT8 FLEET_CLAUDE_CMD="$TMP/bin/claude-park" \
   FLEET_RUNNER_SKILL=/my-runner FLEET_TDD_SKILL=/my-tdd FLEET_QA_SKILL=/my-qa \
-  bash "$WRAP" 41 feat/slice-41-x 1 >/dev/null 2>&1
+  bash "$WRAP" 41 feat/increment-41-x 1 >/dev/null 2>&1
 assert "skill-override: wrapper exits 0" [ "$?" -eq 0 ]
 assert "skill-override: prompt uses the env runner/tdd/qa skill names" \
-  grep -q '/my-runner issue-id=41 branch=feat/slice-41-x attempt=1 tdd-skill=/my-tdd qa-skill=/my-qa' \
+  grep -q '/my-runner issue-id=41 branch=feat/increment-41-x attempt=1 tdd-skill=/my-tdd qa-skill=/my-qa' \
     "$TMP/claude-args"
 refute "skill-override: default skill names absent when overridden" \
-  grep -q '/afk-slice-runner' "$TMP/claude-args"
+  grep -q '/afk-increment-runner' "$TMP/claude-args"
 
 # --- summary -----------------------------------------------------------------
 

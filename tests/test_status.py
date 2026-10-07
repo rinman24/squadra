@@ -55,7 +55,7 @@ def test_status_file_keys_match_addendum_schema(
 
 
 def test_new_status_seeds_fresh_lifecycle_fields() -> None:
-    status: FleetStatus = new_status(7, "runner-7-a2", "feat/slice-7-x", "/tmp/wt7", attempt=2)
+    status: FleetStatus = new_status(7, "runner-7-a2", "feat/increment-7-x", "/tmp/wt7", attempt=2)
     assert status.phase == "claiming"
     assert status.parked_state is None
     assert status.worker_roster == ()
@@ -196,7 +196,7 @@ def test_cli_init_then_show_round_trips(
                 "--runner-id",
                 "runner-9-a1",
                 "--branch",
-                "feat/slice-9-x",
+                "feat/increment-9-x",
                 "--worktree",
                 "/tmp/wt9",
                 "--fleet-root",
@@ -221,7 +221,7 @@ def test_cli_update_park_and_heartbeat(fleet_root: Path) -> None:
             "--runner-id",
             "runner-9-a1",
             "--branch",
-            "feat/slice-9-x",
+            "feat/increment-9-x",
             "--worktree",
             "/tmp/wt9",
             "--fleet-root",
@@ -263,7 +263,7 @@ def test_cli_update_unparks_with_none(fleet_root: Path) -> None:
             "--runner-id",
             "runner-9-a1",
             "--branch",
-            "feat/slice-9-x",
+            "feat/increment-9-x",
             "--worktree",
             "/tmp/wt9",
             "--fleet-root",

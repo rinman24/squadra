@@ -44,13 +44,13 @@ def _now() -> str:
 
 
 def _project(item_id: int) -> str:
-    return f"squadra-slice-{item_id}"
+    return f"squadra-increment-{item_id}"
 
 
 # --- finalize parity ----------------------------------------------------------
 
 
-def test_finalize_retires_a_merged_done_slice(
+def test_finalize_retires_a_merged_done_increment(
     fleet_root: Path,
     fake_board: FakeBoard,
     fake_cleanup: FakeCleanup,
@@ -65,12 +65,12 @@ def test_finalize_retires_a_merged_done_slice(
         tags=["fleet:claimed", "fleet:awaiting-pr-approval", "regular-tag"],
     )
     write(make_status(phase="parked", parked_state="awaiting-pr-approval"), fleet_root)
-    fake_board.completed_prs["feat/slice-41-example"] = "https://pr/41"
+    fake_board.completed_prs["feat/increment-41-example"] = "https://pr/41"
 
     assert run_tick(make_seams(), make_config()) == 0
 
     # Deterministic cleanup ran (no LLM) for the known merged branch.
-    assert fake_cleanup.deleted_branches == ["feat/slice-41-example"]
+    assert fake_cleanup.deleted_branches == ["feat/increment-41-example"]
     assert fake_cleanup.composed_down == [_project(41)]
     # Fleet tags dropped, the regular tag kept, a Finalized comment, status -> done.
     assert fake_board.issues[41].tags == ["regular-tag"]
@@ -100,14 +100,14 @@ def test_finalize_waits_for_the_pr_to_merge(
     assert "fleet:claimed" in fake_board.issues[41].tags
 
 
-def test_finalize_ignores_done_slices_the_fleet_never_claimed(
+def test_finalize_ignores_done_increments_the_fleet_never_claimed(
     fake_board: FakeBoard,
     fake_cleanup: FakeCleanup,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
     make_config: Callable[..., SquadraConfig],
 ) -> None:
-    make_issue(9, state=Lifecycle.DONE)  # a human-delivered slice
+    make_issue(9, state=Lifecycle.DONE)  # a human-delivered increment
     assert run_tick(make_seams(), make_config()) == 0
     assert fake_cleanup.deleted_branches == []
     assert fake_board.comments == {}
@@ -124,8 +124,8 @@ def test_finalize_partial_cleanup_is_retried_next_tick(
 ) -> None:
     make_issue(41, state=Lifecycle.DONE, tags=["fleet:claimed"])
     write(make_status(phase="parked", parked_state="awaiting-pr-approval"), fleet_root)
-    fake_board.completed_prs["feat/slice-41-example"] = "https://pr/41"
-    fake_cleanup.fail_branches.add("feat/slice-41-example")  # branch delete fails
+    fake_board.completed_prs["feat/increment-41-example"] = "https://pr/41"
+    fake_cleanup.fail_branches.add("feat/increment-41-example")  # branch delete fails
 
     assert run_tick(make_seams(), make_config()) == 0
 
@@ -363,7 +363,7 @@ def test_agent_timeout_stops_the_container_then_requeues(
 
     assert run_tick(make_seams(), make_config()) == 0
 
-    # StopContainer then RetrySlice -> torn down + requeued.
+    # StopContainer then RetryIncrement -> torn down + requeued.
     assert any(spec.project == _project(41) for spec in fake_sandbox.teardowns)
     assert fake_board.item_state(41) == Lifecycle.QUEUED
     assert any(isinstance(event, Reaped) for event in fake_board.comments[41])

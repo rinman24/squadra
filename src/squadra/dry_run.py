@@ -12,7 +12,7 @@ physically cannot mutate git, docker, or the filesystem through these seams.
 These wrappers live here, alongside the board's ``ReadOnlyBoard`` analogue, rather
 than in ``supervisor.py``; the orchestration that wires them into ``dry_run_seams``
 (extending the ``TickSeams`` exhaustiveness invariant) is the F4 cutover and is out
-of scope for this slice.
+of scope for this increment.
 """
 
 from datetime import UTC, datetime

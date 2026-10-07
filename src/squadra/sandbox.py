@@ -1,7 +1,7 @@
 """The sandbox ResourceAccess seam (ADR-0002 decisions 1 & 5).
 
 ``SandboxAccess`` is the provider-neutral contract the supervisor's orchestration
-(F4) depends on to run one slice's Claude agent in a per-slice ephemeral Docker
+(F4) depends on to run one increment's Claude agent in a per-increment ephemeral Docker
 compose project — the **agent-as-command, one-shot, inspect-driven** model:
 ``launch`` does build + ``compose up -d`` and returns immediately (the
 non-blocking tick is preserved), the container's lifecycle *is* the agent's
@@ -13,7 +13,7 @@ The seam speaks the neutral :class:`~squadra.domain.SandboxStatus` /
 :class:`~squadra.domain.ExecResult` vocabulary and takes a
 :class:`~squadra.domain.SandboxSpec`; it never returns Docker-native strings.
 ``ComposeSandbox`` is the concrete compose-backed adapter (a later behavior in
-this slice) and ``DryRunSandbox`` the write-blocking dry-run decorator (mirroring
+this increment) and ``DryRunSandbox`` the write-blocking dry-run decorator (mirroring
 :class:`squadra.supervisor.ReadOnlyBoard`).
 """
 
@@ -38,12 +38,12 @@ class SandboxAccess(Protocol):
 
     Replaces the ``Launcher`` protocol. ``launch`` / ``teardown`` / ``exec`` are
     the mutations; ``inspect`` / ``logs`` are the reads (so the dry-run decorator
-    blocks exactly the mutations). All take a :class:`SandboxSpec` — the per-slice
-    compose project — so one adapter instance serves every concurrent slice.
+    blocks exactly the mutations). All take a :class:`SandboxSpec` — the per-increment
+    compose project — so one adapter instance serves every concurrent increment.
     """
 
     def launch(self, spec: SandboxSpec) -> bool:
-        """Build and start the slice's sandbox (``compose up -d``), non-blocking.
+        """Build and start the increment's sandbox (``compose up -d``), non-blocking.
 
         Returns ``False`` when the build or the up failed (the ``build-failed``
         failure edge); ``True`` once the agent container has been created. The

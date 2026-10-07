@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # runner-wrap.sh — the fleet pane command.
 #
-# Thin deterministic shell around one slice runner. It seeds status.json, owns
+# Thin deterministic shell around one increment runner. It seeds status.json, owns
 # the heartbeat loop (liveness = "process alive", independent of whatever long
 # tool call the agent is in), records pid/pane sidecars for the watchdog,
 # invokes the headless Claude session on the configured runner skill, and backstops an
 # unexpected exit by stamping parked_state=failed. The supervisor launches one
-# of these per claimed slice into its own detached-tmux pane.
+# of these per claimed increment into its own detached-tmux pane.
 #
 # This script ships as squadra package data; the supervisor resolves it via
 # importlib.resources (squadra._resources.resolve_script) and passes the
@@ -25,7 +25,7 @@
 #                                     in squadra.constants)
 #   FLEET_EFFORT                      claude --effort for the runner (default: FLEET_EFFORT
 #                                     in squadra.constants)
-#   FLEET_RUNNER_SKILL                slice-runner skill name (default: DEFAULT_RUNNER_SKILL
+#   FLEET_RUNNER_SKILL                increment-runner skill name (default: DEFAULT_RUNNER_SKILL
 #                                     in squadra.config)
 #   FLEET_TDD_SKILL                   tdd skill passed to the runner (default: DEFAULT_TDD_SKILL
 #                                     in squadra.config)
@@ -81,10 +81,10 @@ EOF
   QA_SKILL=${QA_SKILL:-$d_qa}
 fi
 
-SLICE_DIR=$FLEET_ROOT/$ISSUE_ID
-mkdir -p "$SLICE_DIR"
-# Everything below shows in the tmux pane AND lands in the slice log.
-exec > >(tee -a "$SLICE_DIR/runner.log") 2>&1
+INCREMENT_DIR=$FLEET_ROOT/$ISSUE_ID
+mkdir -p "$INCREMENT_DIR"
+# Everything below shows in the tmux pane AND lands in the increment log.
+exec > >(tee -a "$INCREMENT_DIR/runner.log") 2>&1
 
 RUNNER_ID="runner-${ISSUE_ID}-a${ATTEMPT}-$(date -u +%Y%m%dT%H%M%SZ)"
 WORKTREE=$FLEET_HOME/.claude/worktrees/$(printf '%s' "$BRANCH" | tr '/' '+')
@@ -98,9 +98,9 @@ fleet_status init --issue-id "$ISSUE_ID" --runner-id "$RUNNER_ID" \
 
 # Sidecars: the reap pass confirms a stale runner is genuinely dead via
 # runner.pid before requeueing; pane-id lets it kill a wedged pane.
-echo "$$" >"$SLICE_DIR/runner.pid"
+echo "$$" >"$INCREMENT_DIR/runner.pid"
 if [ -n "${TMUX_PANE:-}" ]; then
-  echo "$TMUX_PANE" >"$SLICE_DIR/pane-id"
+  echo "$TMUX_PANE" >"$INCREMENT_DIR/pane-id"
 fi
 
 # The wrapper — not the agent — owns liveness: last_heartbeat advances every
@@ -113,7 +113,7 @@ heartbeat_loop() {
 }
 heartbeat_loop &
 HB_PID=$!
-echo "$HB_PID" >"$SLICE_DIR/heartbeat.pid"
+echo "$HB_PID" >"$INCREMENT_DIR/heartbeat.pid"
 # Reap the loop before exiting so its pid is truly gone (not a zombie) by the
 # time anything inspects heartbeat.pid.
 cleanup() {
@@ -136,7 +136,7 @@ RC=$?
 # Backstop: a healthy runner always exits parked (or done). Anything else is
 # an unexpected death — record it so the watchdog/humans see why. A session
 # that parked and then exited non-zero keeps its own parked_state.
-PHASE=$(STATUS_FILE="$SLICE_DIR/status.json" "$PYTHON" -c \
+PHASE=$(STATUS_FILE="$INCREMENT_DIR/status.json" "$PYTHON" -c \
   'import json, os; print(json.load(open(os.environ["STATUS_FILE"])).get("phase", ""))' \
   2>/dev/null) || PHASE=""
 [ -n "$PHASE" ] || PHASE=unknown

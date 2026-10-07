@@ -82,7 +82,7 @@ class RolledBack:
 
 @dataclass(frozen=True, slots=True)
 class Finalized:
-    """A merged slice was retired: its PR completed and its branch cleaned up."""
+    """A merged increment was retired: its PR completed and its branch cleaned up."""
 
     pr_url: str
     branch: str
@@ -98,7 +98,7 @@ class Reaped:
 
 @dataclass(frozen=True, slots=True)
 class Escalated:
-    """A slice exhausted its retry budget and was escalated to the failed tag."""
+    """An increment exhausted its retry budget and was escalated to the failed tag."""
 
     attempt: int
     cap: int
@@ -127,22 +127,22 @@ class Tags:
 
     @property
     def failed(self) -> str:
-        """The escalation tag for a slice whose retries are exhausted."""
+        """The escalation tag for an increment whose retries are exhausted."""
         return f"{self.prefix}{TAG_SUFFIX_FAILED}"
 
     @property
     def needs_decision(self) -> str:
-        """The deliberate-park tag for a slice awaiting a human decision."""
+        """The deliberate-park tag for an increment awaiting a human decision."""
         return f"{self.prefix}{TAG_SUFFIX_NEEDS_DECISION}"
 
     @property
     def qa_ready(self) -> str:
-        """The deliberate-park tag for a slice parked at QA."""
+        """The deliberate-park tag for an increment parked at QA."""
         return f"{self.prefix}{TAG_SUFFIX_QA_READY}"
 
     @property
     def awaiting_pr_approval(self) -> str:
-        """The deliberate-park tag for a slice whose PR awaits approval."""
+        """The deliberate-park tag for an increment whose PR awaits approval."""
         return f"{self.prefix}{TAG_SUFFIX_AWAITING_PR_APPROVAL}"
 
     @property
@@ -191,18 +191,18 @@ class ReapOutcome:
 # --- LifecycleEngine: derived-state FSM vocabulary (ADR-0002 decision 3) ------
 #
 # The :class:`LifecycleEngine` (in :mod:`squadra.engines`) is a pure, zero-I/O,
-# *derived-state* FSM: each tick it projects one slice's observed reality
+# *derived-state* FSM: each tick it projects one increment's observed reality
 # (:class:`LifecycleFacts`) onto exactly one :class:`State` and the closed set of
 # :data:`LifecycleAction` intents the orchestrator must execute. ``State`` is
 # never persisted — it is recomputed from facts every tick, which preserves the
 # crash-only idempotence of the original finalize/reap/claim passes (no drift
 # between a stored state and board/container reality). These types are the FSM's
 # vocabulary; the engine that consumes them is wired into the live tick in a
-# later slice (F4), not here.
+# later increment (F4), not here.
 
 
 class State(Enum):
-    """The derived lifecycle state of one slice, projected from observed facts.
+    """The derived lifecycle state of one increment, projected from observed facts.
 
     Subsumes the implicit states of today's finalize/reap/claim passes plus the
     new contained-runner states. A *projection of reality each tick*, never an
@@ -210,7 +210,7 @@ class State(Enum):
 
     - :attr:`BLOCKED` — predecessors not all done; not yet claimable.
     - :attr:`CLAIMABLE` — unblocked, unclaimed, queued; the engine emits the
-      per-slice signal and the orchestrator claims up to the cross-slice cap.
+      per-increment signal and the orchestrator claims up to the cross-increment cap.
     - :attr:`PROVISIONING` — claimed, runner not yet observed running (no
       container / no liveness evidence yet).
     - :attr:`RUNNING` — the contained agent is alive and heartbeating.
@@ -224,9 +224,9 @@ class State(Enum):
     - :attr:`AGENT_TIMEOUT` — the container is still alive but its heartbeat is
       stale; the agent is stopped (``docker stop``) before being treated as
       failed.
-    - :attr:`AWAITING_PR` — the slice handed off and now waits for its PR to
+    - :attr:`AWAITING_PR` — the increment handed off and now waits for its PR to
       complete (a deliberate park, never reaped).
-    - :attr:`FINALIZING` — the slice's PR has completed; deterministic cleanup
+    - :attr:`FINALIZING` — the increment's PR has completed; deterministic cleanup
       (branch delete + worktree prune + ``compose down -v``) runs.
     - :attr:`DONE` — terminal: finalized and retired.
     - :attr:`ESCALATED` — terminal: retries exhausted, or an immediate-escalation
@@ -256,7 +256,7 @@ class FailureEdge(Enum):
     The classification is the security-sensitive heart of the FSM (ADR-0002
     decision 6 / plan §7). Three edges are *transient* and retry under the
     attempt budget; one is a *security signal* that escalates immediately; one is
-    *orthogonal* and never blocks the slice's board lifecycle:
+    *orthogonal* and never blocks the increment's board lifecycle:
 
     - :attr:`BUILD_FAILED` — the sandbox image build failed (often transient: a
       cold pull or a flaky registry). Retry under ``max_attempts``.
@@ -270,7 +270,7 @@ class FailureEdge(Enum):
       immediately**, naming the denied host; never retried.
     - :attr:`TEARDOWN_FAILED` — ``compose down -v`` left resources behind. An
       orthogonal leak, swept (retried) on later ticks and alerted if persistent;
-      it never blocks the slice's board lifecycle.
+      it never blocks the increment's board lifecycle.
     """
 
     BUILD_FAILED = "build-failed"
@@ -282,7 +282,7 @@ class FailureEdge(Enum):
 
 # Failure edges that retry under the attempt budget (escalate only on exhaustion)
 # vs. the edge that escalates on first sight. ``TEARDOWN_FAILED`` is in neither —
-# it is orthogonal to the slice lifecycle and handled as a non-blocking sweep.
+# it is orthogonal to the increment lifecycle and handled as a non-blocking sweep.
 RETRYABLE_FAILURE_EDGES: tuple[FailureEdge, ...] = (
     FailureEdge.BUILD_FAILED,
     FailureEdge.AGENT_CRASH,
@@ -293,10 +293,10 @@ IMMEDIATE_ESCALATION_EDGES: tuple[FailureEdge, ...] = (FailureEdge.EGRESS_DENIED
 
 @dataclass(frozen=True, slots=True)
 class LifecycleFacts:  # noqa: PLR0902 - a fact projection is intentionally wide
-    """The observed reality of one slice this tick — the FSM's sole input.
+    """The observed reality of one increment this tick — the FSM's sole input.
 
     A pure projection assembled host-side by the orchestrator (F4) from board
-    truth, the fleet tag set, the slice ``status.json`` breadcrumb, ``docker
+    truth, the fleet tag set, the increment ``status.json`` breadcrumb, ``docker
     inspect``, the bind-mounted outcome manifest, the commit count in
     ``base..HEAD``, the egress-proxy deny log, and the completed-PR query. The
     engine reads *only* these fields — it performs no I/O and derives ``State``
@@ -306,7 +306,7 @@ class LifecycleFacts:  # noqa: PLR0902 - a fact projection is intentionally wide
 
     - ``lifecycle`` / ``is_fleet_claimed`` / ``predecessors_done`` — board truth:
       the neutral bucket, whether the fleet (not a human) claimed it, and whether
-      every predecessor slice is done.
+      every predecessor increment is done.
     - ``parked_tagged`` / ``failed_tagged`` / ``needs_decision_tagged`` — fleet
       tags already on the item (a deliberate park, an escalation, a decision
       park). ``parked_tagged`` is the prefix-based "carries any parked tag".
@@ -322,7 +322,7 @@ class LifecycleFacts:  # noqa: PLR0902 - a fact projection is intentionally wide
       ``needs-decision``.
     - ``commits_present`` — at least one commit exists in ``base..HEAD`` (the
       substance half of the completion triple).
-    - ``completed_pr_url`` — the slice branch's completed-PR url, or ``None``.
+    - ``completed_pr_url`` — the increment branch's completed-PR url, or ``None``.
     - ``build_failed`` / ``egress_denied_host`` / ``teardown_failed`` — the
       classified failure inputs: an image build that failed, the host named in an
       egress-proxy denial (``None`` when none), and a teardown that left a leak.
@@ -374,12 +374,12 @@ class LifecycleFacts:  # noqa: PLR0902 - a fact projection is intentionally wide
 
 @dataclass(frozen=True, slots=True)
 class SignalClaimable:
-    """Emit the per-slice claimable signal; the orchestrator claims up to the cap."""
+    """Emit the per-increment claimable signal; the orchestrator claims up to the cap."""
 
 
 @dataclass(frozen=True, slots=True)
 class LaunchSandbox:
-    """Build + launch the slice's sandbox (the provisioning step)."""
+    """Build + launch the increment's sandbox (the provisioning step)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -403,8 +403,8 @@ class StopContainer:
 
 
 @dataclass(frozen=True, slots=True)
-class RetrySlice:
-    """Requeue the slice for another attempt (under the attempt budget).
+class RetryIncrement:
+    """Requeue the increment for another attempt (under the attempt budget).
 
     ``attempt`` is the attempt number that just failed; the next claim runs
     ``attempt + 1`` from a fresh worktree.
@@ -457,7 +457,7 @@ LifecycleAction = (
     | HandoffAgentDone
     | ParkNeedsDecision
     | StopContainer
-    | RetrySlice
+    | RetryIncrement
     | EscalateExhausted
     | EscalateEgressDenied
     | SweepLeak
@@ -468,10 +468,10 @@ LifecycleAction = (
 
 @dataclass(frozen=True, slots=True)
 class LifecycleDecision:
-    """The engine's verdict for one slice this tick: a state and its actions.
+    """The engine's verdict for one increment this tick: a state and its actions.
 
     ``actions`` is ordered — the orchestrator executes them in sequence (e.g. a
-    timed-out slice yields ``(StopContainer, RetrySlice|EscalateExhausted)``, and
+    timed-out increment yields ``(StopContainer, RetryIncrement|EscalateExhausted)``, and
     a leaked teardown appends a :class:`SweepLeak` to whatever the primary
     lifecycle decision was). It is never empty: a state with nothing to do emits
     a single :class:`NoAction`.
@@ -483,8 +483,8 @@ class LifecycleDecision:
 
 # --- Sandbox vocabulary (the SandboxAccess seam — ADR-0002 decisions 1 & 5) ---
 #
-# The :class:`SandboxAccess` seam (in :mod:`squadra.sandbox`) runs one slice's
-# Claude agent as a per-slice ephemeral Docker compose project. These types are
+# The :class:`SandboxAccess` seam (in :mod:`squadra.sandbox`) runs one increment's
+# Claude agent as a per-increment ephemeral Docker compose project. These types are
 # the seam's neutral vocabulary: a :class:`SandboxSpec` names the project the
 # orchestrator launches; :data:`SandboxStatus` is the observed container state
 # the agent-as-command model derives the agent's liveness/exit from; and an
@@ -495,16 +495,16 @@ class LifecycleDecision:
 
 @dataclass(frozen=True, slots=True)
 class SandboxSpec:
-    """The per-slice ephemeral sandbox a launch targets (a compose project).
+    """The per-increment ephemeral sandbox a launch targets (a compose project).
 
     A neutral descriptor, not a Docker artifact: the adapter maps it to its own
     ``compose -p <project> -f <compose_file>`` invocation and bind-mounts
     ``worktree`` as the agent's ``/work``.
 
-    - ``item_id`` — the slice's board work-item id (also the launch attempt's
+    - ``item_id`` — the increment's board work-item id (also the launch attempt's
       identity in logs).
     - ``project`` — the compose project name (the unit ``teardown`` removes
-      wholesale; one project per slice attempt keeps concurrent slices isolated).
+      wholesale; one project per increment attempt keeps concurrent increments isolated).
     - ``compose_file`` — the target-repo-owned ``.squadra/`` compose file the
       adapter runs (target repos own the compose by convention, ADR-0002 §15).
     - ``worktree`` — the host path bind-mounted as the agent's ``/work`` (the
@@ -562,11 +562,11 @@ class ExecResult:
     stdout: str
 
 
-# --- manifest / slice-context vocabulary (the commit-only handoff, §§1–2) -----
+# --- manifest / increment-context vocabulary (the commit-only handoff, §§1–2) -----
 #
 # The commit-only agent and the host exchange two bind-mounted JSON files under
 # the worktree's ``.squadra/`` (both uncommitted, gitignored): the supervisor
-# injects a read-only :class:`SliceContext` (``slice.json``) *before* launch —
+# injects a read-only :class:`IncrementContext` (``increment.json``) *before* launch —
 # the board reads the agent no longer performs itself — and the agent writes an
 # :class:`OutcomeManifest` (``outcome.json``) as its final act, which the
 # supervisor reads + validates *after* exit. The manifest is the *intent* half of
@@ -576,8 +576,8 @@ class ExecResult:
 
 
 @dataclass(frozen=True, slots=True)
-class SliceTask:
-    """One Task of the slice, as the host read it for the agent's context."""
+class IncrementTask:
+    """One Task of the increment, as the host read it for the agent's context."""
 
     task_id: int
     title: str
@@ -585,17 +585,17 @@ class SliceTask:
 
 
 @dataclass(frozen=True, slots=True)
-class SliceContext:
-    """The read-only host→agent input (``slice.json``).
+class IncrementContext:
+    """The read-only host→agent input (``increment.json``).
 
-    The supervisor reads the slice's Issue + Tasks + predecessor states host-side
+    The supervisor reads the increment's Issue + Tasks + predecessor states host-side
     and injects them so the contained agent — which has no board access — has the
     context it would otherwise have queried itself.
     """
 
     issue_id: int
     title: str
-    tasks: tuple[SliceTask, ...]
+    tasks: tuple[IncrementTask, ...]
     predecessor_states: Mapping[int, str]
 
 

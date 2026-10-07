@@ -5,7 +5,7 @@ as a "read-only smoke" finalized two already-done items, because the cap only ze
 the *claim* budget — the non-claim decisions still mutate. The fix is a boundary,
 not a flag: ``dry_run_seams`` wraps every mutating seam, so a dry-run tick with
 finalize-, reap- AND claim-eligible work performs zero writes anywhere (board,
-sandbox, cleanup, worktree, slice-context, local fleet state) while still reporting
+sandbox, cleanup, worktree, increment-context, local fleet state) while still reporting
 every would-be action. The exhaustiveness invariant is checked directly: every
 mutating ``TickSeams`` field differs from the production default under dry-run, and
 the read seams stay real.
@@ -62,16 +62,16 @@ def test_dry_run_tick_mutates_nothing_and_reports_every_would_be_action(
     # #40 finalize-eligible (done + fleet:claimed + completed PR),
     make_issue(40, title="feat: merged", state=Lifecycle.DONE, tags=["fleet:claimed"])
     write(
-        make_status(issue_id=40, runner_id="r-40", branch="feat/slice-40-merged"),
+        make_status(issue_id=40, runner_id="r-40", branch="feat/increment-40-merged"),
         fleet_root,
     )
-    fake_board.completed_prs["feat/slice-40-merged"] = "https://pr/40"
+    fake_board.completed_prs["feat/increment-40-merged"] = "https://pr/40"
     # #41 reap-eligible (active + fleet:claimed, container exited non-zero -> crash),
     make_issue(41, title="feat: example", state=Lifecycle.ACTIVE, tags=["fleet:claimed"])
     write(make_status(phase="tdd", last_heartbeat=_ANCIENT), fleet_root)
-    fake_sandbox.seed("squadra-slice-41", SandboxExited(exit_code=1))
+    fake_sandbox.seed("squadra-increment-41", SandboxExited(exit_code=1))
     # #50 claim-eligible (queued, untagged, unblocked).
-    make_issue(50, title="feat: fresh slice")
+    make_issue(50, title="feat: fresh increment")
 
     issues_before = copy.deepcopy(fake_board.issues)
     status_before: FleetStatus = load(41, fleet_root)
@@ -97,18 +97,19 @@ def test_dry_run_tick_mutates_nothing_and_reports_every_would_be_action(
 
     # The would-be actions are still planned and reported.
     out: str = capsys.readouterr().out
-    assert "WOULD delete branch 'feat/slice-40-merged'" in out
-    assert "WOULD compose down -v project 'squadra-slice-40'" in out
+    assert "WOULD delete branch 'feat/increment-40-merged'" in out
+    assert "WOULD compose down -v project 'squadra-increment-40'" in out
     assert "WOULD remove tag 'fleet:claimed' from #40" in out
     assert "WOULD comment on #40" in out
     assert "WOULD archive worktree" in out  # reap of #41
     assert "WOULD move #41 to queued" in out
-    assert "WOULD tear down sandbox squadra-slice-41" in out
+    assert "WOULD tear down sandbox squadra-increment-41" in out
     assert "WOULD create worktree" in out  # claim of #50
-    assert "WOULD inject slice context" in out
+    assert "on branch 'feat/increment-50-fresh-increment'" in out  # default template
+    assert "WOULD inject increment context" in out
     assert "WOULD move #50 to active" in out
     assert "WOULD add tag 'fleet:claimed' to #50" in out
-    assert "WOULD launch sandbox squadra-slice-50" in out
+    assert "WOULD launch sandbox squadra-increment-50" in out
 
 
 def test_dry_run_skips_the_auth_probe_but_still_plans_the_claim(
@@ -121,7 +122,7 @@ def test_dry_run_skips_the_auth_probe_but_still_plans_the_claim(
 ) -> None:
     # Claimable work normally triggers the auth preflight; in dry-run even the probe
     # is a side effect (a spawned `claude -p`), so it must be skipped-and-logged.
-    make_issue(50, title="feat: fresh slice")
+    make_issue(50, title="feat: fresh increment")
 
     def _probe_must_not_run() -> bool:
         raise AssertionError("dry-run must never invoke the real auth probe")
@@ -130,7 +131,7 @@ def test_dry_run_skips_the_auth_probe_but_still_plans_the_claim(
     assert run_tick(seams, make_config()) == 0
     out: str = capsys.readouterr().out
     assert "WOULD run the claude auth preflight" in out
-    assert "WOULD launch sandbox squadra-slice-50" in out
+    assert "WOULD launch sandbox squadra-increment-50" in out
     assert fake_sandbox.launches == []
 
 
@@ -144,7 +145,7 @@ def test_dry_run_skips_the_pat_probe_but_still_plans_the_claim(
 ) -> None:
     # Claimable work normally triggers the PAT preflight; in dry-run even the probe
     # is a side effect (a spawned `git ls-remote`), so it must be skipped-and-logged.
-    make_issue(50, title="feat: fresh slice")
+    make_issue(50, title="feat: fresh increment")
 
     def _probe_must_not_run() -> bool:
         raise AssertionError("dry-run must never invoke the real PAT probe")
@@ -153,7 +154,7 @@ def test_dry_run_skips_the_pat_probe_but_still_plans_the_claim(
     assert run_tick(seams, make_config()) == 0
     out: str = capsys.readouterr().out
     assert "WOULD run the ADO PAT auth preflight" in out
-    assert "WOULD launch sandbox squadra-slice-50" in out
+    assert "WOULD launch sandbox squadra-increment-50" in out
     assert fake_sandbox.launches == []
 
 
@@ -189,11 +190,11 @@ def test_read_only_board_passes_reads_through(
     make_issue: Callable[..., FakeIssue],
 ) -> None:
     make_issue(40, title="feat: merged", state=Lifecycle.DONE, tags=["fleet:claimed"])
-    fake_board.completed_prs["feat/slice-40-merged"] = "https://pr/40"
+    fake_board.completed_prs["feat/increment-40-merged"] = "https://pr/40"
     client = ReadOnlyBoard(fake_board)
     assert [ref.item_id for ref in client.items_in_state(Lifecycle.DONE)] == [40]
     assert client.item_state(40) == Lifecycle.DONE
-    assert client.completed_pr_url("feat/slice-40-merged") == "https://pr/40"
+    assert client.completed_pr_url("feat/increment-40-merged") == "https://pr/40"
     assert client.item_links(40).parent_id is None
 
 

@@ -5,7 +5,7 @@ derived-state FSM live here; the orchestration and I/O that consume them stay in
 ``supervisor``.
 
 :class:`LifecycleEngine` is the subsuming, derived-state FSM (ADR-0002 decision
-3): one pure ``decide(facts) -> LifecycleDecision`` that projects a slice's
+3): one pure ``decide(facts) -> LifecycleDecision`` that projects an increment's
 observed reality onto a :class:`~squadra.domain.State` plus the orchestrator
 intents to execute. It subsumes the legacy finalize / reap / claim passes — and
 the old ``is_parked`` / ``is_failed_park`` predicates they used — by folding the
@@ -29,7 +29,7 @@ from squadra.domain import (
     LifecycleFacts,
     NoAction,
     ParkNeedsDecision,
-    RetrySlice,
+    RetryIncrement,
     SignalClaimable,
     State,
     StopContainer,
@@ -37,21 +37,21 @@ from squadra.domain import (
 )
 
 
-def slice_branch(
+def increment_branch(
     item_id: int, title: str, attempt: int, template: str = DEFAULT_BRANCH_TEMPLATE
 ) -> str:
-    """Derive the slice's branch name from ``template`` plus the retry suffix.
+    """Derive the increment's branch name from ``template`` plus the retry suffix.
 
     The slug is the text after the first ``":"`` (else the whole title),
     lowercased, with runs of non-``[a-z0-9]`` collapsed to ``"-"``, capped at 32
-    chars and stripped of leading/trailing ``"-"`` (``"slice"`` when empty). The
+    chars and stripped of leading/trailing ``"-"`` (``"increment"`` when empty). The
     template owns the ``{id}``/``{slug}`` layout; squadra owns the retry rule —
     a ``-a{attempt}`` suffix is appended only when ``attempt > 1``.
     """
     base: str = title.split(":", 1)[1] if ":" in title else title
     slug: str = re.sub(r"[^a-z0-9]+", "-", base.lower())[:32].strip("-")
     if not slug:
-        slug = "slice"
+        slug = "increment"
     suffix: str = f"-a{attempt}" if attempt > 1 else ""
     return f"{template.format(id=item_id, slug=slug)}{suffix}"
 
@@ -60,7 +60,7 @@ def slice_branch(
 
 
 class LifecycleEngine:
-    """A pure, zero-I/O, derived-state FSM over one slice's observed facts.
+    """A pure, zero-I/O, derived-state FSM over one increment's observed facts.
 
     ``decide(facts)`` projects :class:`~squadra.domain.LifecycleFacts` onto
     exactly one :class:`~squadra.domain.State` and the ordered, closed set of
@@ -78,7 +78,7 @@ class LifecycleEngine:
     completion triple, the failure edges, liveness), then the queued bucket
     (claimable vs. blocked). An orthogonal failed-teardown leak is appended to
     whatever the primary lifecycle decision was, since a leak never blocks the
-    slice's board lifecycle (ADR-0002 decision 6).
+    increment's board lifecycle (ADR-0002 decision 6).
 
     This engine folds the legacy ``is_parked`` / ``is_failed_park`` predicates
     (now retired, ADR-0002 decision 3) into its fact-derivation
@@ -90,11 +90,11 @@ class LifecycleEngine:
     """
 
     def decide(self, facts: LifecycleFacts) -> LifecycleDecision:
-        """Return the slice's derived state and the orchestrator intents to run.
+        """Return the increment's derived state and the orchestrator intents to run.
 
         Total over the fact space (no input raises). The orthogonal teardown
         leak is layered on top of the primary lifecycle decision so a leak is
-        swept without blocking the slice's lifecycle.
+        swept without blocking the increment's lifecycle.
         """
         primary: LifecycleDecision = self._classify(facts)
         if facts.teardown_failed:
@@ -115,13 +115,13 @@ class LifecycleEngine:
         if facts.needs_decision_tagged:
             return _terminal(State.PARKED_DECISION)
 
-        # 2. The done bucket: a fleet-claimed slice whose PR completed finalizes
+        # 2. The done bucket: a fleet-claimed increment whose PR completed finalizes
         #    (deterministic cleanup); otherwise it parks awaiting the merge. A
         #    done item the fleet never claimed is a human's — invisible/terminal.
         if facts.lifecycle is Lifecycle.DONE:
             return self._classify_done(facts)
 
-        # 3. The active bucket: an in-flight, fleet-claimed slice is classified
+        # 3. The active bucket: an in-flight, fleet-claimed increment is classified
         #    by its container / manifest / liveness / failure-edge facts. A
         #    human's active item (unclaimed) is invisible to the fleet.
         if facts.lifecycle is Lifecycle.ACTIVE:
@@ -135,7 +135,7 @@ class LifecycleEngine:
         return _terminal(State.BLOCKED)
 
     def _classify_done(self, facts: LifecycleFacts) -> LifecycleDecision:
-        """Classify a slice in the done bucket (finalize vs. await PR vs. terminal)."""
+        """Classify an increment in the done bucket (finalize vs. await PR vs. terminal)."""
         if not facts.is_fleet_claimed:
             return _terminal(State.DONE)
         if facts.completed_pr_url is not None:
@@ -148,7 +148,7 @@ class LifecycleEngine:
     def _classify_inflight(  # noqa: PLR0911 - the in-flight guard ladder
         self, facts: LifecycleFacts
     ) -> LifecycleDecision:
-        """Classify a fleet-claimed, in-flight slice from container/manifest facts.
+        """Classify a fleet-claimed, in-flight increment from container/manifest facts.
 
         Guard order (each returns early, keeping the function total):
 
@@ -230,7 +230,7 @@ class LifecycleEngine:
         Attempt accounting is expressed *as transitions*, not side-channel
         bookkeeping: the just-failed ``attempt`` is retried while
         ``attempt < max_attempts`` (the next claim runs ``attempt + 1``);
-        on exhaustion (``attempt >= max_attempts``) the slice escalates with the
+        on exhaustion (``attempt >= max_attempts``) the increment escalates with the
         ``attempt + 1`` it would have reached, mirroring the legacy reap pass.
         """
         if facts.attempt >= facts.max_attempts:
@@ -242,7 +242,7 @@ class LifecycleEngine:
             )
         return LifecycleDecision(
             state=State.AGENT_FAILED,
-            actions=(RetrySlice(edge=edge, attempt=facts.attempt),),
+            actions=(RetryIncrement(edge=edge, attempt=facts.attempt),),
         )
 
 
@@ -252,10 +252,10 @@ def _terminal(state: State) -> LifecycleDecision:
 
 
 def _is_deliberate_park(facts: LifecycleFacts) -> bool:
-    """Whether the slice is deliberately parked (folds the legacy ``is_parked``).
+    """Whether the increment is deliberately parked (folds the legacy ``is_parked``).
 
     True when the item carries any parked tag, when its status phase is ``done``
-    (a finalized slice is never requeued), or when its status phase is ``parked``
+    (a finalized increment is never requeued), or when its status phase is ``parked``
     with a ``parked_state`` other than ``failed`` (a deliberate stop awaiting a
     human/PR signal). A ``parked_state=failed`` status is *not* a deliberate park
     — it is positive failure evidence (see :func:`_is_failed_park`).

@@ -48,7 +48,7 @@ def _fleet_home() -> Path:
     return Path.cwd()
 
 
-# Per-slice runtime artifacts (status.json, sidecars, archived attempts) live
+# Per-increment runtime artifacts (status.json, sidecars, archived attempts) live
 # under FLEET_ROOT/<issue-id>/. The default sits under the target repo's
 # .claude/fleet (FLEET_HOME, else the cwd); on a bind-mounted checkout that
 # survives container restart, and it is git-excluded there.
@@ -78,8 +78,8 @@ STALENESS_THRESHOLD_SECONDS: int = _int_from_env("FLEET_STALENESS_THRESHOLD_SECO
 # worktree; exhaustion escalates to fleet:failed (addendum §4).
 MAX_ATTEMPTS: int = _int_from_env("FLEET_MAX_ATTEMPTS", 3)
 
-# Compute tier for every model-backed claude call the fleet makes — the slice
-# runner (/afk-slice-runner), the cleanup pass (/cleanup-merged-branches), and
+# Compute tier for every model-backed claude call the fleet makes — the increment
+# runner (/afk-increment-runner), the cleanup pass (/cleanup-merged-branches), and
 # the auth probe. Pinned here as the single source of truth so the fleet's tier
 # is a deliberate choice, NOT whatever default an interactive session's
 # settings.json/settings.local.json "model" pin happens to be (which a headless
@@ -105,7 +105,7 @@ TAG_SUFFIX_NEEDS_DECISION: str = "needs-decision"
 TAG_SUFFIX_QA_READY: str = "qa-ready"
 TAG_SUFFIX_AWAITING_PR_APPROVAL: str = "awaiting-pr-approval"
 
-# Suffixes whose presence marks a *deliberate* park (the slice is never reaped).
+# Suffixes whose presence marks a *deliberate* park (the increment is never reaped).
 # ``failed`` is included: a tagged ``<prefix>failed`` item is already escalated
 # and terminal (never auto-retried). An untagged ``parked_state="failed"``
 # status, by contrast, is positive failure evidence and reap-eligible.
