@@ -1,6 +1,6 @@
 """Unit tests for the host-side manifest/context I/O (F4, Task #167).
 
-The supervisor injects a read-only ``slice.json`` (the **slice context**: Issue +
+The supervisor injects a read-only ``increment.json`` (the **increment context**: Issue +
 Tasks + predecessor states it read host-side) into the bind-mounted ``/work``
 before launch, and reads + validates the agent's ``outcome.json`` (the **outcome
 manifest**) after exit. The ``(container_exit, manifest_valid, commits)`` triple
@@ -14,13 +14,13 @@ from pathlib import Path
 
 import pytest
 
-from squadra.domain import SliceContext, SliceTask
+from squadra.domain import IncrementContext, IncrementTask
 from squadra.manifest import (
+    INCREMENT_CONTEXT_FILENAME,
     MANIFEST_FILENAME,
-    SLICE_CONTEXT_FILENAME,
     ManifestRead,
     read_manifest,
-    write_slice_context,
+    write_increment_context,
 )
 
 
@@ -37,18 +37,18 @@ def _write_manifest(worktree: Path, payload: object) -> None:
     (worktree / ".squadra" / MANIFEST_FILENAME).write_text(json.dumps(payload), encoding="utf-8")
 
 
-# --- slice context (host -> agent) --------------------------------------------
+# --- increment context (host -> agent) --------------------------------------------
 
 
-def test_write_slice_context_lands_readable_json(worktree: Path) -> None:
-    context = SliceContext(
+def test_write_increment_context_lands_readable_json(worktree: Path) -> None:
+    context = IncrementContext(
         issue_id=143,
         title="feat: orchestration cutover",
-        tasks=(SliceTask(task_id=163, title="rewrite run_tick", state="Doing"),),
+        tasks=(IncrementTask(task_id=163, title="rewrite run_tick", state="Doing"),),
         predecessor_states={140: "Done", 141: "Done"},
     )
-    path: Path = write_slice_context(worktree, context)
-    assert path == worktree / ".squadra" / SLICE_CONTEXT_FILENAME
+    path: Path = write_increment_context(worktree, context)
+    assert path == worktree / ".squadra" / INCREMENT_CONTEXT_FILENAME
     data: dict[str, object] = json.loads(path.read_text(encoding="utf-8"))
     assert data["issue_id"] == 143
     assert data["title"] == "feat: orchestration cutover"
@@ -56,11 +56,11 @@ def test_write_slice_context_lands_readable_json(worktree: Path) -> None:
     assert data["predecessor_states"] == {"140": "Done", "141": "Done"}
 
 
-def test_write_slice_context_creates_the_squadra_dir(tmp_path: Path) -> None:
+def test_write_increment_context_creates_the_squadra_dir(tmp_path: Path) -> None:
     worktree: Path = tmp_path / "fresh"
     worktree.mkdir()
-    context = SliceContext(issue_id=1, title="t", tasks=(), predecessor_states={})
-    path: Path = write_slice_context(worktree, context)
+    context = IncrementContext(issue_id=1, title="t", tasks=(), predecessor_states={})
+    path: Path = write_increment_context(worktree, context)
     assert path.is_file()
 
 

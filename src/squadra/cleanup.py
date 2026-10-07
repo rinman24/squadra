@@ -1,6 +1,6 @@
 """The deterministic cleanup ResourceAccess seam (Resource = git + docker compose).
 
-``CleanupAccess`` is the contract finalize depends on to retire a merged slice:
+``CleanupAccess`` is the contract finalize depends on to retire a merged increment:
 the supervisor already knows the merged branch (it opened the PR;
 ``completed_pr_url`` returned a URL), so cleanup is a pure, deterministic
 sequence of git/compose commands — **no LLM** (ADR-0002 decision 4). This
@@ -15,7 +15,7 @@ live git or docker daemon is required. The dry-run wrapper lives alongside in
 :mod:`squadra.dry_run` so a finalize tick physically cannot mutate.
 
 The orchestration wiring (F4) — mapping the engine's ``FinalizeCleanup`` action
-onto this seam — is out of scope for this slice.
+onto this seam — is out of scope for this increment.
 """
 
 from collections.abc import Callable, Sequence
@@ -45,14 +45,14 @@ class CleanupResult:
 
 
 class CleanupAccess(Protocol):
-    """Deterministic retirement of a merged slice's branch / worktree / sandbox."""
+    """Deterministic retirement of a merged increment's branch / worktree / sandbox."""
 
     def delete_branch(self, branch: str) -> bool:
         """Delete the known-merged branch; return ``False`` on a non-zero exit."""
         ...
 
     def remove_worktree(self, worktree: str) -> bool:
-        """Remove the slice's worktree (force); return ``False`` on a non-zero exit."""
+        """Remove the increment's worktree (force); return ``False`` on a non-zero exit."""
         ...
 
     def prune_worktrees(self) -> bool:
@@ -98,7 +98,7 @@ class DeterministicCleanup:
         return self._run(host_git_argv("branch", "-D", branch, work_dir=self._fleet_home)) == 0
 
     def remove_worktree(self, worktree: str) -> bool:
-        """Remove the slice's worktree with ``git worktree remove --force``."""
+        """Remove the increment's worktree with ``git worktree remove --force``."""
         return (
             self._run(
                 host_git_argv("worktree", "remove", "--force", worktree, work_dir=self._fleet_home)

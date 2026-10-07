@@ -126,7 +126,7 @@ def test_worktree_create_does_not_fire_a_planted_hook(tmp_path: Path) -> None:
     wt = GitWorktreeAccess(fleet_home=repo, run=_run_quiet)
     # worktree add -b creates a branch ref -> would fire reference-transaction.
     result = wt.create(
-        branch="feat/slice-x",
+        branch="feat/increment-x",
         worktree=str(tmp_path / "wt-x"),
         base_ref="HEAD",
     )
@@ -195,7 +195,7 @@ def test_control_pre_push_hook_fires_on_an_unguarded_push(tmp_path: Path) -> Non
     repo: Path = tmp_path / "repo"
     _init_repo(repo)
     marker: Path = _plant_pre_push_hook(repo)
-    _git("-C", str(repo), "commit", "--allow-empty", "-qm", "slice work")
+    _git("-C", str(repo), "commit", "--allow-empty", "-qm", "increment work")
 
     subprocess.run(
         ["git", "-C", str(repo), "push", "-q", "origin", "HEAD:refs/heads/control"],
@@ -208,11 +208,13 @@ def test_host_side_push_does_not_fire_a_planted_pre_push_hook(tmp_path: Path) ->
     repo: Path = tmp_path / "repo"
     _init_repo(repo)
     marker: Path = _plant_pre_push_hook(repo)
-    _git("-C", str(repo), "commit", "--allow-empty", "-qm", "slice work")
+    _git("-C", str(repo), "commit", "--allow-empty", "-qm", "increment work")
 
     # Built through host_git_argv, the push argv pins core.hooksPath=/dev/null, so
     # the pre-push hook planted in the worktree cannot fire in the host context.
-    rc: int = _run_quiet(host_git_argv("push", "origin", "HEAD:refs/heads/slice-x", work_dir=repo))
+    rc: int = _run_quiet(
+        host_git_argv("push", "origin", "HEAD:refs/heads/increment-x", work_dir=repo)
+    )
 
     assert rc == 0, "host-side push must succeed"
     assert not marker.exists(), "host-side push must NOT run a planted pre-push hook"

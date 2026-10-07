@@ -26,7 +26,7 @@ import squadra.supervisor as real_supervisor
 def test_importing_cli_does_not_import_supervisor() -> None:
     # The supervisor is mid-migration; cli.py must import it lazily (in the tick
     # handler) so importing cli — for collection, `squadra init`, or
-    # `squadra slice` — never drags the supervisor in. Checked in a clean
+    # `squadra increment` — never drags the supervisor in. Checked in a clean
     # subprocess so an unrelated test's import cannot mask a regression.
     proc = subprocess.run(
         [
@@ -135,7 +135,7 @@ def test_init_check_reports_validation_failure(
     assert "not found" in capsys.readouterr().err
 
 
-def test_slice_show_delegates_to_status_main(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_increment_show_delegates_to_status_main(monkeypatch: pytest.MonkeyPatch) -> None:
     recorded: list[Sequence[str] | None] = []
 
     def _fake_status_main(argv: Sequence[str] | None = None) -> int:
@@ -144,12 +144,12 @@ def test_slice_show_delegates_to_status_main(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(cli.status, "main", _fake_status_main)
 
-    rc: int = cli.main(["slice", "show", "--issue-id", "5", "--fleet-root", "/tmp/x"])
+    rc: int = cli.main(["increment", "show", "--issue-id", "5", "--fleet-root", "/tmp/x"])
     assert rc == 0
     assert recorded == [["show", "--issue-id", "5", "--fleet-root", "/tmp/x"]]
 
 
-def test_slice_without_subcommand_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_increment_without_subcommand_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     called: list[Sequence[str] | None] = []
 
     def _fake_status_main(argv: Sequence[str] | None = None) -> int:
@@ -158,7 +158,7 @@ def test_slice_without_subcommand_errors(monkeypatch: pytest.MonkeyPatch) -> Non
 
     monkeypatch.setattr(cli.status, "main", _fake_status_main)
 
-    rc: int = cli.main(["slice"])
+    rc: int = cli.main(["increment"])
     assert rc != 0
     assert called == []
 

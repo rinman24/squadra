@@ -53,7 +53,7 @@ class _CannedAz:
                             "id": _DONE_ITEM_ID,
                             "fields": {
                                 "System.Id": _DONE_ITEM_ID,
-                                "System.Title": "feat: shipped slice",
+                                "System.Title": "feat: shipped increment",
                                 "System.Tags": "fleet:claimed; ready",
                             },
                         }
@@ -81,7 +81,7 @@ def test_items_in_state_done_returns_the_done_workitem() -> None:
     )
     assert len(items) == 1
     assert items[0].item_id == _DONE_ITEM_ID
-    assert items[0].title == "feat: shipped slice"
+    assert items[0].title == "feat: shipped increment"
     assert "fleet:claimed" in items[0].tags
 
 

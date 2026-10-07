@@ -1,7 +1,7 @@
 """Host-side git argv construction — the one place every host-side git op is hardened.
 
-Threat model (Issue #193, parent #139). The fleet runs each slice's agent in a
-sandbox with the slice worktree bind-mounted as ``/work``. A misbehaving or
+Threat model (Issue #193, parent #139). The fleet runs each increment's agent in a
+sandbox with the increment worktree bind-mounted as ``/work``. A misbehaving or
 prompt-injected agent can plant a git hook (``pre-push``, ``post-checkout``, …)
 or set ``core.hooksPath`` to an agent-controlled directory **inside the
 worktree**. Later, a **host-side** git op runs against that same worktree — the
@@ -34,7 +34,7 @@ Both are command-line ``-c`` overrides (highest-precedence, transient, never
 persisted), so the hardening travels with the argv and an agent cannot strip it
 from on-disk config.
 
-The host-side **push** of a slice's commits is the credential-holding op at the
+The host-side **push** of an increment's commits is the credential-holding op at the
 centre of this threat model, but it is not yet wired in code (it is the deferred
 write-tail the supervisor's ``_handoff`` documents). When it is wired it MUST be
 built as ``host_git_argv(*credential_helper, "push", "origin", branch,

@@ -16,7 +16,7 @@ from squadra.cleanup import CleanupAccess, CleanupResult
 
 def test_finalize_reports_all_steps_succeeding(cleanup: CleanupAccess) -> None:
     result: CleanupResult = cleanup.finalize(
-        branch="feat/slice-1-x", worktree="/wt/slice-1", project="slice-1"
+        branch="feat/increment-1-x", worktree="/wt/increment-1", project="increment-1"
     )
     assert result == CleanupResult(
         branch_deleted=True, worktree_removed=True, pruned=True, compose_down=True
@@ -24,11 +24,11 @@ def test_finalize_reports_all_steps_succeeding(cleanup: CleanupAccess) -> None:
 
 
 def test_delete_branch_roundtrips_success(cleanup: CleanupAccess) -> None:
-    assert cleanup.delete_branch("feat/slice-2-y") is True
+    assert cleanup.delete_branch("feat/increment-2-y") is True
 
 
 def test_remove_worktree_roundtrips_success(cleanup: CleanupAccess) -> None:
-    assert cleanup.remove_worktree("/wt/slice-2") is True
+    assert cleanup.remove_worktree("/wt/increment-2") is True
 
 
 def test_prune_worktrees_roundtrips_success(cleanup: CleanupAccess) -> None:
@@ -36,4 +36,4 @@ def test_prune_worktrees_roundtrips_success(cleanup: CleanupAccess) -> None:
 
 
 def test_compose_down_roundtrips_success(cleanup: CleanupAccess) -> None:
-    assert cleanup.compose_down("slice-2") is True
+    assert cleanup.compose_down("increment-2") is True

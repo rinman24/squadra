@@ -65,22 +65,22 @@ def test_create_fetches_then_adds_a_branch_worktree_off_origin_main() -> None:
     runner = _RecordingRunner()
     wt = GitWorktreeAccess(fleet_home=_REPO, run=runner)
     result: WorktreeCreateResult = wt.create(
-        branch="feat/slice-9-x", worktree="/wt/slice-9", base_ref="origin/main"
+        branch="feat/increment-9-x", worktree="/wt/increment-9", base_ref="origin/main"
     )
-    assert result == WorktreeCreateResult(created=True, branch="feat/slice-9-x")
+    assert result == WorktreeCreateResult(created=True, branch="feat/increment-9-x")
     # fetch first (the worktree must branch off a freshly-fetched origin/main),
     # then `git worktree add -b <branch> <path> <base_ref>` — both hardened.
     assert all(_is_guarded(call) for call in runner.calls)
     assert [_subcommand(call) for call in runner.calls] == [
         ["fetch", "origin"],
-        ["worktree", "add", "-b", "feat/slice-9-x", "/wt/slice-9", "origin/main"],
+        ["worktree", "add", "-b", "feat/increment-9-x", "/wt/increment-9", "origin/main"],
     ]
 
 
 def test_create_defaults_the_base_ref_to_origin_main() -> None:
     runner = _RecordingRunner()
     wt = GitWorktreeAccess(fleet_home=_REPO, run=runner)
-    wt.create(branch="feat/slice-1-a", worktree="/wt/slice-1")
+    wt.create(branch="feat/increment-1-a", worktree="/wt/increment-1")
     assert runner.calls[-1][-1] == "origin/main"
 
 
@@ -106,16 +106,16 @@ def test_archive_moves_the_dead_worktree_under_the_attempt_slot() -> None:
     runner = _RecordingRunner()
     mover = _RecordingMover()
     wt = GitWorktreeAccess(fleet_home=_REPO, run=runner, move=mover)
-    archived = wt.archive(worktree="/wt/slice-9", archive_root="/fleet/9/archive", attempt=2)
+    archived = wt.archive(worktree="/wt/increment-9", archive_root="/fleet/9/archive", attempt=2)
     assert str(archived) == "/fleet/9/archive/attempt-2"
-    assert mover.moves == [("/wt/slice-9", "/fleet/9/archive/attempt-2")]
+    assert mover.moves == [("/wt/increment-9", "/fleet/9/archive/attempt-2")]
 
 
 def test_archive_then_prune_drops_the_stale_administrative_entry() -> None:
     runner = _RecordingRunner()
     mover = _RecordingMover()
     wt = GitWorktreeAccess(fleet_home=_REPO, run=runner, move=mover)
-    wt.archive(worktree="/wt/slice-9", archive_root="/fleet/9/archive", attempt=1)
+    wt.archive(worktree="/wt/increment-9", archive_root="/fleet/9/archive", attempt=1)
     assert wt.prune() is True
     assert _is_guarded(runner.calls[-1])
     assert _subcommand(runner.calls[-1]) == ["worktree", "prune"]

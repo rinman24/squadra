@@ -1,9 +1,9 @@
-"""Engine-driven tick: the claim/launch path + the cross-slice claim budget (F4).
+"""Engine-driven tick: the claim/launch path + the cross-increment claim budget (F4).
 
 Claim parity with the legacy claim pass (id-order, cap, predecessor/parent-scope
 gating, the state→tag→comment protocol, rollback) plus the new commit-only setup:
-the supervisor creates the slice worktree off fresh ``origin/main`` and injects the
-read-only ``slice.json`` context *before* launching the sandbox (ADR-0002 §§1–2).
+the supervisor creates the increment worktree off fresh ``origin/main`` and injects the
+read-only ``increment.json`` context *before* launching the sandbox (ADR-0002 §§1–2).
 The claim budget stays orchestrator-side over the engine's ``SignalClaimable`` set.
 """
 
@@ -83,7 +83,7 @@ def test_inflight_claimed_issue_counts_against_cap(
     write(make_status(issue_id=4, runner_id="runner-4-a1", last_heartbeat=_now()), fleet_root)
     from squadra.domain import SandboxRunning  # noqa: PLC0415
 
-    fake_sandbox.seed("squadra-slice-4", SandboxRunning())
+    fake_sandbox.seed("squadra-increment-4", SandboxRunning())
     make_issue(5)
     make_issue(6)
 
@@ -157,25 +157,25 @@ def test_claim_creates_worktree_and_injects_context_before_launch(
     contexts: list[tuple[Path, int]] = []
 
     def _record_context(worktree: Path, context: object) -> Path:
-        from squadra.domain import SliceContext  # noqa: PLC0415
+        from squadra.domain import IncrementContext  # noqa: PLC0415
 
-        assert isinstance(context, SliceContext)
+        assert isinstance(context, IncrementContext)
         contexts.append((worktree, context.issue_id))
-        return worktree / ".squadra" / "slice.json"
+        return worktree / ".squadra" / "increment.json"
 
     assert run_tick(make_seams(write_context=_record_context), config) == 0
 
-    branch = "feat/slice-5-add-scope-revocation"
+    branch = "feat/increment-5-add-scope-revocation"
     expected_wt = tmp_path / config.worktree_dir / branch.replace("/", "+")
     # Worktree created off fresh origin/main before the launch.
     assert fake_worktree.created == [(branch, str(expected_wt), "origin/main")]
-    # Slice context injected for #5 (predecessor states read host-side).
+    # Increment context injected for #5 (predecessor states read host-side).
     assert contexts == [(expected_wt, 5)]
     # And the sandbox was launched for #5.
     assert [spec.item_id for spec in fake_sandbox.launches] == [5]
 
 
-def test_slice_context_carries_predecessor_states(
+def test_increment_context_carries_predecessor_states(
     fake_board: FakeBoard,
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
@@ -187,11 +187,11 @@ def test_slice_context_carries_predecessor_states(
     captured: dict[str, object] = {}
 
     def _capture(worktree: Path, context: object) -> Path:
-        from squadra.domain import SliceContext  # noqa: PLC0415
+        from squadra.domain import IncrementContext  # noqa: PLC0415
 
-        assert isinstance(context, SliceContext)
+        assert isinstance(context, IncrementContext)
         captured["predecessor_states"] = dict(context.predecessor_states)
-        return worktree / "slice.json"
+        return worktree / "increment.json"
 
     assert run_tick(make_seams(write_context=_capture), make_config()) == 0
     assert captured["predecessor_states"] == {3: "done"}
@@ -206,7 +206,7 @@ def test_worktree_create_failure_does_not_claim(
     make_config: Callable[..., SquadraConfig],
 ) -> None:
     make_issue(5, title="feat: x")
-    fake_worktree.fail_branches.add("feat/slice-5-x")
+    fake_worktree.fail_branches.add("feat/increment-5-x")
 
     assert run_tick(make_seams(), make_config()) == 0
 
@@ -225,7 +225,7 @@ def test_launch_failure_rolls_the_claim_back(
 ) -> None:
     make_issue(5, title="feat: x")
     make_issue(6, title="feat: y")
-    fake_sandbox.fail_launch.add("squadra-slice-5")
+    fake_sandbox.fail_launch.add("squadra-increment-5")
 
     assert run_tick(make_seams(), make_config()) == 0
 
@@ -279,10 +279,10 @@ def test_retry_uses_next_attempt_and_suffixes_branch(
 
     assert [spec.item_id for spec in fake_sandbox.launches] == [41]
     assert fake_worktree.created == [
-        ("feat/slice-41-example-a2", str(fake_worktree.created[0][1]), "origin/main")
+        ("feat/increment-41-example-a2", str(fake_worktree.created[0][1]), "origin/main")
     ]
     assert any(
-        isinstance(event, Claimed) and event.branch == "feat/slice-41-example-a2"
+        isinstance(event, Claimed) and event.branch == "feat/increment-41-example-a2"
         for event in fake_board.comments[41]
     )
 
@@ -301,16 +301,16 @@ def test_cap_zero_suppresses_claims_only(
     make_issue(5)  # claimable
     make_issue(40, title="feat: merged", state=Lifecycle.DONE, tags=["fleet:claimed"])
     write(
-        make_status(issue_id=40, runner_id="runner-40-a1", branch="feat/slice-40-merged"),
+        make_status(issue_id=40, runner_id="runner-40-a1", branch="feat/increment-40-merged"),
         fleet_root,
     )
-    fake_board.completed_prs["feat/slice-40-merged"] = "https://pr/40"
+    fake_board.completed_prs["feat/increment-40-merged"] = "https://pr/40"
 
     assert run_tick(make_seams(), make_config(cap=0)) == 0
 
     assert fake_sandbox.launches == []  # no claim
     assert fake_board.item_state(5) == Lifecycle.QUEUED
-    assert fake_cleanup.deleted_branches == ["feat/slice-40-merged"]  # finalize still ran
+    assert fake_cleanup.deleted_branches == ["feat/increment-40-merged"]  # finalize still ran
 
 
 def test_parent_scope_filter_limits_claims(

@@ -331,7 +331,7 @@ def test_completed_pr_url_targets_the_configured_base_branch() -> None:
     pr_resp: str = json.dumps([{"url": "https://dev.azure.com/o/_apis/git/pr/42"}])
     runner = _RecordingAzRunner({"pr list": pr_resp})
     url: str | None = _adapter(runner, base_branch="release/2026").completed_pr_url(
-        "feat/slice-7-x"
+        "feat/increment-7-x"
     )
     assert url == "https://dev.azure.com/o/_apis/git/pr/42"
     call: list[str] = runner.calls[-1]
@@ -342,7 +342,7 @@ def test_completed_pr_url_targets_the_configured_base_branch() -> None:
 
 def test_completed_pr_url_returns_none_when_there_is_no_completed_pr() -> None:
     runner = _RecordingAzRunner({"pr list": "[]"})
-    assert _adapter(runner).completed_pr_url("feat/slice-7-x") is None
+    assert _adapter(runner).completed_pr_url("feat/increment-7-x") is None
 
 
 # --- comment rendering (all 5 event types) ------------------------------------
@@ -350,11 +350,11 @@ def test_completed_pr_url_returns_none_when_there_is_no_completed_pr() -> None:
 
 def test_render_claimed() -> None:
     html: str = render_ado_html(
-        Claimed(runner_id="r3", branch="feat/slice-7-x", when="2026-06-12T00:00:00Z"), _TAGS
+        Claimed(runner_id="r3", branch="feat/increment-7-x", when="2026-06-12T00:00:00Z"), _TAGS
     )
     assert "claimed by supervisor" in html
     assert "<code>r3</code>" in html
-    assert "<code>feat/slice-7-x</code>" in html
+    assert "<code>feat/increment-7-x</code>" in html
 
 
 def test_render_rolled_back() -> None:
@@ -364,10 +364,12 @@ def test_render_rolled_back() -> None:
 
 
 def test_render_finalized() -> None:
-    html: str = render_ado_html(Finalized(pr_url="https://x/pr/9", branch="feat/slice-7-x"), _TAGS)
+    html: str = render_ado_html(
+        Finalized(pr_url="https://x/pr/9", branch="feat/increment-7-x"), _TAGS
+    )
     assert "finalized" in html
     assert '<a href="https://x/pr/9">https://x/pr/9</a>' in html
-    assert "<code>feat/slice-7-x</code>" in html
+    assert "<code>feat/increment-7-x</code>" in html
 
 
 def test_render_reaped() -> None:

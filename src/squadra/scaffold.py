@@ -87,7 +87,7 @@ def render_squadra_toml(provider: str = DEFAULT_PROVIDER) -> str:
 # / `squadra --provider`.
 provider = "{provider}"
 
-# Base branch slices merge into. Override: FLEET_BASE_BRANCH.
+# Base branch increments merge into. Override: FLEET_BASE_BRANCH.
 base_branch = "{DEFAULT_BASE_BRANCH}"
 
 # Namespace prefix for the fleet's board tags (the five canonical suffixes —
@@ -102,10 +102,10 @@ parent_scope_ids = []
 
 {states_block}
 [pipeline]
-# Feature-branch name template per slice. `{{id}}` and `{{slug}}` are filled in.
+# Feature-branch name template per increment. `{{id}}` and `{{slug}}` are filled in.
 branch_template = "{DEFAULT_BRANCH_TEMPLATE}"
 
-# Where per-slice git worktrees are created (relative to FLEET_HOME).
+# Where per-increment git worktrees are created (relative to FLEET_HOME).
 worktree_dir = "{DEFAULT_WORKTREE_DIR}"
 
 # The consumer-owned skill names the fleet invokes. `squadra init` also drops

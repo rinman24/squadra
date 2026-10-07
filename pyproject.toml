@@ -1,7 +1,7 @@
 [project]
 name = "squadra"
 version = "0.1.0a1"
-description = "Deterministic supervisor + per-slice runner machinery for an AFK, board-driven Claude implementation fleet."
+description = "Deterministic supervisor + per-increment runner machinery for an AFK, board-driven Claude implementation fleet."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Rich Inman, PhD" }]

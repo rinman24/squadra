@@ -3,8 +3,8 @@
 Two bind-mounted JSON files under the worktree's ``.squadra/`` carry the
 host↔agent exchange the credential-free agent cannot perform over the board:
 
-- **slice context** (``slice.json``) — written host-side *before* launch
-  (:func:`write_slice_context`): the slice's Issue + Tasks + predecessor states
+- **increment context** (``increment.json``) — written host-side *before* launch
+  (:func:`write_increment_context`): the increment's Issue + Tasks + predecessor states
   the supervisor read for the agent, since the contained agent has no board.
 - **outcome manifest** (``outcome.json``) — written by the agent as its final
   act, read + validated host-side *after* exit (:func:`read_manifest`). It is the
@@ -24,11 +24,11 @@ import json
 from pathlib import Path
 from typing import Final, cast
 
-from squadra.domain import OutcomeManifest, SliceContext
+from squadra.domain import IncrementContext, OutcomeManifest
 from squadra.status import PARKED_STATES
 
 MANIFEST_FILENAME: Final[str] = "outcome.json"
-SLICE_CONTEXT_FILENAME: Final[str] = "slice.json"
+INCREMENT_CONTEXT_FILENAME: Final[str] = "increment.json"
 _SQUADRA_DIR: Final[str] = ".squadra"
 
 # The parked states a valid manifest may declare — the same canonical vocabulary
@@ -56,22 +56,22 @@ class ManifestRead:
 
 
 def manifest_path(worktree: Path) -> Path:
-    """Return the slice worktree's ``.squadra/outcome.json`` path."""
+    """Return the increment worktree's ``.squadra/outcome.json`` path."""
     return worktree / _SQUADRA_DIR / MANIFEST_FILENAME
 
 
-def slice_context_path(worktree: Path) -> Path:
-    """Return the slice worktree's ``.squadra/slice.json`` path."""
-    return worktree / _SQUADRA_DIR / SLICE_CONTEXT_FILENAME
+def increment_context_path(worktree: Path) -> Path:
+    """Return the increment worktree's ``.squadra/increment.json`` path."""
+    return worktree / _SQUADRA_DIR / INCREMENT_CONTEXT_FILENAME
 
 
-def write_slice_context(worktree: Path, context: SliceContext) -> Path:
-    """Write the read-only host→agent ``slice.json`` into the worktree's ``.squadra/``.
+def write_increment_context(worktree: Path, context: IncrementContext) -> Path:
+    """Write the read-only host→agent ``increment.json`` into the worktree's ``.squadra/``.
 
     Creates the ``.squadra/`` directory if needed and returns the written path.
     Predecessor-state map keys are serialized as strings (JSON object keys).
     """
-    path: Path = slice_context_path(worktree)
+    path: Path = increment_context_path(worktree)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload: dict[str, object] = {
         "issue_id": context.issue_id,

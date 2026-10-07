@@ -18,14 +18,14 @@ from squadra.worktree import WorktreeAccess, WorktreeCreateResult
 
 def test_create_reports_success_on_the_branch(worktree: WorktreeAccess) -> None:
     result: WorktreeCreateResult = worktree.create(
-        branch="feat/slice-1-x", worktree="/wt/slice-1", base_ref="origin/main"
+        branch="feat/increment-1-x", worktree="/wt/increment-1", base_ref="origin/main"
     )
-    assert result == WorktreeCreateResult(created=True, branch="feat/slice-1-x")
+    assert result == WorktreeCreateResult(created=True, branch="feat/increment-1-x")
 
 
 def test_archive_returns_the_attempt_slot_destination(worktree: WorktreeAccess) -> None:
     archived: Path = worktree.archive(
-        worktree="/wt/slice-2", archive_root="/fleet/2/archive", attempt=3
+        worktree="/wt/increment-2", archive_root="/fleet/2/archive", attempt=3
     )
     assert archived == Path("/fleet/2/archive/attempt-3")
 

@@ -42,19 +42,19 @@ LINKED_ID: int = 104  # has a parent + predecessors
 PARENT_ID: int = 200
 PRED_IDS: tuple[int, ...] = (150, 151)
 
-PR_BRANCH: str = "feat/slice-103-done"
+PR_BRANCH: str = "feat/increment-103-done"
 PR_URL: str = "https://example.invalid/pr/42"
 
 
 def _seed_ado() -> AdoShapedFakeBoard:
     """Build a correctly-configured ADO-shaped board under the shared seed."""
     board = AdoShapedFakeBoard(tags=TAGS)
-    board.add(QUEUED_ID, "queued slice", Lifecycle.QUEUED)
-    board.add(ACTIVE_ID, "active slice", Lifecycle.ACTIVE, tags=(TAGS.claimed,))
-    board.add(DONE_ID, "done slice", Lifecycle.DONE)
+    board.add(QUEUED_ID, "queued increment", Lifecycle.QUEUED)
+    board.add(ACTIVE_ID, "active increment", Lifecycle.ACTIVE, tags=(TAGS.claimed,))
+    board.add(DONE_ID, "done increment", Lifecycle.DONE)
     board.add(
         LINKED_ID,
-        "linked slice",
+        "linked increment",
         Lifecycle.QUEUED,
         parent_id=PARENT_ID,
         predecessor_ids=PRED_IDS,
@@ -69,12 +69,12 @@ def _seed_github() -> GitHubShapedFakeBoard:
     The DONE item is seeded under the SECONDARY native done-name on purpose.
     """
     board = GitHubShapedFakeBoard(tags=TAGS)
-    board.add(QUEUED_ID, "queued slice", Lifecycle.QUEUED)
-    board.add(ACTIVE_ID, "active slice", Lifecycle.ACTIVE, tags=(TAGS.claimed,))
-    board.add(DONE_ID, "done slice", Lifecycle.DONE, native_status="Closed-merged")
+    board.add(QUEUED_ID, "queued increment", Lifecycle.QUEUED)
+    board.add(ACTIVE_ID, "active increment", Lifecycle.ACTIVE, tags=(TAGS.claimed,))
+    board.add(DONE_ID, "done increment", Lifecycle.DONE, native_status="Closed-merged")
     board.add(
         LINKED_ID,
-        "linked slice",
+        "linked increment",
         Lifecycle.QUEUED,
         parent_id=PARENT_ID,
         predecessor_ids=PRED_IDS,
@@ -121,14 +121,14 @@ def worktree(request: pytest.FixtureRequest) -> WorktreeAccess:
 
 # --- SandboxAccess conformance fixtures ---------------------------------------
 
-# The shared sandbox seed — one slice's per-slice ephemeral compose project.
+# The shared sandbox seed — one increment's per-increment ephemeral compose project.
 SANDBOX_ITEM_ID: int = 141
-SANDBOX_PROJECT: str = "squadra-slice-141"
+SANDBOX_PROJECT: str = "squadra-increment-141"
 
 
 @pytest.fixture
 def sandbox_spec() -> SandboxSpec:
-    """The shared per-slice sandbox spec the contract exercises."""
+    """The shared per-increment sandbox spec the contract exercises."""
     return SandboxSpec(
         item_id=SANDBOX_ITEM_ID,
         project=SANDBOX_PROJECT,

@@ -73,9 +73,9 @@ def test_tick_finalizes_a_github_native_done_item(
     board.add(
         7, "feat: ship it", Lifecycle.DONE, native_status="Closed-merged", tags=("fleet:claimed",)
     )
-    board.seed_pr("feat/slice-7-ship-it", "https://example.invalid/pr/7")
+    board.seed_pr("feat/increment-7-ship-it", "https://example.invalid/pr/7")
     write(
-        make_status(issue_id=7, runner_id="r-7", branch="feat/slice-7-ship-it"),  # type: ignore[arg-type]
+        make_status(issue_id=7, runner_id="r-7", branch="feat/increment-7-ship-it"),  # type: ignore[arg-type]
         fleet_root,
     )
     config: SquadraConfig = make_config(fleet_root=fleet_root)
@@ -98,14 +98,14 @@ def test_tick_escalates_a_github_native_item_at_the_cap(
         make_status(  # type: ignore[arg-type]
             issue_id=7,
             runner_id="r-7",
-            branch="feat/slice-7-ship-it",
+            branch="feat/increment-7-ship-it",
             attempt=1,
             last_heartbeat=_now(),
         ),
         fleet_root,
     )
     sandbox = FakeSandbox()
-    sandbox.seed("squadra-slice-7", SandboxExited(exit_code=1))
+    sandbox.seed("squadra-increment-7", SandboxExited(exit_code=1))
     config: SquadraConfig = make_config(fleet_root=fleet_root, max_attempts=1)
 
     assert run_tick(_seams(board, sandbox), config) == 0

@@ -2,7 +2,7 @@
 
 ``WorktreeAccess`` is the contract the supervisor uses to own git host-side
 (ADR-0002 decision 2): because the sandboxed agent has no remote, the supervisor
-fetches ``origin/main``, creates the slice worktree on the branch, and bind-mounts
+fetches ``origin/main``, creates the increment worktree on the branch, and bind-mounts
 it before launch — the agent starts already on the branch (no ``EnterWorktree``
 in the agent). The same seam archives a dead attempt's worktree for inspection
 and prunes stale administrative entries (the reap path's worktree work).
@@ -14,7 +14,7 @@ disk moves are required. The dry-run wrapper lives alongside in
 :mod:`squadra.dry_run` so a tick physically cannot mutate.
 
 The orchestration wiring (F4) — mapping the engine's launch / retry actions onto
-this seam — is out of scope for this slice.
+this seam — is out of scope for this increment.
 """
 
 from collections.abc import Callable, Sequence
@@ -43,12 +43,12 @@ class WorktreeCreateResult:
 
 
 class WorktreeAccess(Protocol):
-    """Host-side create / archive / prune of slice worktrees."""
+    """Host-side create / archive / prune of increment worktrees."""
 
     def create(
         self, branch: str, worktree: str, base_ref: str = DEFAULT_BASE_REF
     ) -> WorktreeCreateResult:
-        """Fetch the remote, then create the slice worktree on ``branch`` off ``base_ref``."""
+        """Fetch the remote, then create the increment worktree on ``branch`` off ``base_ref``."""
         ...
 
     def archive(self, worktree: str, archive_root: str, attempt: int) -> Path:

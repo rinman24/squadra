@@ -35,7 +35,7 @@ from squadra.domain import (
     LifecycleFacts,
     NoAction,
     ParkNeedsDecision,
-    RetrySlice,
+    RetryIncrement,
     SignalClaimable,
     State,
     StopContainer,
@@ -233,7 +233,7 @@ def test_parked_tag_is_a_deliberate_park_awaiting_pr(
     engine: LifecycleEngine, make_facts: MakeFacts
 ) -> None:
     # is_parked fold: a parked tag → quiescent, never reaped. Even with a stale
-    # heartbeat the slice is not timed out.
+    # heartbeat the increment is not timed out.
     facts = make_facts(parked_tagged=True, heartbeat_stale=True)
     decision = _decide(engine, facts)
     assert decision.state is State.AWAITING_PR
@@ -279,7 +279,7 @@ def test_failed_park_status_with_no_container_is_a_crash(
     )
     decision = _decide(engine, facts)
     assert decision.state is State.AGENT_FAILED
-    assert decision.actions == (RetrySlice(edge=FailureEdge.AGENT_CRASH, attempt=1),)
+    assert decision.actions == (RetryIncrement(edge=FailureEdge.AGENT_CRASH, attempt=1),)
 
 
 # --- #152: differentiated failure-edge classification --------------------------
@@ -291,14 +291,14 @@ def test_build_failed_edge_retries_under_budget(
     facts = make_facts(build_failed=True, attempt=1, max_attempts=3)
     decision = _decide(engine, facts)
     assert decision.state is State.AGENT_FAILED
-    assert decision.actions == (RetrySlice(edge=FailureEdge.BUILD_FAILED, attempt=1),)
+    assert decision.actions == (RetryIncrement(edge=FailureEdge.BUILD_FAILED, attempt=1),)
 
 
 def test_agent_crash_nonzero_exit_retries(engine: LifecycleEngine, make_facts: MakeFacts) -> None:
     facts = make_facts(container_running=False, container_exit_code=1, attempt=1, max_attempts=3)
     decision = _decide(engine, facts)
     assert decision.state is State.AGENT_FAILED
-    assert decision.actions == (RetrySlice(edge=FailureEdge.AGENT_CRASH, attempt=1),)
+    assert decision.actions == (RetryIncrement(edge=FailureEdge.AGENT_CRASH, attempt=1),)
 
 
 def test_agent_crash_exit_zero_but_no_manifest_retries(
@@ -314,7 +314,7 @@ def test_agent_crash_exit_zero_but_no_manifest_retries(
     )
     decision = _decide(engine, facts)
     assert decision.state is State.AGENT_FAILED
-    assert decision.actions == (RetrySlice(edge=FailureEdge.AGENT_CRASH, attempt=1),)
+    assert decision.actions == (RetryIncrement(edge=FailureEdge.AGENT_CRASH, attempt=1),)
 
 
 def test_agent_crash_exit_zero_invalid_manifest_retries(
@@ -329,7 +329,7 @@ def test_agent_crash_exit_zero_invalid_manifest_retries(
     )
     decision = _decide(engine, facts)
     assert decision.state is State.AGENT_FAILED
-    assert decision.actions == (RetrySlice(edge=FailureEdge.AGENT_CRASH, attempt=1),)
+    assert decision.actions == (RetryIncrement(edge=FailureEdge.AGENT_CRASH, attempt=1),)
 
 
 def test_agent_crash_exit_zero_valid_manifest_but_no_commits_retries(
@@ -346,7 +346,7 @@ def test_agent_crash_exit_zero_valid_manifest_but_no_commits_retries(
     )
     decision = _decide(engine, facts)
     assert decision.state is State.AGENT_FAILED
-    assert decision.actions == (RetrySlice(edge=FailureEdge.AGENT_CRASH, attempt=1),)
+    assert decision.actions == (RetryIncrement(edge=FailureEdge.AGENT_CRASH, attempt=1),)
 
 
 def test_agent_timeout_stops_then_retries(engine: LifecycleEngine, make_facts: MakeFacts) -> None:
@@ -358,7 +358,7 @@ def test_agent_timeout_stops_then_retries(engine: LifecycleEngine, make_facts: M
     assert decision.state is State.AGENT_TIMEOUT
     assert decision.actions == (
         StopContainer(),
-        RetrySlice(edge=FailureEdge.AGENT_TIMEOUT, attempt=1),
+        RetryIncrement(edge=FailureEdge.AGENT_TIMEOUT, attempt=1),
     )
 
 
@@ -436,7 +436,7 @@ def test_crash_retries_while_attempt_below_max(
     facts = make_facts(container_running=False, container_exit_code=2, attempt=2, max_attempts=3)
     decision = _decide(engine, facts)
     assert decision.state is State.AGENT_FAILED
-    assert decision.actions == (RetrySlice(edge=FailureEdge.AGENT_CRASH, attempt=2),)
+    assert decision.actions == (RetryIncrement(edge=FailureEdge.AGENT_CRASH, attempt=2),)
 
 
 def test_crash_escalates_on_the_final_attempt(
@@ -473,7 +473,7 @@ def test_higher_max_attempts_keeps_retrying(engine: LifecycleEngine, make_facts:
     facts = make_facts(container_running=False, container_exit_code=1, attempt=3, max_attempts=5)
     decision = _decide(engine, facts)
     assert decision.state is State.AGENT_FAILED
-    assert decision.actions == (RetrySlice(edge=FailureEdge.AGENT_CRASH, attempt=3),)
+    assert decision.actions == (RetryIncrement(edge=FailureEdge.AGENT_CRASH, attempt=3),)
 
 
 # --- every State is reachable -------------------------------------------------
@@ -531,7 +531,7 @@ _ALLOWED_ACTIONS = (
     HandoffAgentDone,
     ParkNeedsDecision,
     StopContainer,
-    RetrySlice,
+    RetryIncrement,
     EscalateExhausted,
     EscalateEgressDenied,
     SweepLeak,
