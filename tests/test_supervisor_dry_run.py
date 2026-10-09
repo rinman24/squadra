@@ -209,6 +209,7 @@ def test_main_engages_dry_run_from_the_flag_and_the_env(
         raise SystemExit(0)  # never reach the real tick
 
     monkeypatch.setattr(supervisor, "build_seams", _spy_build_seams)
+    (tmp_path / "squadra.toml").write_text('[board]\nclaim_scope = "whole-board"\n')
     argv: list[str] = ["--fleet-root", str(tmp_path), "--fleet-home", str(tmp_path)]
     with pytest.raises(SystemExit):
         supervisor.main([*argv, "--dry-run"])
@@ -219,3 +220,25 @@ def test_main_engages_dry_run_from_the_flag_and_the_env(
     with pytest.raises(SystemExit):
         supervisor.main(argv)
     assert seen == [True, True, False]
+
+
+def test_main_fails_closed_without_a_declared_claim_scope(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # No squadra.toml at all: the tick stops at the scope check, before any seam.
+    built: list[bool] = []
+
+    def _spy_build_seams(config: SquadraConfig, *, dry_run: bool = False) -> TickSeams:
+        built.append(dry_run)
+        raise SystemExit(0)
+
+    monkeypatch.setattr(supervisor, "build_seams", _spy_build_seams)
+    argv: list[str] = ["--fleet-root", str(tmp_path), "--fleet-home", str(tmp_path)]
+
+    assert supervisor.main([*argv, "--dry-run"]) == 1
+    assert built == []
+    err: str = capsys.readouterr().err
+    assert "claim_scope is required" in err
+    assert "Traceback" not in err

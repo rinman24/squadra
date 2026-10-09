@@ -3,6 +3,8 @@
 from pathlib import Path
 import tomllib
 
+import pytest
+
 from squadra._resources import resolve_template
 from squadra.config import (
     CONFIG_FILENAME,
@@ -10,6 +12,7 @@ from squadra.config import (
     DEFAULT_QA_SKILL,
     DEFAULT_RUNNER_SKILL,
     DEFAULT_TDD_SKILL,
+    ConfigError,
     load_config,
 )
 from squadra.domain import Lifecycle
@@ -22,14 +25,35 @@ from squadra.scaffold import (
 )
 
 
+def _declare_scope(text: str) -> str:
+    """Fill in the scaffold's empty ``claim_scope``, as an operator would."""
+    return text.replace('claim_scope = ""', 'claim_scope = "whole-board"', 1)
+
+
+def test_render_toml_leaves_claim_scope_undeclared(tmp_path: Path) -> None:
+    """The scaffold writes ``claim_scope`` with no value, so the first load fails
+    naming both options: scope cannot be skipped without making a choice."""
+    text: str = render_squadra_toml("ado")
+    board = tomllib.loads(text)["board"]
+    assert isinstance(board, dict)
+    assert board["claim_scope"] == ""
+
+    path: Path = tmp_path / CONFIG_FILENAME
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(ConfigError, match="claim_scope") as raised:
+        load_config(config_path=path, fleet_home=tmp_path)
+    assert '"parents"' in str(raised.value)
+    assert '"whole-board"' in str(raised.value)
+
+
 def test_render_ado_toml_parses_and_loads(tmp_path: Path) -> None:
-    """The default (ado) toml parses and round-trips through load_config."""
+    """The default (ado) toml parses and, once scope is declared, loads."""
     text: str = render_squadra_toml("ado")
     parsed: dict[str, object] = tomllib.loads(text)
     assert isinstance(parsed["board"], dict)
 
     path: Path = tmp_path / CONFIG_FILENAME
-    path.write_text(text, encoding="utf-8")
+    path.write_text(_declare_scope(text), encoding="utf-8")
     cfg = load_config(config_path=path, fleet_home=tmp_path)
 
     assert cfg.provider == "ado"
@@ -57,7 +81,7 @@ def test_render_nonado_toml_includes_states_placeholder(tmp_path: Path) -> None:
     assert "states" in board, "non-ado provider must declare [board.states]"
 
     path: Path = tmp_path / CONFIG_FILENAME
-    path.write_text(text, encoding="utf-8")
+    path.write_text(_declare_scope(text), encoding="utf-8")
     cfg = load_config(config_path=path, fleet_home=tmp_path)
     assert cfg.provider == "github"
     # All three buckets resolved from the declared placeholder.

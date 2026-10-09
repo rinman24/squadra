@@ -7,9 +7,15 @@ precedence::
     built-in defaults  <  squadra.toml  <  FLEET_* env  <  CLI flag
 
 Only the un-defaultable is required: the ``provider`` (defaulted to ``ado`` for
-minimum adoption friction) and ``[board.states]`` *unless* the provider's
+minimum adoption friction), ``[board.states]`` *unless* the provider's
 process is inferable (``ado`` defaults to ADO-Basic's ``To Do/Doing/Done``;
-other providers must declare their states). Everything else has a default.
+other providers must declare their states), and ``[board].claim_scope``.
+Everything else has a default.
+
+Claim scope is the one deliberate exception to "default everything": it has no
+default and no env layer, and loading fails closed (``ConfigError``) until the
+operator declares what on the board is claimable (WSQ1). A board pointed at by
+a forgotten config line must stop at this check, not reach every queued item.
 
 Safety is **validate-against-board**, not mandatory typing: ``BoardAccess.
 validate_config()`` resolves the configured state names / base branch against
@@ -22,6 +28,7 @@ env-only with today's defaults (resolved in :mod:`squadra.constants`).
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import Enum
 import os
 from pathlib import Path
 import tomllib
@@ -68,6 +75,17 @@ class ConfigError(ValueError):
     """Raised when squadra.toml or the resolved configuration is malformed."""
 
 
+class ClaimScope(Enum):
+    """What on the board the fleet may claim (``[board].claim_scope``, required).
+
+    - :attr:`PARENTS` — only queued items whose parent is in ``parent_scope_ids``.
+    - :attr:`WHOLE_BOARD` — every queued item; ``parent_scope_ids`` must be empty.
+    """
+
+    PARENTS = "parents"
+    WHOLE_BOARD = "whole-board"
+
+
 @dataclass(frozen=True, slots=True)
 class SquadraConfig:
     """One tick's effective configuration (defaults < toml < env < flag, frozen)."""
@@ -76,6 +94,7 @@ class SquadraConfig:
     provider: str
     base_branch: str
     tag_prefix: str
+    claim_scope: ClaimScope
     parent_scope_ids: tuple[int, ...]
     states: Mapping[Lifecycle, tuple[str, ...]]
     # [pipeline]
@@ -123,6 +142,7 @@ def load_config(
     resolved_provider: str = (
         provider or os.environ.get("FLEET_PROVIDER") or _str(board, "provider") or DEFAULT_PROVIDER
     )
+    claim_scope: ClaimScope = _resolve_claim_scope(board)
     return SquadraConfig(
         provider=resolved_provider,
         base_branch=os.environ.get("FLEET_BASE_BRANCH")
@@ -131,7 +151,8 @@ def load_config(
         tag_prefix=os.environ.get("FLEET_TAG_PREFIX")
         or _str(board, "tag_prefix")
         or DEFAULT_TAG_PREFIX,
-        parent_scope_ids=_resolve_parent_scope_ids(board),
+        claim_scope=claim_scope,
+        parent_scope_ids=_resolve_parent_scope_ids(board, claim_scope),
         states=_resolve_states(board, resolved_provider),
         branch_template=_str(pipeline, "branch_template") or DEFAULT_BRANCH_TEMPLATE,
         worktree_dir=_str(pipeline, "worktree_dir") or DEFAULT_WORKTREE_DIR,
@@ -189,24 +210,53 @@ def _str(section: Mapping[str, object], key: str) -> str | None:
     return value
 
 
-def _resolve_parent_scope_ids(board: Mapping[str, object]) -> tuple[int, ...]:
-    """Resolve the parent-link claim filter (toml < FLEET_EPIC_IDS env).
+def _resolve_claim_scope(board: Mapping[str, object]) -> ClaimScope:
+    """Resolve the required ``[board].claim_scope`` (toml only, no default).
 
-    ``parent_scope_ids`` supersedes the legacy ``FLEET_EPIC_IDS`` env var, which
-    is still honored as the env-layer override for back-compat.
+    Missing and empty (the ``squadra init`` scaffold) both fail, naming the two
+    options, so scope cannot be skipped without making a choice.
     """
-    env: str | None = os.environ.get("FLEET_EPIC_IDS") or os.environ.get("FLEET_PARENT_SCOPE_IDS")
-    if env is not None and env.strip():
-        return tuple(int(part) for part in env.split(",") if part.strip())
+    declared: str | None = _str(board, "claim_scope")
+    options: str = " or ".join(f'"{scope.value}"' for scope in ClaimScope)
+    if not declared:
+        raise ConfigError(
+            f"[board].claim_scope is required: set it to {options} "
+            '("parents" claims only items under [board].parent_scope_ids; '
+            '"whole-board" claims every queued item on the board)'
+        )
+    try:
+        return ClaimScope(declared)
+    except ValueError:
+        raise ConfigError(f"[board].claim_scope must be {options}, got {declared!r}") from None
+
+
+def _resolve_parent_scope_ids(
+    board: Mapping[str, object], claim_scope: ClaimScope
+) -> tuple[int, ...]:
+    """Resolve the parent-link claim filter and check it agrees with ``claim_scope``.
+
+    ``"parents"`` needs at least one id; ``"whole-board"`` takes none (ids there
+    would be ambiguous). There is no env layer: the toml is the only way in.
+    """
     declared: object = board.get("parent_scope_ids")
-    if declared is None:
-        return ()
-    if not isinstance(declared, list):
-        raise ConfigError(f"[board].parent_scope_ids must be a list of ints, got {declared!r}")
-    items: list[object] = cast("list[object]", declared)
-    if not all(isinstance(item, int) and not isinstance(item, bool) for item in items):
-        raise ConfigError(f"[board].parent_scope_ids must be a list of ints, got {declared!r}")
-    return tuple(cast("list[int]", items))
+    ids: tuple[int, ...] = ()
+    if declared is not None:
+        if not isinstance(declared, list):
+            raise ConfigError(f"[board].parent_scope_ids must be a list of ints, got {declared!r}")
+        items: list[object] = cast("list[object]", declared)
+        if not all(isinstance(item, int) and not isinstance(item, bool) for item in items):
+            raise ConfigError(f"[board].parent_scope_ids must be a list of ints, got {declared!r}")
+        ids = tuple(cast("list[int]", items))
+    if claim_scope is ClaimScope.PARENTS and not ids:
+        raise ConfigError(
+            '[board].claim_scope = "parents" needs a non-empty [board].parent_scope_ids'
+        )
+    if claim_scope is ClaimScope.WHOLE_BOARD and ids:
+        raise ConfigError(
+            '[board].claim_scope = "whole-board" takes no [board].parent_scope_ids '
+            f'(got {list(ids)}); use "parents" to claim only under those ids'
+        )
+    return ids
 
 
 def _resolve_states(

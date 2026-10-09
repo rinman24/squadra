@@ -25,7 +25,6 @@ def _ctx() -> UnitContext:
         fleet_root=Path("/opt/squadra/state"),
         key_vault="fleet-kv",
         app_repo_url="https://dev.azure.com/your-org/example-project/_git/app-backend",
-        parent_scope_ids="139",
         interval_seconds=180,
         user="azureuser",
     )
@@ -48,7 +47,9 @@ def test_service_passes_runtime_env_but_no_secret() -> None:
         "Environment=FLEET_APP_REPO_URL="
         "https://dev.azure.com/your-org/example-project/_git/app-backend" in service
     )
-    assert "Environment=FLEET_PARENT_SCOPE_IDS=139" in service
+    # Claim scope lives in squadra.toml only (WSQ1); the unit is no second way in.
+    assert "FLEET_PARENT_SCOPE_IDS" not in service
+    assert "FLEET_EPIC_IDS" not in service
     # No secret material is ever written into the unit (ADR-0002 §11).
     assert "AZURE_DEVOPS_EXT_PAT" not in service
     assert "ANTHROPIC_API_KEY=" not in service

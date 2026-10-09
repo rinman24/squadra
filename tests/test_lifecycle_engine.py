@@ -64,10 +64,12 @@ def _decide(engine: LifecycleEngine, facts: LifecycleFacts) -> LifecycleDecision
 
 
 def test_state_enum_has_the_full_derived_table() -> None:
-    # The 13 derived states from ADR-0002 decision 3 / plan §4 — guarding against
-    # an accidental rename or drop that would silently change a transition target.
+    # The 13 derived states from ADR-0002 decision 3 / plan §4, plus out-of-scope
+    # (WSQ1, mandatory claim scope) — guarding against an accidental rename or
+    # drop that would silently change a transition target.
     assert {state.value for state in State} == {
         "blocked",
+        "out-of-scope",
         "claimable",
         "provisioning",
         "running",
@@ -107,6 +109,35 @@ def test_queued_blocked_is_blocked(engine: LifecycleEngine, make_facts: MakeFact
     decision = _decide(engine, facts)
     assert decision.state is State.BLOCKED
     assert decision.actions == (NoAction(),)
+
+
+def test_queued_out_of_scope_is_out_of_scope_not_blocked(
+    engine: LifecycleEngine, make_facts: MakeFacts
+) -> None:
+    # "Not mine" is its own terminal state, distinct from "not yet" (WSQ1).
+    for preds in (True, False):
+        facts = make_facts(
+            lifecycle=Lifecycle.QUEUED,
+            is_fleet_claimed=False,
+            predecessors_done=preds,
+            in_claim_scope=False,
+        )
+        decision = _decide(engine, facts)
+        assert decision.state is State.OUT_OF_SCOPE
+        assert decision.actions == (NoAction(),)
+
+
+def test_scope_gates_the_queued_bucket_only(engine: LifecycleEngine, make_facts: MakeFacts) -> None:
+    # An in-flight increment reparented out of scope must still be driven to
+    # finalize or reap; gating it would leak the claim, worktree and sandbox.
+    running = make_facts(in_claim_scope=False)
+    assert _decide(engine, running).state is State.RUNNING
+    crashed = make_facts(in_claim_scope=False, container_running=False, container_exit_code=1)
+    assert _decide(engine, crashed).state is State.AGENT_FAILED
+    merged = make_facts(
+        lifecycle=Lifecycle.DONE, completed_pr_url="https://pr/1", in_claim_scope=False
+    )
+    assert _decide(engine, merged).state is State.FINALIZING
 
 
 def test_claimed_no_container_yet_is_provisioning(
@@ -486,6 +517,7 @@ def test_every_state_is_reachable_by_some_fact_combination(
     # least one fact set, so no state is dead code (and the table stays honest).
     cases: dict[State, LifecycleFacts] = {
         State.BLOCKED: make_facts(lifecycle=Lifecycle.QUEUED, predecessors_done=False),
+        State.OUT_OF_SCOPE: make_facts(lifecycle=Lifecycle.QUEUED, in_claim_scope=False),
         State.CLAIMABLE: make_facts(lifecycle=Lifecycle.QUEUED, predecessors_done=True),
         State.PROVISIONING: make_facts(container_present=False, container_running=False),
         State.RUNNING: make_facts(),
@@ -575,6 +607,7 @@ def _facts_from_row(row: tuple[object, ...]) -> LifecycleFacts:
         lifecycle,
         is_claimed,
         preds,
+        in_scope,
         parked_tag,
         failed_tag,
         decision_tag,
@@ -598,6 +631,7 @@ def _facts_from_row(row: tuple[object, ...]) -> LifecycleFacts:
         lifecycle=cast(Lifecycle, lifecycle),
         is_fleet_claimed=cast(bool, is_claimed),
         predecessors_done=cast(bool, preds),
+        in_claim_scope=cast(bool, in_scope),
         parked_tagged=cast(bool, parked_tag),
         failed_tagged=cast(bool, failed_tag),
         needs_decision_tagged=cast(bool, decision_tag),
@@ -627,6 +661,7 @@ _FIELD_DOMAINS: tuple[tuple[object, ...], ...] = (
     tuple(Lifecycle),  # lifecycle
     _BOOLS,  # is_fleet_claimed
     _BOOLS,  # predecessors_done
+    _BOOLS,  # in_claim_scope
     _BOOLS,  # parked_tagged
     _BOOLS,  # failed_tagged
     _BOOLS,  # needs_decision_tagged
@@ -670,7 +705,7 @@ def test_decide_is_total_over_branch_driving_dimensions(engine: LifecycleEngine)
     Reduces each field to representatives spanning its branch classes and
     enumerates their full Cartesian product, so every combination of the value
     *classes* the guard ladder keys on is exercised: lifecycle, the short-circuit
-    tags, claim/predecessor status, the park-folding (phase/parked_state), the
+    tags, claim/predecessor/claim-scope status, the park-folding (phase/parked_state), the
     container triple (present/running/exit), liveness, the completion triple, the
     failure inputs, and the attempt-vs-budget boundary. The orthogonal
     ``parked_tagged`` and ``teardown_failed`` flags (each handled by a dedicated
@@ -683,6 +718,7 @@ def test_decide_is_total_over_branch_driving_dimensions(engine: LifecycleEngine)
         tuple(Lifecycle),  # lifecycle
         _BOOLS,  # is_fleet_claimed
         _BOOLS,  # predecessors_done
+        _BOOLS,  # in_claim_scope
         _BOOLS,  # failed_tagged
         _BOOLS,  # needs_decision_tagged
         (None, "parked", "done"),  # phase reps
@@ -704,6 +740,7 @@ def test_decide_is_total_over_branch_driving_dimensions(engine: LifecycleEngine)
         lifecycle,
         is_claimed,
         preds,
+        in_scope,
         failed_tag,
         decision_tag,
         phase,
@@ -724,6 +761,7 @@ def test_decide_is_total_over_branch_driving_dimensions(engine: LifecycleEngine)
             lifecycle,
             is_claimed,
             preds,
+            in_scope,
             False,  # parked_tagged (held fixed; covered elsewhere)
             failed_tag,
             decision_tag,

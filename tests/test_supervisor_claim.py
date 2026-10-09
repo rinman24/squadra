@@ -12,7 +12,9 @@ from datetime import UTC, datetime
 import fcntl
 from pathlib import Path
 
-from squadra.config import SquadraConfig
+import pytest
+
+from squadra.config import ClaimScope, SquadraConfig
 from squadra.constants import SUPERVISOR_LOCK_FILENAME
 from squadra.domain import Claimed, Lifecycle, RolledBack
 from squadra.status import FleetStatus, write
@@ -318,15 +320,38 @@ def test_parent_scope_filter_limits_claims(
     make_issue: Callable[..., FakeIssue],
     make_seams: Callable[..., TickSeams],
     make_config: Callable[..., SquadraConfig],
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     make_issue(5, parent_id=68)
     make_issue(6, parent_id=99)
-    config: SquadraConfig = make_config(parent_scope_ids=(68,))
+    make_issue(7, parent_id=None)
+    config: SquadraConfig = make_config(claim_scope=ClaimScope.PARENTS, parent_scope_ids=(68,))
 
     assert run_tick(make_seams(), config) == 0
 
     assert fake_board.item_state(5) == Lifecycle.ACTIVE
     assert fake_board.item_state(6) == Lifecycle.QUEUED
+    assert fake_board.item_state(7) == Lifecycle.QUEUED
+    # Out of scope is reported as such, never folded into "blocked".
+    out: str = capsys.readouterr().out
+    assert "6: 'out-of-scope'" in out
+    assert "7: 'out-of-scope'" in out
+    assert "blocked" not in out
+
+
+def test_whole_board_scope_claims_any_parent(
+    fake_board: FakeBoard,
+    make_issue: Callable[..., FakeIssue],
+    make_seams: Callable[..., TickSeams],
+    make_config: Callable[..., SquadraConfig],
+) -> None:
+    make_issue(5, parent_id=68)
+    make_issue(6, parent_id=None)
+
+    assert run_tick(make_seams(), make_config(claim_scope=ClaimScope.WHOLE_BOARD)) == 0
+
+    assert fake_board.item_state(5) == Lifecycle.ACTIVE
+    assert fake_board.item_state(6) == Lifecycle.ACTIVE
 
 
 def _now() -> str:

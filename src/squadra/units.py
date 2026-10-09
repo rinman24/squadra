@@ -44,7 +44,6 @@ class UnitContext:
     - ``key_vault`` — the Key Vault name ``fleet-tick`` reads secrets from.
     - ``app_repo_url`` — the app-backend remote ``fleet-tick`` keeps ``fleet_home``
       synced to (empty disables the host-side auto-clone/update).
-    - ``parent_scope_ids`` — the comma-separated Epic/Issue claim filter (empty = all).
     - ``interval_seconds`` — the timer cadence.
     - ``user`` — the unprivileged service account (in the ``docker`` group).
     """
@@ -54,7 +53,6 @@ class UnitContext:
     fleet_root: Path
     key_vault: str
     app_repo_url: str = ""
-    parent_scope_ids: str = ""
     interval_seconds: int = DEFAULT_INTERVAL_SECONDS
     user: str = DEFAULT_USER
 
@@ -66,7 +64,6 @@ class UnitContext:
             "fleet_root": str(self.fleet_root),
             "key_vault": self.key_vault,
             "app_repo_url": self.app_repo_url,
-            "parent_scope_ids": self.parent_scope_ids,
             "interval_seconds": str(self.interval_seconds),
             "user": self.user,
         }

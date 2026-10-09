@@ -20,5 +20,4 @@ Environment=FLEET_ROOT=${fleet_root}
 Environment=FLEET_PYTHON=${venv_bin}/python
 Environment=FLEET_KEY_VAULT=${key_vault}
 Environment=FLEET_APP_REPO_URL=${app_repo_url}
-Environment=FLEET_PARENT_SCOPE_IDS=${parent_scope_ids}
 ExecStart=${venv_bin}/squadra fleet-tick

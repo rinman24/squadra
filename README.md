@@ -90,7 +90,8 @@ built-in defaults  <  squadra.toml  <  FLEET_* env  <  CLI flag
 | `[board].provider` | `ado` | `ado` \| `github` \| `gitlab`. Selects the `BoardAccess` adapter (registry in the CLI composition root). ADO ships today; GitHub/GitLab are tracked backlog adapters. |
 | `[board].base_branch` | `main` | The branch an increment PR must complete against for finalize-eligibility. |
 | `[board].tag_prefix` | `fleet:` | Configurable namespace for the fleet's tags; detection is prefix-based (`startswith`). The five suffixes are fixed (see [Tag vocabulary](#tag-vocabulary)). |
-| `[board].parent_scope_ids` | `[]` (whole project) | Optional claim-scope filter — only increments under these parents are claimable. Supersedes the legacy `FLEET_EPIC_IDS` env, which is still honored. |
+| `[board].claim_scope` | — | **REQUIRED, no default, no env override.** `"parents"` (claim only increments under `parent_scope_ids`) or `"whole-board"` (claim every queued increment). Loading fails until it is declared; see [Scoping](#scoping). |
+| `[board].parent_scope_ids` | `[]` | The parent work-item ids `"parents"` claims under. Must be non-empty for `"parents"` and empty for `"whole-board"`. |
 | `[board.states].queued` / `.active` / `.done` | — | Lists of the board's *native* state names mapped onto the three neutral `Lifecycle` buckets (many-native→one-neutral allowed). **REQUIRED** unless the provider is ADO-Basic, which defaults to `["To Do"]` / `["Doing"]` / `["Done"]`. GitHub/GitLab statuses are user-defined, so they must be declared. |
 | `[pipeline].branch_template` | `feat/increment-{id}-{slug}` | Increment branch naming. squadra owns the `-a{attempt}` retry suffix (fixed rule, not templated). |
 | `[pipeline].worktree_dir` | `.claude/worktrees` | Where increment worktrees are created. |
@@ -104,7 +105,8 @@ built-in defaults  <  squadra.toml  <  FLEET_* env  <  CLI flag
 provider         = "ado"          # ado | github | gitlab   (REQUIRED)
 base_branch      = "main"
 tag_prefix       = "fleet:"
-parent_scope_ids = [105]          # optional; empty = whole project (was FLEET_EPIC_IDS)
+claim_scope      = "parents"      # "parents" | "whole-board"   (REQUIRED, no default)
+parent_scope_ids = [105]          # non-empty iff claim_scope = "parents"
 
 [board.states]                    # REQUIRED unless provider is ADO-Basic; many-native→one allowed
 queued = ["To Do"]
@@ -127,7 +129,9 @@ Operational and secret knobs stay **env-only** with the defaults in
 `FLEET_MODEL`/`FLEET_EFFORT`, `FLEET_HOME`/`FLEET_ROOT`/`FLEET_PYTHON`, and the PAT.
 These are not in `squadra.toml`.
 
-Safety is **validate-against-board, not mandatory typing.** `validate_config()`
+Safety is **validate-against-board, not mandatory typing**, with one deliberate
+exception: `[board].claim_scope` must be declared, because a forgotten scope line
+would otherwise make every queued item on the board claimable. `validate_config()`
 resolves the configured state names, tag prefix, and base branch against the
 *live* board — at startup of every tick and on `squadra init --check` — and fails
 loud on any mismatch (e.g. "configured active state 'Doing' not found among this
@@ -139,7 +143,9 @@ project's states"). A typo can't silently strand or mis-claim increments.
 emits:
 
 - a complete, **annotated** `squadra.toml` — every key written with its default
-  and `provider` taken from `--provider`; and
+  and `provider` taken from `--provider`, except `claim_scope`, written empty
+  (`claim_scope = ""`) so the first load fails naming both options until you
+  choose one; and
 - the genericized, **consumer-owned** runner-skill and cleanup-skill templates.
 
 The skill templates are provider/repo-agnostic (a neutral lifecycle: claim-verify
@@ -389,11 +395,27 @@ not a flag inside the passes, so a future pass cannot forget to honor it. Only t
 tick lock and the supervisor log are still written — coordination artifacts,
 not fleet state.
 
-Scoping: `[board].parent_scope_ids` (a list of parent work-item ids, optional)
-restricts claiming to increments under those parents; it supersedes the legacy
-`FLEET_EPIC_IDS` env (comma-separated Epic ids), which is still honored. Empty
-(the default) means every unblocked `queued` work item in the project is
-eligible.
+### Scoping
+
+Nothing on a board is claimable until `squadra.toml` says what is.
+`[board].claim_scope` is required and has no default:
+
+- `"parents"` — only `queued` work items whose parent is in
+  `[board].parent_scope_ids` are eligible (the list must be non-empty);
+- `"whole-board"` — every `queued` work item is eligible (`parent_scope_ids`
+  must be empty).
+
+Loading fails with a `ConfigError` (and `squadra tick` / `squadra init --check`
+exit 1) when `claim_scope` is missing or empty, when `"parents"` has no ids, or
+when `"whole-board"` has ids. There is no env override: the legacy
+`FLEET_EPIC_IDS` / `FLEET_PARENT_SCOPE_IDS` are no longer read, and the systemd
+unit carries no scope.
+
+A `queued` item outside the scope is reported `out-of-scope` (terminal for the
+fleet, never claimed), distinct from `blocked` (in scope, predecessors not all
+done). Scope gates the `queued` bucket only: an in-flight item later reparented
+out of scope still finalizes or is reaped. The tick's `states={…}` log line
+shows each item's state, so a dry run shows exactly what the scope admits.
 
 ### Host-side git hardening (sandbox-escape control)
 
@@ -435,9 +457,8 @@ hands-on op cannot trip a planted hook either.
 
 ## Activation (manual, opt-in)
 
-Nothing starts the fleet automatically. Scope claiming with
-`[board].parent_scope_ids` (or the legacy `FLEET_EPIC_IDS`) before enabling. Two
-levers compose:
+Nothing starts the fleet automatically, and nothing loads until
+`[board].claim_scope` is declared (see [Scoping](#scoping)). Two levers compose:
 
 - **A dry run first** (the safest first step): `squadra tick --dry-run` (or
   `FLEET_DRY_RUN=1`) runs the full finalize/reap/claim read+plan logic and logs

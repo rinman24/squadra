@@ -13,8 +13,8 @@
 #   - `squadra fleet-tick` clones FLEET_HOME on the first tick.
 #
 # Reads /opt/squadra/fleet-host.env (laid down by cloud-init) for FLEET_KEY_VAULT,
-# FLEET_HOME, FLEET_APP_REPO_URL, FLEET_VENV, FLEET_USER, FLEET_PARENT_SCOPE_IDS, and
-# the optional SQUADRA_VERSION pin; and /opt/squadra/PINNED_VERSION (the default for
+# FLEET_HOME, FLEET_APP_REPO_URL, FLEET_VENV, FLEET_USER, and the optional
+# SQUADRA_VERSION pin; and /opt/squadra/PINNED_VERSION (the default for
 # SQUADRA_VERSION) for the squadra version pin.
 
 set -euo pipefail
@@ -53,8 +53,7 @@ sudo "$VENV/bin/squadra" install-units \
   --key-vault "$FLEET_KEY_VAULT" \
   --fleet-home "$FLEET_HOME" \
   --venv-bin "$VENV/bin" \
-  --app-repo-url "${FLEET_APP_REPO_URL:-}" \
-  --parent-scope-ids "${FLEET_PARENT_SCOPE_IDS:-}"
+  --app-repo-url "${FLEET_APP_REPO_URL:-}"
 sudo systemctl daemon-reload
 
 # Set the az devops org/project defaults the board adapter reads

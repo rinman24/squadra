@@ -145,9 +145,6 @@ def _build_parser() -> tuple[argparse.ArgumentParser, frozenset[str]]:
         "--app-repo-url", default="", help="remote fleet-tick keeps fleet-home synced to"
     )
     install.add_argument(
-        "--parent-scope-ids", default="", help="comma-separated Epic/Issue claim filter"
-    )
-    install.add_argument(
         "--interval-seconds", type=int, default=None, help="timer cadence (default: 180)"
     )
     install.add_argument("--user", default=None, help="service account (default: azureuser)")
@@ -197,7 +194,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
         print(f"squadra: {status_word} {fleet_home / name}")
     print(
         "next steps: review squadra.toml + the scaffolded skill templates (set "
-        "provider / [board.states] / parent_scope_ids), then run `squadra init "
+        "provider / [board.states] / claim_scope), then run `squadra init "
         "--check` to validate against your board and `squadra start` to run the ticker."
     )
 
@@ -304,7 +301,6 @@ def _cmd_install_units(args: argparse.Namespace) -> int:
         fleet_root=fleet_root,
         key_vault=args.key_vault,
         app_repo_url=args.app_repo_url,
-        parent_scope_ids=args.parent_scope_ids,
         interval_seconds=(
             args.interval_seconds if args.interval_seconds is not None else DEFAULT_INTERVAL_SECONDS
         ),
