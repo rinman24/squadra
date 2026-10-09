@@ -2,7 +2,8 @@
 
 - Status: **Accepted** — 2026-10-09; implemented by the PR that adds this ADR
   (board-writes SQ2). Decision 3 amended by SQ2b, 2026-10-09 (ledger N6);
-  decisions 1 and 2 to be amended by SQ2c (ledger N7, N8; see Consequences).
+  decisions 1 and 2 amended by SQ2c, 2026-10-09 (ledger N7, N8; Rich's
+  ruling, see Consequences).
 - Date: 2026-10-09
 - Context origin: claude-skills `docs/design-to-board/LEDGER.md` DB-D1 (writes
   live in squadra; amendment A2: squadra's orchestration applies claim scope
@@ -27,18 +28,49 @@ definition of scope.
 ## Decision
 
 1. `BoardAccess` gains two **raw primitives** and no rules:
-   - `create_increment(IncrementRequest) -> item_id`: one business write that
-     lands a QUEUED item with its Origin, parent and predecessor links, title and
-     body. If the provider needs several calls, the adapter orders them so no
-     tick can claim the item before its links exist (DB-D1 A1).
+   - `create_increment(IncrementRequest, partial_item=None) -> item_id`: one
+     business write that lands a QUEUED item with its Origin, parent and
+     predecessor links, title and body. If the provider needs several calls,
+     the adapter keeps four call-order obligations (SQ2c, ledger N8), so no
+     tick can claim the item before its links exist (DB-D1 A1) and a crash
+     part-way leaves an item a retry can find:
+     1. the Origin goes on with the first call that creates the item (title
+        and body with it);
+     2. until the last write the item is in no bucket, an absence the adapter
+        recognises structurally, not a native state;
+     3. meanwhile `items_with_origin` still returns it, as a partial item;
+     4. one write commits the item, the one that puts it in QUEUED, and it
+        comes last.
+     With `partial_item`, the adapter finishes that item instead: it adds
+     what is missing, each write idempotent, commit write last, and returns
+     the same id. `item_state` on a partial item raises.
    - `items_with_origin() -> tuple[OriginRecord, ...]`: every Origin-bearing item
      on the board, in every bucket, unkeyed, so duplicates stay visible.
+     Partial items are included, with `lifecycle` `None`.
    Withdrawal reuses `item_state` and `set_state`.
+
+   A **partial item** is an item `create_increment` has stamped with its
+   Origin but not yet put in QUEUED: in no bucket, not an Increment, and a
+   `queue_increment` retry finishes it. The word is the adapter contract's,
+   not the glossary's (Eric, board-knowledge
+   `sessions/2026-10-09-eric-increment-verb-partial-item.md`).
 2. `squadra.increments.IncrementBoard` holds **the contract**, the three verbs in
-   DB-D4's shape, and applies every rule once, using pure functions in
-   `squadra.engines`: `parent_in_claim_scope` (now also the tick's claim gate),
-   `check_transition`, `index_by_origin` (A2) and `check_queue_matches` (A3).
+   DB-D4's shape as amended by Rich's N7 and N8 ruling, and applies every rule
+   once, using pure functions in `squadra.engines`: `parent_in_claim_scope`
+   (now also the tick's claim gate), `check_transition`, `index_by_origin`
+   (A2), `check_queue_matches` (A3) and `check_queue_finishes` (N8).
    Every refusal raises before any write.
+   - `withdraw_increment(origin) -> item_id` goes by Origin, not item id
+     (N7). It refuses an Origin no Increment carries (`UnknownOriginError`;
+     an Origin only a partial item carries counts as absent), checks scope
+     against the record's parent, and re-reads `item_state` just before
+     `set_state`.
+   - `queue_increment` on an Origin only a partial item carries finishes it
+     when what is on the board agrees with the request (title and body
+     equal, the parent equal once set, the predecessors present a subset of
+     those requested), and refuses any other difference (N8).
+   - `increments_by_origin` leaves partial items out. `index_by_origin` runs
+     on the raw records, so a partial item still counts as a duplicate.
 3. Two narrowings beyond the rulings, both fail-closed, kept by SQ2b (ledger
    N6; board-knowledge `sessions/2026-10-09-juval-increment-verb-settlement.md`):
    - A withdrawn Origin is never re-queued (the glossary's "never reused"). It
@@ -67,21 +99,26 @@ definition of scope.
   the primitives directly except `IncrementBoard`.
 - Ruled by Rich, 2026-10-09 (ledger N7, N8; board-knowledge
   `sessions/2026-10-09-juval-increment-verb-settlement.md`), reopening
-  DB-D1/DB-D4. SQ2c builds both and amends decisions 1 and 2:
-  - `withdraw_increment` takes an Origin instead of an item id (CLI
+  DB-D1/DB-D4. SQ2c built both and amended decisions 1 and 2:
+  - `withdraw_increment` took an Origin instead of an item id (CLI
     `--origin`). It refuses an Origin that is not on the board, checks scope
     against the record's parent, and re-reads `item_state` just before
-    `set_state`.
-  - `create_increment` is crash-safe. The adapter keeps the guarantee through
-    four call-order obligations: the Origin goes on with the first call; the
-    item is in no bucket until one final write puts it in QUEUED; and
-    `items_with_origin` can see it in between. A `queue_increment` retry
-    finishes a partial item whose fields agree with the request (its
-    predecessors may be a subset) and refuses any other difference.
-    `OriginRecord` gains a completeness field, `create_increment` gains an
-    incomplete-item parameter, and `increments_by_origin` leaves incomplete
-    items out.
-  Until SQ2c merges, decisions 1 and 2 stand as written.
+    `set_state`. A hand-queued item with no Origin is out of its reach; a
+    human withdraws that on the board.
+  - `create_increment` became crash-safe. The adapter keeps the guarantee
+    through the four call-order obligations in decision 1. A
+    `queue_increment` retry finishes a partial item whose fields agree with
+    the request (its predecessors may be a subset) and refuses any other
+    difference. `OriginRecord.lifecycle` became `Lifecycle | None` (`None` for
+    a partial item, read through `OriginRecord.partial`), `create_increment`
+    gained `partial_item`, and `increments_by_origin` leaves partial items out.
+  - The GitHub adapter (SQ5) must prove obligations 1–4. If GitHub has no
+    structural "in no bucket yet" that `items_with_origin` can still see, the
+    fallback stays in the adapter: it writes its own completion marker last
+    and filters its bucket reads on it.
+  - A row withdrawn before its crashed create is finished leaves its partial
+    item for good: unclaimable, invisible to the planner, its Origin never
+    reused. `squadra board origins` names each one on stderr (SQ4).
 - Open (ledger N10): `withdraw_increment` reads the state, then writes it. The
   ticker can claim the item in between, leaving an item WITHDRAWN while a
   runner works on it. Closing that gap needs a compare-and-set write from the

@@ -49,7 +49,12 @@ Goal: a production fake provider, `provider = "fake"`:
   item is in no bucket and `tick --dry-run` claims nothing new; it is left out
   of `increments_by_origin`; a same-argument retry returns the same id, now
   complete, with one record throughout; a different-parent retry is refused;
-  a complete and an incomplete item with one Origin raise `DuplicateOriginError`.
+  a complete item and a partial one with one Origin raise `DuplicateOriginError`.
+  SQ2c built the contract half: `create_increment(request, partial_item=...)`,
+  `OriginRecord.lifecycle` `None` for a partial item (`OriginRecord.partial`),
+  and `seed_partial(...)` on both test fakes, which the contract tests 2–5 use.
+  The registered fake implements the same, so those tests run against it too.
+  "Partial", not "incomplete": Eric's word (ledger N13).
 Then a PR to squadra `main`.
 Estimated work: ~50–70K tokens (budget: under 100K total, hard stop at 120K)
 

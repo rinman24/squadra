@@ -4,7 +4,7 @@ Branch: `feat/board-writes`
 Goal: squadra owns every board write design-to-board needs (claude-skills
 DB-D1): `Lifecycle.WITHDRAWN`, then the verbs frozen in DB-D4,
 `queue_increment(origin, parent, predecessors, title, body) -> item_id`,
-`withdraw_increment(item_id)`, `increments_by_origin() -> {origin: Increment}`,
+`withdraw_increment(item_id)` (by Origin since SQ2c, N7), `increments_by_origin() -> {origin: Increment}`,
 behind CLI subcommands, with a registered fake provider, then the GitHub
 adapter. Contract: [`verb-contract.md`](verb-contract.md).
 
@@ -23,7 +23,7 @@ Under ~100K tokens per session, hard ceiling 120K, one unit per session.
 | SQ1 | `Lifecycle.WITHDRAWN`, transitions, second blocked reason, unmapped states fail `validate_config`, glossary rows Origin and Withdrawn | A (part) | DB-D1 | done (PR #43, merged) |
 | SQ2 | Verb contract (`IncrementBoard` + two `BoardAccess` primitives, ADR-0005) + CLI surface; Origin stored opaquely; ACTIVE → WITHDRAWN rule (DB-D2) | A (rest) | SQ1; DB-D2–DB-D5 | done (PR #44, merged) |
 | SQ2b | Consult Juval on N6–N8, settle them on Rich's delegation, build what the settlement changes (`handoffs/SQ2b-settle-n6-n8.md`) | A (rest) | SQ2 | done (PR #46, merged); N7, N8 ruled by Rich, built in SQ2c |
-| SQ2c | Build Rich's N7 and N8 rulings: `withdraw_increment(origin)`; crash-safe `create_increment` (completeness on `OriginRecord`, the consistency rule, `incomplete_item`, `increments_by_origin` omits incomplete items); Eric names the two new terms (`handoffs/SQ2c-build-n7-n8.md`) | A (rest) | SQ2b | todo |
+| SQ2c | Build Rich's N7 and N8 rulings: `withdraw_increment(origin)`; crash-safe `create_increment` (completeness on `OriginRecord`, the consistency rule, `incomplete_item`, `increments_by_origin` omits incomplete items); Eric names the two new terms (`handoffs/SQ2c-build-n7-n8.md`) | A (rest) | SQ2b | done (PR open); claude-skills DB-D1/DB-D4 reopening still owed |
 | SQ3 | Fake provider implementing the two primitives (`create_increment`, `items_with_origin`) and the read half, registered in `PROVIDERS`; run the `BoardAccess` and increment contract suites against it | B | SQ2, SQ2b, SQ2c | todo |
 | SQ4 | `squadra board {queue,withdraw,origins}` as Clients over `IncrementBoard`, per `verb-contract.md` (the rules already live in `IncrementBoard`) | C | SQ2, SQ3 | todo |
 | SQ5 | GitHub adapter, reads and writes; `[[boards]]` and `in_claim_scope` (WSQ1) | D | SQ2; after design-to-board F per DB-D1 order | todo |
@@ -63,7 +63,7 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
   Origin; `squadra stop`, restore scope, withdraw again, `squadra start`
   (restoring scope first lets the next tick claim the item). ADR-0005
   decision 3 amended; contract and signatures unchanged.
-- N7 (SQ2), **ruled by Rich, 2026-10-09: option (iii), withdraw by Origin; built in SQ2c**. Put to him by SQ2b (board-knowledge `sessions/2026-10-09-juval-increment-verb-settlement.md`): `withdraw_increment` accepts any in-scope QUEUED item,
+- N7 (SQ2), **ruled by Rich, 2026-10-09: option (iii), withdraw by Origin; built by SQ2c** (see N11). Put to him by SQ2b (board-knowledge `sessions/2026-10-09-juval-increment-verb-settlement.md`): `withdraw_increment` accepts any in-scope QUEUED item,
   including one queued by hand with no Origin. Restricting it to Origin-bearing
   items costs one board-wide read per withdraw.
   Juval: option (iii), `withdraw_increment(origin)`, CLI `--origin`. It changes
@@ -71,7 +71,7 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
   rule). If Rich takes it, record it as reopening DB-D1/DB-D4 in claude-skills;
   Eric names the not-found refusal; the verb re-reads `item_state` just
   before `set_state`.
-- N8 (SQ2), **ruled by Rich, 2026-10-09: Juval's design; contract built in SQ2c, fault-injecting fake in SQ3, GitHub in SQ5**. Put to him by SQ2b (board-knowledge `sessions/2026-10-09-juval-increment-verb-settlement.md`): `create_increment` is one business write. If GitHub needs
+- N8 (SQ2), **ruled by Rich, 2026-10-09: Juval's design; contract built by SQ2c (see N12–N15), fault-injecting fake in SQ3, GitHub in SQ5**. Put to him by SQ2b (board-knowledge `sessions/2026-10-09-juval-increment-verb-settlement.md`): `create_increment` is one business write. If GitHub needs
   several calls (create issue, sub-issue link, dependencies, project status),
   the adapter must order them so no tick can claim the item before its links
   exist. Under `"whole-board"` an unlinked QUEUED issue is claimable, so links
@@ -98,6 +98,43 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
   window. Closing it needs a compare-and-set write from the provider (an SQ5
   fact) or a tick rule for a live sandbox on a WITHDRAWN item. Does not block
   SQ3.
+- N11 (SQ2c): `withdraw_increment(origin)` follows Juval's steps 1–5 and
+  returns the item id (the CLI's `{"item_id": …}`). An Origin carried only by
+  a partial item counts as absent: `UnknownOriginError`, nothing written, the
+  same as `increments_by_origin`, which does not show it either. The message
+  names the partial item. A hand-queued item with no Origin is out of reach.
+- N12 (SQ2c): completeness is `OriginRecord.lifecycle: Lifecycle | None`, `None`
+  for a partial item, read through the `OriginRecord.partial` property, not a
+  separate flag. A flag would still need `lifecycle` to hold a bucket for an
+  item in none (every bucket is wrong, per Juval's N8), so two fields could
+  disagree. Pyright strict now makes every reader handle `None`;
+  `as_increment` raises on it. Eric agreed.
+- N13 (SQ2c): Eric named the terms (board-knowledge
+  `sessions/2026-10-09-eric-increment-verb-partial-item.md`):
+  `UnknownOriginError` (not `…Refused`: no rule forbids the act, there is no
+  Increment to act on; it sits beside `DuplicateOriginError`), and **partial**
+  (`OriginRecord.partial`, `partial_item=`, `seed_partial`). Not "incomplete":
+  "complete" already means delivered here (`completed_pr_url`, FINALIZING), so
+  "incomplete item" reads as "undelivered". Partial qualifies an item, never
+  an Increment. Neither term enters `GLOSSARY.md`: both belong to the
+  primitive's model, not the planner's language. "Partial item" is defined in
+  ADR-0005 decision 1.
+- N14 (SQ2c): `check_queue_finishes` compares title and body exactly, because
+  `OriginRecord` cannot show them absent. So obligation 1 reads "the Origin,
+  title and body go on with the first call". An adapter that wrote either
+  later would make every finishing retry refuse: loud, not wrong. The parent
+  is compared only once set, and the predecessors present must be a subset.
+  `item_state` on a partial item raises `BoardValidationError` (no new class),
+  so a tick that reaches one through a predecessor link fails loudly. Both
+  fakes refuse `partial_item` naming anything but a partial item that carries
+  the request's Origin, as a guard against a caller bug; SQ5's adapter should
+  do the same.
+- N15 (SQ2c), **for SQ5**: the GitHub adapter must prove obligations 1–4
+  (ADR-0005 decision 1) on GitHub, with N14's title and body on the first
+  call. If GitHub has no structural "in no bucket yet" that `items_with_origin`
+  can still see, the fallback stays in the adapter: it writes its own
+  completion marker last and filters its bucket reads on it (Juval, "Where the
+  work lands"). The invariant and its owner do not change.
 
 ## Session log
 
@@ -107,3 +144,4 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
 | SQ2 | 2026-10-09 | SQ2 | Gate checked (DB-D2–DB-D5 ruled, PR #43 merged). `IncrementBoard` verbs, `BoardAccess.create_increment` / `items_with_origin`, engine rules (scope, A2, A3), DB-D2 in `check_transition` and ADR-0004, ADR-0005, `verb-contract.md` with the SQ4 CLI surface. ruff, pyright, 462 tests green | `handoffs/SQ3-fake-provider.md` |
 | SQ2b | 2026-10-09 | SQ2b | Juval consulted on N6–N8 (method). N6 settled: both refusals kept, each naming its way out; ADR-0005 decision 3, `verb-contract.md`, contract tests (Juval's 9, 10). N7 (withdraw by Origin) and N8 (crash-safe create) put to Rich: both change DB-D rulings. N10 opened. ruff, pyright, tests green | `handoffs/SQ3-fake-provider.md` (gate: SQ2b merged + Rich's N7/N8 ruling) |
 | SQ2b (ruling) | 2026-10-09 | SQ2b | Rich ruled N7 (withdraw by Origin) and N8 (Juval's crash-safe create), both reopening DB-D1/DB-D4; recorded in the session file's Choice, ADR-0005 and `verb-contract.md`. Build deferred to SQ2c (session budget) | `handoffs/SQ2c-build-n7-n8.md` |
+| SQ2c | 2026-10-09 | SQ2c | Gate checked (PR #47 merged). Eric named `UnknownOriginError` and *partial* (N13). `withdraw_increment(origin)` (N11); crash-safe create contract: `OriginRecord.lifecycle` `None` for a partial item (N12), `create_increment(request, partial_item=None)` with the four obligations, `check_queue_finishes` (N14), `increments_by_origin` omits partial items; both fakes with `seed_partial`; Juval's tests 2–8 plus a subset-finish retry. ADR-0005 decisions 1–2 amended, `verb-contract.md` rewritten. claude-skills DB-D1/DB-D4 still owed. ruff, pyright, tests green | `handoffs/SQ3-fake-provider.md` (gate: SQ2c's PR merged) |
