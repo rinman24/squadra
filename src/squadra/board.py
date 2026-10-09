@@ -24,7 +24,9 @@ from squadra.domain import (
     CommentEvent,
     Escalated,
     Finalized,
+    IncrementRequest,
     Lifecycle,
+    OriginRecord,
     Reaped,
     RolledBack,
     Tags,
@@ -92,6 +94,27 @@ class BoardAccess(Protocol):
 
         A mismatch is a configured state the board lacks, or a board state that
         maps to no lifecycle bucket.
+        """
+        ...
+
+    def create_increment(self, request: IncrementRequest) -> int:
+        """Create one item in the QUEUED bucket and return its id.
+
+        The item carries ``request``'s Origin (stored as given, never parsed),
+        its parent and predecessor links, title and body, and reads back exactly
+        through :meth:`items_with_origin`. One business write: if the provider
+        needs several calls, the adapter orders them so that no tick can claim
+        the item before its links exist (claude-skills DB-D1, A1). A raw write:
+        claim scope and idempotency are the caller's
+        (:class:`squadra.increments.IncrementBoard`).
+        """
+        ...
+
+    def items_with_origin(self) -> tuple[OriginRecord, ...]:
+        """Return every item on this board that carries an Origin, in every bucket.
+
+        Board-wide, never filtered by claim scope, and unkeyed: two items that
+        carry one Origin are both returned. Items with no Origin are left out.
         """
         ...
 
@@ -421,6 +444,20 @@ class AzCliAdo:
                 f"this project's Issue state(s) {unmapped} map to no lifecycle bucket; "
                 "map each in squadra.toml [board.states] (queued/active/done/withdrawn)"
             )
+
+    def create_increment(self, request: IncrementRequest) -> int:
+        """Not supported: the ADO adapter has no write half (claude-skills DB-D1)."""
+        raise NotImplementedError(
+            f"the ado provider cannot queue increments (origin {request.origin!r}); "
+            "board writes ship with the GitHub adapter"
+        )
+
+    def items_with_origin(self) -> tuple[OriginRecord, ...]:
+        """Not supported: the ADO adapter stores no Origin (claude-skills DB-D1)."""
+        raise NotImplementedError(
+            "the ado provider cannot list increments by origin; "
+            "board writes ship with the GitHub adapter"
+        )
 
     def _board_state_names(self) -> set[str]:
         """Return the names of the Issue work-item-type's states on the live board."""

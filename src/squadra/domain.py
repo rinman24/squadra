@@ -70,6 +70,57 @@ class WorkItemLinks:
     predecessor_ids: tuple[int, ...]
 
 
+# --- the increment verbs (board-writes; squadra.increments) -------------------
+
+
+@dataclass(frozen=True, slots=True)
+class IncrementRequest:
+    """The arguments of one ``queue_increment`` call: what an outside caller asks for.
+
+    ``origin`` is opaque (glossary: Origin): squadra stores it and compares it
+    for equality, never parses it. ``parent`` is required under either claim
+    scope (claude-skills DB-D5).
+    """
+
+    origin: str
+    parent: int
+    predecessors: tuple[int, ...]
+    title: str
+    body: str
+
+
+@dataclass(frozen=True, slots=True)
+class OriginRecord:
+    """One board item that carries an Origin, as a ``BoardAccess`` adapter reads it.
+
+    Unkeyed on purpose: two items with one Origin are two records, so the
+    duplicate is visible to :func:`squadra.engines.index_by_origin`. ``parent``
+    is ``None`` only if the item was unparented by hand after it was queued.
+    """
+
+    item_id: int
+    origin: str
+    parent: int | None
+    predecessors: tuple[int, ...]
+    title: str
+    body: str
+    lifecycle: Lifecycle
+
+
+@dataclass(frozen=True, slots=True)
+class Increment:
+    """One Origin's item as ``increments_by_origin`` reports it (claude-skills DB-D4).
+
+    ``in_claim_scope`` is reported, not applied: the query returns every Origin
+    on the board, in every lifecycle bucket, whatever the claim scope.
+    """
+
+    item_id: int
+    parent: int | None
+    lifecycle: Lifecycle
+    in_claim_scope: bool
+
+
 # --- structured comment events (the adapter renders these to native markup) ---
 
 

@@ -99,6 +99,15 @@ def board(request: pytest.FixtureRequest) -> BoardAccess:
     return _seed_github()
 
 
+@pytest.fixture(params=["ado", "github"])
+def fake_board(request: pytest.FixtureRequest) -> AdoShapedFakeBoard | GitHubShapedFakeBoard:
+    """The ``board`` seed of each shape, typed concretely so tests can seed Origins by hand."""
+    shape: str = request.param
+    if shape == "ado":
+        return _seed_ado()
+    return _seed_github()
+
+
 def _all_succeed(_args: Sequence[str]) -> int:
     """A recording-free runner that succeeds — drives the real adapter's happy path."""
     return 0

@@ -37,9 +37,10 @@ tick; the second never does.
    `squadra.engines.check_transition`, not a property of a board:
    - QUEUED → WITHDRAWN is allowed.
    - DONE → WITHDRAWN is refused. A delivered increment stays delivered.
-   - ACTIVE → WITHDRAWN is refused **for now**. Whether a claimed, in-flight
-     increment may be withdrawn, and what happens to its attempt, is not yet
-     decided (claude-skills DBQ3). Refusing is the safe answer until it is.
+   - ACTIVE → WITHDRAWN is refused. squadra has no cancel path for a claimed,
+     in-flight increment (claude-skills DB-D2, ruling DBQ3, 2026-10-09). To
+     recover, let the attempt finish or stop it by hand, then re-plan; the
+     planner's re-run is idempotent.
    - No transition leaves WITHDRAWN. WITHDRAWN → WITHDRAWN is a no-op.
    Transitions among QUEUED, ACTIVE and DONE are unchanged and unconstrained.
 3. **Every native state maps to exactly one bucket, or the board fails
@@ -55,8 +56,9 @@ tick; the second never does.
    (one withdrawn predecessor is enough, whatever the others are) and is
    outranked by `out-of-scope`.
 
-squadra has no writer for WITHDRAWN yet. The verbs that queue and withdraw
-increments come later and must go through `check_transition`.
+The writer for WITHDRAWN is `withdraw_increment`
+([ADR-0005](adr-0005-increment-verbs.md)), which goes through
+`check_transition`.
 
 ## Consequences
 

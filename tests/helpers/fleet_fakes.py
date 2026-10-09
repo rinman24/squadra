@@ -14,7 +14,14 @@ seams have their own fakes in ``sandbox_fakes`` / ``cleanup_fakes`` /
 
 from dataclasses import dataclass, field
 
-from squadra.domain import CommentEvent, Lifecycle, WorkItem, WorkItemLinks
+from squadra.domain import (
+    CommentEvent,
+    IncrementRequest,
+    Lifecycle,
+    OriginRecord,
+    WorkItem,
+    WorkItemLinks,
+)
 
 
 @dataclass
@@ -97,3 +104,11 @@ class FakeBoard:
     def validate_config(self) -> None:
         """Record that the startup validation ran (the fake board always passes)."""
         self.validated = True
+
+    def items_with_origin(self) -> tuple[OriginRecord, ...]:
+        """The tick's board carries no Origins."""
+        return ()
+
+    def create_increment(self, request: IncrementRequest) -> int:
+        """The tick never queues an increment; reaching this is a test failure."""
+        raise AssertionError(f"the tick queued origin {request.origin!r}")
