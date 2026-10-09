@@ -79,8 +79,10 @@ class IncrementBoard:
     def withdraw_increment(self, item_id: int) -> None:
         """Move a QUEUED increment to WITHDRAWN.
 
-        Refuses an item outside the claim scope (:class:`ClaimScopeRefusedError`)
-        and an ACTIVE or DONE one (:class:`~squadra.engines.TransitionRefusedError`).
+        Refuses an item outside the claim scope (:class:`ClaimScopeRefusedError`),
+        naming the safe recovery order: restoring scope first would make the
+        item claimable before the withdrawal lands (SQ2b, N6). Refuses an
+        ACTIVE or DONE item (:class:`~squadra.engines.TransitionRefusedError`).
         Withdrawing a withdrawn increment again writes nothing. On a board with
         no withdrawn state the write raises
         :class:`~squadra.board.BoardValidationError`, leaving the item QUEUED.
@@ -89,7 +91,10 @@ class IncrementBoard:
         if not self._in_scope(links.parent_id):
             raise ClaimScopeRefusedError(
                 f"cannot withdraw #{item_id}: its parent #{links.parent_id} is outside "
-                f"[board].claim_scope ({self._scope_text()})"
+                f"[board].claim_scope ({self._scope_text()}). To withdraw it: `squadra stop`, "
+                "add the parent back to the claim scope, withdraw it again, then "
+                "`squadra start` (restoring scope while the fleet runs lets the next tick "
+                "claim the item first)"
             )
         current: Lifecycle = self._board.item_state(item_id)
         check_transition(current, Lifecycle.WITHDRAWN)
