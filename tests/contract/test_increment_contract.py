@@ -13,6 +13,12 @@ The ``case N`` tests are squadra's half of Juval's discriminating tests (board-
 knowledge ``sessions/2026-10-09-juval-parent-and-lookup-scope.md``): map A
 (I1 → I2) under parent P, map B's I5 under parent Q depends on ``A:I2``. Cases 1
 and 3 are design-to-board behaviour with no squadra-side assertion.
+
+The ``test N`` tests are from Juval's settlement (board-knowledge
+``sessions/2026-10-09-juval-increment-verb-settlement.md``): 6–8 withdraw by
+Origin (ledger N7); 2–5 a crash-safe create, against a partial item placed
+by hand with ``seed_partial`` (ledger N8). Test 1, the tick, and the
+fault-injecting create are SQ3's.
 """
 
 import pytest
@@ -25,9 +31,17 @@ from squadra.engines import (
     DuplicateOriginError,
     QueueRefusedError,
     TransitionRefusedError,
+    UnknownOriginError,
 )
 from squadra.increments import IncrementBoard
-from tests.contract.conftest import ACTIVE_ID, DONE_ID, PARENT_ID, QUEUED_ID, WITHDRAWN_ID
+from tests.contract.conftest import (
+    ACTIVE_ID,
+    DONE_ID,
+    LINKED_ID,
+    PARENT_ID,
+    QUEUED_ID,
+    WITHDRAWN_ID,
+)
 from tests.helpers.board_fakes import AdoShapedFakeBoard, GitHubShapedFakeBoard
 
 P: int = PARENT_ID
@@ -160,8 +174,8 @@ def test_queue_increment_refuses_any_other_difference(
 def test_queue_increment_never_reuses_a_withdrawn_origin(board: BoardAccess) -> None:
     """SQ2b N6(a), Juval's test 9: refused, not returned, and the message says what to do."""
     verbs: IncrementBoard = _verbs(board)
-    item_id: int = verbs.queue_increment("A:I2", P, (), "I2", "b")
-    verbs.withdraw_increment(item_id)
+    verbs.queue_increment("A:I2", P, (), "I2", "b")
+    verbs.withdraw_increment("A:I2")
     with pytest.raises(QueueRefusedError, match="never reused: queue the work again under a new"):
         verbs.queue_increment("A:I2", P, (), "I2", "b")
     assert _origin_count(board) == 1
@@ -205,15 +219,15 @@ def test_case_5_a_parent_dropped_from_scope_is_reported_not_filtered(
     with pytest.raises(ClaimScopeRefusedError):
         narrowed.queue_increment("B:I5", Q, (), "I5", "")
     with pytest.raises(ClaimScopeRefusedError):
-        narrowed.withdraw_increment(b_i5)
+        narrowed.withdraw_increment("B:I5")
     assert board.item_state(b_i5) is Lifecycle.QUEUED
     assert _origin_count(board) == 1
 
 
 def test_case_6_a_withdrawn_origin_is_reported_withdrawn(board: BoardAccess) -> None:
     verbs: IncrementBoard = _verbs(board)
-    a_i2: int = verbs.queue_increment("A:I2", P, (), "I2", "")
-    verbs.withdraw_increment(a_i2)
+    verbs.queue_increment("A:I2", P, (), "I2", "")
+    verbs.withdraw_increment("A:I2")
     assert verbs.increments_by_origin()["A:I2"].lifecycle is Lifecycle.WITHDRAWN
 
 
@@ -230,45 +244,201 @@ def test_increments_by_origin_is_empty_on_a_board_with_no_origins(board: BoardAc
     assert _verbs(board).increments_by_origin() == {}
 
 
-# --- withdraw_increment ---------------------------------------------------------
+# --- withdraw_increment (by Origin: ledger N7) -----------------------------------
 
 
 def test_withdraw_increment_moves_a_queued_increment_to_withdrawn(board: BoardAccess) -> None:
-    _whole_board(board).withdraw_increment(QUEUED_ID)
-    assert board.item_state(QUEUED_ID) is Lifecycle.WITHDRAWN
+    verbs: IncrementBoard = _verbs(board)
+    item_id: int = verbs.queue_increment("A:I1", P, (), "I1", "")
+    assert verbs.withdraw_increment("A:I1") == item_id
+    assert board.item_state(item_id) is Lifecycle.WITHDRAWN
 
 
 @pytest.mark.parametrize(("item_id", "reason"), [(ACTIVE_ID, "in flight"), (DONE_ID, "delivered")])
 def test_withdraw_increment_refuses_active_and_done(
-    board: BoardAccess, item_id: int, reason: str
+    fake_board: AdoShapedFakeBoard | GitHubShapedFakeBoard, item_id: int, reason: str
 ) -> None:
-    before: Lifecycle = board.item_state(item_id)
+    fake_board.seed_origin(item_id, "A:I1")
+    before: Lifecycle = fake_board.item_state(item_id)
     with pytest.raises(TransitionRefusedError, match=reason):
-        _whole_board(board).withdraw_increment(item_id)
-    assert board.item_state(item_id) is before
+        _whole_board(fake_board).withdraw_increment("A:I1")
+    assert fake_board.item_state(item_id) is before
+    assert fake_board.state_writes == []
 
 
 def test_withdraw_increment_again_writes_nothing(
     fake_board: AdoShapedFakeBoard | GitHubShapedFakeBoard,
 ) -> None:
-    _whole_board(fake_board).withdraw_increment(WITHDRAWN_ID)
+    fake_board.seed_origin(WITHDRAWN_ID, "A:I1")
+    assert _whole_board(fake_board).withdraw_increment("A:I1") == WITHDRAWN_ID
     assert fake_board.state_writes == []
 
 
-def test_withdraw_increment_refuses_an_item_outside_the_claim_scope(board: BoardAccess) -> None:
+def test_withdraw_increment_rereads_the_state_rather_than_trust_the_board_wide_read(
+    fake_board: AdoShapedFakeBoard | GitHubShapedFakeBoard, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Juval's N7 step 4: a tick can claim the item after the board-wide read."""
+    fake_board.seed_origin(QUEUED_ID, "A:I1")
+    stale: tuple[OriginRecord, ...] = fake_board.items_with_origin()
+    fake_board.set_state(QUEUED_ID, Lifecycle.ACTIVE)  # the tick claims it
+    writes: int = len(fake_board.state_writes)
+    monkeypatch.setattr(fake_board, "items_with_origin", lambda: stale)
+    with pytest.raises(TransitionRefusedError, match="in flight"):
+        _whole_board(fake_board).withdraw_increment("A:I1")
+    assert len(fake_board.state_writes) == writes
+
+
+def test_withdraw_increment_refuses_an_item_outside_the_claim_scope(
+    fake_board: AdoShapedFakeBoard | GitHubShapedFakeBoard,
+) -> None:
     """SQ2b N6(b), Juval's test 10: the refusal names ``squadra stop`` before restoring scope."""
+    fake_board.seed_origin(QUEUED_ID, "A:I1")  # no parent: outside "parents"
     with pytest.raises(ClaimScopeRefusedError) as refused:
-        _verbs(board).withdraw_increment(QUEUED_ID)  # no parent: outside "parents"
+        _verbs(fake_board).withdraw_increment("A:I1")
     message: str = str(refused.value)
     assert "outside [board].claim_scope" in message
     assert message.index("`squadra stop`") < message.index("add the parent back")
     assert message.index("withdraw it again") < message.index("`squadra start`")
-    assert board.item_state(QUEUED_ID) is Lifecycle.QUEUED
+    assert fake_board.state_writes == []
 
 
 def test_withdraw_increment_fails_loudly_on_a_board_with_no_withdrawn_state() -> None:
     board: AdoShapedFakeBoard = AdoShapedFakeBoard()  # ADO-Basic: no withdrawn state
-    board.add(QUEUED_ID, "queued increment", Lifecycle.QUEUED)
+    verbs: IncrementBoard = _whole_board(board)
+    item_id: int = verbs.queue_increment("A:I1", P, (), "I1", "")
     with pytest.raises(BoardValidationError, match="withdrawn"):
-        _whole_board(board).withdraw_increment(QUEUED_ID)
-    assert board.item_state(QUEUED_ID) is Lifecycle.QUEUED
+        verbs.withdraw_increment("A:I1")
+    assert board.item_state(item_id) is Lifecycle.QUEUED
+
+
+def test_6_a_hand_queued_item_without_an_origin_is_out_of_reach(
+    fake_board: AdoShapedFakeBoard | GitHubShapedFakeBoard,
+) -> None:
+    with pytest.raises(UnknownOriginError, match="no increment on the board carries it"):
+        _whole_board(fake_board).withdraw_increment(str(QUEUED_ID))
+    assert fake_board.item_state(QUEUED_ID) is Lifecycle.QUEUED
+    assert fake_board.state_writes == []
+
+
+def test_7_withdrawing_a_missing_origin_is_refused_and_nothing_written(
+    fake_board: AdoShapedFakeBoard | GitHubShapedFakeBoard,
+) -> None:
+    verbs: IncrementBoard = _verbs(fake_board)
+    verbs.queue_increment("A:I1", P, (), "I1", "")
+    with pytest.raises(UnknownOriginError, match="'A:I9'"):
+        verbs.withdraw_increment("A:I9")
+    assert fake_board.state_writes == []
+
+
+def test_8_withdrawing_a_duplicated_origin_raises(
+    fake_board: AdoShapedFakeBoard | GitHubShapedFakeBoard,
+) -> None:
+    fake_board.seed_origin(QUEUED_ID, "A:I1")
+    fake_board.seed_origin(LINKED_ID, "A:I1")
+    with pytest.raises(DuplicateOriginError, match=f"items {QUEUED_ID} and {LINKED_ID}"):
+        _whole_board(fake_board).withdraw_increment("A:I1")
+    assert fake_board.state_writes == []
+
+
+def test_withdrawing_an_origin_only_an_partial_item_carries_is_refused(
+    fake_board: AdoShapedFakeBoard | GitHubShapedFakeBoard,
+) -> None:
+    partial: int = fake_board.seed_partial("A:I1", "I1", "", parent_id=P)
+    with pytest.raises(UnknownOriginError, match=f"item {partial} carries it but is partial"):
+        _verbs(fake_board).withdraw_increment("A:I1")
+    assert fake_board.state_writes == []
+
+
+# --- a crash-safe create (ledger N8) ---------------------------------------------
+
+
+def test_an_partial_item_is_in_no_bucket_and_has_no_state(
+    fake_board: AdoShapedFakeBoard | GitHubShapedFakeBoard,
+) -> None:
+    partial: int = fake_board.seed_partial("A:I1", "I1", "")
+    for bucket in Lifecycle:
+        assert partial not in {item.item_id for item in fake_board.items_in_state(bucket)}
+    with pytest.raises(BoardValidationError, match="partial"):
+        fake_board.item_state(partial)
+    (record,) = fake_board.items_with_origin()
+    assert (record.item_id, record.lifecycle, record.partial) == (partial, None, True)
+
+
+def test_2_increments_by_origin_omits_an_partial_item(
+    fake_board: AdoShapedFakeBoard | GitHubShapedFakeBoard,
+) -> None:
+    fake_board.seed_partial("A:I1", "I1", "", parent_id=P)
+    verbs: IncrementBoard = _verbs(fake_board)
+    a_i2: int = verbs.queue_increment("A:I2", P, (), "I2", "")
+    assert verbs.increments_by_origin() == {
+        "A:I2": Increment(a_i2, P, Lifecycle.QUEUED, in_claim_scope=True)
+    }
+
+
+@pytest.mark.parametrize(
+    ("parent_id", "predecessor_ids"),
+    [(None, ()), (P, ()), (P, (QUEUED_ID,)), (P, (QUEUED_ID, DONE_ID))],
+)
+def test_3_a_retry_finishes_the_partial_item_and_returns_its_id(
+    fake_board: AdoShapedFakeBoard | GitHubShapedFakeBoard,
+    parent_id: int | None,
+    predecessor_ids: tuple[int, ...],
+) -> None:
+    """Whatever the crash left (no links, the parent, some or all predecessors)."""
+    partial: int = fake_board.seed_partial(
+        "A:I2", "I2", "b", parent_id=parent_id, predecessor_ids=predecessor_ids
+    )
+    verbs: IncrementBoard = _verbs(fake_board)
+    assert verbs.queue_increment("A:I2", P, (DONE_ID, QUEUED_ID), "I2", "b") == partial
+    assert fake_board.item_state(partial) is Lifecycle.QUEUED
+    links = fake_board.item_links(partial)
+    assert (links.parent_id, set(links.predecessor_ids)) == (P, {QUEUED_ID, DONE_ID})
+    assert [r.item_id for r in fake_board.items_with_origin() if r.origin == "A:I2"] == [partial]
+    assert verbs.increments_by_origin()["A:I2"] == Increment(
+        partial, P, Lifecycle.QUEUED, in_claim_scope=True
+    )
+    assert verbs.queue_increment("A:I2", P, (QUEUED_ID, DONE_ID), "I2", "b") == partial
+
+
+def test_4_a_retry_with_a_different_parent_is_refused_naming_the_item(
+    fake_board: AdoShapedFakeBoard | GitHubShapedFakeBoard,
+) -> None:
+    partial: int = fake_board.seed_partial("A:I2", "I2", "b", parent_id=Q)
+    with pytest.raises(QueueRefusedError, match=f"item {partial}.*parent {Q} != {P}"):
+        _verbs(fake_board).queue_increment("A:I2", P, (), "I2", "b")
+    (record,) = fake_board.items_with_origin()
+    assert (record.lifecycle, record.parent) == (None, Q)
+
+
+@pytest.mark.parametrize(
+    ("predecessors", "title", "body", "named"),
+    [
+        ((), "I2", "b", rf"predecessors \[{QUEUED_ID}\] on the item"),
+        ((QUEUED_ID,), "I2'", "b", "title"),
+        ((QUEUED_ID,), "I2", "c", "body differs"),
+    ],
+)
+def test_a_retry_that_disagrees_with_the_partial_item_is_refused(
+    fake_board: AdoShapedFakeBoard | GitHubShapedFakeBoard,
+    predecessors: tuple[int, ...],
+    title: str,
+    body: str,
+    named: str,
+) -> None:
+    fake_board.seed_partial("A:I2", "I2", "b", parent_id=P, predecessor_ids=(QUEUED_ID,))
+    with pytest.raises(QueueRefusedError, match=named):
+        _verbs(fake_board).queue_increment("A:I2", P, predecessors, title, body)
+    (record,) = fake_board.items_with_origin()
+    assert record.partial
+
+
+def test_5_a_complete_and_an_partial_item_with_one_origin_are_a_duplicate(
+    fake_board: AdoShapedFakeBoard | GitHubShapedFakeBoard,
+) -> None:
+    fake_board.seed_origin(QUEUED_ID, "A:I1")
+    partial: int = fake_board.seed_partial("A:I1", "I1", "", parent_id=P)
+    verbs: IncrementBoard = _whole_board(fake_board)
+    with pytest.raises(DuplicateOriginError, match=f"items {QUEUED_ID} and {partial}"):
+        verbs.increments_by_origin()
+    with pytest.raises(DuplicateOriginError, match=f"items {QUEUED_ID} and {partial}"):
+        verbs.queue_increment("A:I1", P, (), "I1", "")

@@ -109,6 +109,10 @@ class DuplicateOriginError(ValueError):
     """Raised when two board items carry one Origin (claude-skills DB-D4, A2)."""
 
 
+class UnknownOriginError(ValueError):
+    """Raised when a verb names an Origin that no Increment on the board carries; a partial item does not count."""
+
+
 def parent_in_claim_scope(
     parent: int | None, claim_scope: ClaimScope, parent_scope_ids: tuple[int, ...]
 ) -> bool:
@@ -141,7 +145,12 @@ def index_by_origin(records: Sequence[OriginRecord]) -> dict[str, OriginRecord]:
 def as_increment(
     record: OriginRecord, claim_scope: ClaimScope, parent_scope_ids: tuple[int, ...]
 ) -> Increment:
-    """Project one origin record onto what ``increments_by_origin`` reports."""
+    """Project one complete origin record onto what ``increments_by_origin`` reports.
+
+    An partial record has no bucket to report; the caller leaves it out.
+    """
+    if record.lifecycle is None:
+        raise ValueError(f"item {record.item_id} is partial and has no lifecycle to report")
     return Increment(
         item_id=record.item_id,
         parent=record.parent,
@@ -181,6 +190,36 @@ def check_queue_matches(existing: OriginRecord, request: IncrementRequest) -> No
         raise QueueRefusedError(
             f"origin {request.origin!r} is already item {existing.item_id} with different "
             f"arguments: {'; '.join(differs)}"
+        )
+
+
+def check_queue_finishes(existing: OriginRecord, request: IncrementRequest) -> None:
+    """Refuse to finish a partial item that disagrees with the ``queue_increment`` retry.
+
+    A crash mid-create leaves an item with its Origin and some of its links
+    (SQ2c, ledger N8). A retry finishes it only when what is already on the
+    board is consistent with the request: title and body equal, the parent
+    equal once it is set, and the predecessors present a subset of the
+    requested set (the missing ones are what the create had not written yet).
+    Title and body go on with the Origin's first call, so they are compared
+    exactly. Anything else is real disagreement: raises
+    :class:`QueueRefusedError` naming the item and what disagrees, and writes
+    nothing.
+    """
+    differs: list[str] = []
+    if existing.parent is not None and existing.parent != request.parent:
+        differs.append(f"parent {existing.parent} != {request.parent}")
+    extra: set[int] = set(existing.predecessors) - set(request.predecessors)
+    if extra:
+        differs.append(f"predecessors {sorted(extra)} on the item are not requested")
+    if existing.title != request.title:
+        differs.append(f"title {existing.title!r} != {request.title!r}")
+    if existing.body != request.body:
+        differs.append("body differs")
+    if differs:
+        raise QueueRefusedError(
+            f"origin {request.origin!r} is on partial item {existing.item_id}, which disagrees "
+            f"with this request: {'; '.join(differs)}"
         )
 
 

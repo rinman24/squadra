@@ -109,6 +109,6 @@ class FakeBoard:
         """The tick's board carries no Origins."""
         return ()
 
-    def create_increment(self, request: IncrementRequest) -> int:
+    def create_increment(self, request: IncrementRequest, partial_item: int | None = None) -> int:
         """The tick never queues an increment; reaching this is a test failure."""
         raise AssertionError(f"the tick queued origin {request.origin!r}")
