@@ -19,7 +19,7 @@ squadra is deterministic supervisor and per-increment runner machinery for an
 unattended, board-driven Claude implementation fleet. It runs the implementation
 phase (`/tdd` → `/qa`) across many increments at once, hands-off, with board
 work-item state as the single source of truth at every tier. squadra speaks a
-provider-neutral 3-bucket `Lifecycle` (queued / active / done); a `BoardAccess`
+provider-neutral 4-bucket `Lifecycle` (queued / active / done / withdrawn); a `BoardAccess`
 adapter translates that to a concrete board's native semantics at the boundary.
 Provider-neutral by design — Azure DevOps (the `az` CLI) ships today; GitHub and
 GitLab are next, tracked backlog adapters the same contract-test suite will
@@ -92,7 +92,7 @@ built-in defaults  <  squadra.toml  <  FLEET_* env  <  CLI flag
 | `[board].tag_prefix` | `fleet:` | Configurable namespace for the fleet's tags; detection is prefix-based (`startswith`). The five suffixes are fixed (see [Tag vocabulary](#tag-vocabulary)). |
 | `[board].claim_scope` | — | **REQUIRED, no default, no env override.** `"parents"` (claim only increments under `parent_scope_ids`) or `"whole-board"` (claim every queued increment). Loading fails until it is declared; see [Scoping](#scoping). |
 | `[board].parent_scope_ids` | `[]` | The parent work-item ids `"parents"` claims under. Must be non-empty for `"parents"` and empty for `"whole-board"`. |
-| `[board.states].queued` / `.active` / `.done` | — | Lists of the board's *native* state names mapped onto the three neutral `Lifecycle` buckets (many-native→one-neutral allowed). **REQUIRED** unless the provider is ADO-Basic, which defaults to `["To Do"]` / `["Doing"]` / `["Done"]`. GitHub/GitLab statuses are user-defined, so they must be declared. |
+| `[board.states].queued` / `.active` / `.done` / `.withdrawn` | — | Lists of the board's *native* state names mapped onto the neutral `Lifecycle` buckets (many-native→one-neutral allowed; a native name in two buckets is refused). **REQUIRED** unless the provider is ADO-Basic, which defaults to `["To Do"]` / `["Doing"]` / `["Done"]`. GitHub/GitLab statuses are user-defined, so they must be declared. `withdrawn` is optional (ADO-Basic has no such state). Every state on the board must be mapped: an unmapped state fails `validate_config`, it is never defaulted to a bucket. |
 | `[pipeline].branch_template` | `feat/increment-{id}-{slug}` | Increment branch naming. squadra owns the `-a{attempt}` retry suffix (fixed rule, not templated). |
 | `[pipeline].worktree_dir` | `.claude/worktrees` | Where increment worktrees are created. |
 | `[pipeline].runner_skill` | `/afk-increment-runner` | Skill the runner wrapper invokes per increment. |
@@ -112,6 +112,7 @@ parent_scope_ids = [105]          # non-empty iff claim_scope = "parents"
 queued = ["To Do"]
 active = ["Doing"]
 done   = ["Done"]
+# withdrawn = ["Removed"]         # optional; every board state must map to some bucket
 
 [pipeline]
 branch_template = "feat/increment-{id}-{slug}"
@@ -416,6 +417,18 @@ fleet, never claimed), distinct from `blocked` (in scope, predecessors not all
 done). Scope gates the `queued` bucket only: an in-flight item later reparented
 out of scope still finalizes or is reaped. The tick's `states={…}` log line
 shows each item's state, so a dry run shows exactly what the scope admits.
+
+### Withdrawn increments
+
+`withdrawn` is the terminal `Lifecycle` bucket for an increment that will never be
+delivered ([ADR-0004](docs/adr/adr-0004-withdrawn-lifecycle-bucket.md)). A
+withdrawn item is never claimed and never counts as done, so an in-scope `queued`
+item behind a withdrawn predecessor can never become claimable: the tick reports
+it `predecessor-withdrawn`, distinct from `blocked` (a predecessor still in
+flight). Only re-planning on the board clears it. Withdrawal is reachable from
+`queued` only: a `done` increment is never withdrawn, and an `active` one is
+refused for now. squadra has no withdraw operation yet; a board state mapped to
+`withdrawn` is read, never written.
 
 ### Host-side git hardening (sandbox-escape control)
 

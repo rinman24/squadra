@@ -65,10 +65,12 @@ def _decide(engine: LifecycleEngine, facts: LifecycleFacts) -> LifecycleDecision
 
 def test_state_enum_has_the_full_derived_table() -> None:
     # The 13 derived states from ADR-0002 decision 3 / plan §4, plus out-of-scope
-    # (WSQ1, mandatory claim scope) — guarding against an accidental rename or
+    # (WSQ1, mandatory claim scope), withdrawn and predecessor-withdrawn
+    # (ADR-0004) — guarding against an accidental rename or
     # drop that would silently change a transition target.
     assert {state.value for state in State} == {
         "blocked",
+        "predecessor-withdrawn",
         "out-of-scope",
         "claimable",
         "provisioning",
@@ -80,6 +82,7 @@ def test_state_enum_has_the_full_derived_table() -> None:
         "awaiting-pr",
         "finalizing",
         "done",
+        "withdrawn",
         "escalated",
         "parked-decision",
     }
@@ -125,6 +128,56 @@ def test_queued_out_of_scope_is_out_of_scope_not_blocked(
         decision = _decide(engine, facts)
         assert decision.state is State.OUT_OF_SCOPE
         assert decision.actions == (NoAction(),)
+
+
+def test_queued_behind_a_withdrawn_predecessor_is_reported_apart_from_blocked(
+    engine: LifecycleEngine, make_facts: MakeFacts
+) -> None:
+    # A withdrawn predecessor is never done, so the successor can never become
+    # claimable; it gets its own state, not the in-flight "blocked" label.
+    facts = make_facts(
+        lifecycle=Lifecycle.QUEUED,
+        is_fleet_claimed=False,
+        predecessors_done=False,
+        predecessor_withdrawn=True,
+    )
+    decision = _decide(engine, facts)
+    assert decision.state is State.PREDECESSOR_WITHDRAWN
+    assert decision.actions == (NoAction(),)
+
+
+def test_out_of_scope_outranks_a_withdrawn_predecessor(
+    engine: LifecycleEngine, make_facts: MakeFacts
+) -> None:
+    facts = make_facts(
+        lifecycle=Lifecycle.QUEUED,
+        is_fleet_claimed=False,
+        predecessors_done=False,
+        predecessor_withdrawn=True,
+        in_claim_scope=False,
+    )
+    assert _decide(engine, facts).state is State.OUT_OF_SCOPE
+
+
+def test_withdrawn_is_terminal_and_never_claimed(
+    engine: LifecycleEngine, make_facts: MakeFacts
+) -> None:
+    # Whatever the queued-bucket gates say, a withdrawn increment is never
+    # claimable, never finalized, never reaped.
+    for claimed in (True, False):
+        for pr in (None, "https://pr/1"):
+            facts = make_facts(
+                lifecycle=Lifecycle.WITHDRAWN,
+                is_fleet_claimed=claimed,
+                predecessors_done=True,
+                in_claim_scope=True,
+                container_running=False,
+                container_exit_code=1,
+                completed_pr_url=pr,
+            )
+            decision = _decide(engine, facts)
+            assert decision.state is State.WITHDRAWN
+            assert decision.actions == (NoAction(),)
 
 
 def test_scope_gates_the_queued_bucket_only(engine: LifecycleEngine, make_facts: MakeFacts) -> None:
@@ -518,6 +571,10 @@ def test_every_state_is_reachable_by_some_fact_combination(
     cases: dict[State, LifecycleFacts] = {
         State.BLOCKED: make_facts(lifecycle=Lifecycle.QUEUED, predecessors_done=False),
         State.OUT_OF_SCOPE: make_facts(lifecycle=Lifecycle.QUEUED, in_claim_scope=False),
+        State.PREDECESSOR_WITHDRAWN: make_facts(
+            lifecycle=Lifecycle.QUEUED, predecessors_done=False, predecessor_withdrawn=True
+        ),
+        State.WITHDRAWN: make_facts(lifecycle=Lifecycle.WITHDRAWN),
         State.CLAIMABLE: make_facts(lifecycle=Lifecycle.QUEUED, predecessors_done=True),
         State.PROVISIONING: make_facts(container_present=False, container_running=False),
         State.RUNNING: make_facts(),
@@ -607,6 +664,7 @@ def _facts_from_row(row: tuple[object, ...]) -> LifecycleFacts:
         lifecycle,
         is_claimed,
         preds,
+        pred_withdrawn,
         in_scope,
         parked_tag,
         failed_tag,
@@ -631,6 +689,7 @@ def _facts_from_row(row: tuple[object, ...]) -> LifecycleFacts:
         lifecycle=cast(Lifecycle, lifecycle),
         is_fleet_claimed=cast(bool, is_claimed),
         predecessors_done=cast(bool, preds),
+        predecessor_withdrawn=cast(bool, pred_withdrawn),
         in_claim_scope=cast(bool, in_scope),
         parked_tagged=cast(bool, parked_tag),
         failed_tagged=cast(bool, failed_tag),
@@ -661,6 +720,7 @@ _FIELD_DOMAINS: tuple[tuple[object, ...], ...] = (
     tuple(Lifecycle),  # lifecycle
     _BOOLS,  # is_fleet_claimed
     _BOOLS,  # predecessors_done
+    _BOOLS,  # predecessor_withdrawn
     _BOOLS,  # in_claim_scope
     _BOOLS,  # parked_tagged
     _BOOLS,  # failed_tagged
@@ -708,7 +768,7 @@ def test_decide_is_total_over_branch_driving_dimensions(engine: LifecycleEngine)
     tags, claim/predecessor/claim-scope status, the park-folding (phase/parked_state), the
     container triple (present/running/exit), liveness, the completion triple, the
     failure inputs, and the attempt-vs-budget boundary. The orthogonal
-    ``parked_tagged`` and ``teardown_failed`` flags (each handled by a dedicated
+    ``predecessor_withdrawn``, ``parked_tagged`` and ``teardown_failed`` flags (each handled by a dedicated
     short-circuit, not interacting with the deep ladder) are held fixed here and
     exercised by their own tests plus the random sample. ``manifest_present`` and
     ``manifest_valid`` move together (the present-but-invalid split has its own
@@ -761,6 +821,7 @@ def test_decide_is_total_over_branch_driving_dimensions(engine: LifecycleEngine)
             lifecycle,
             is_claimed,
             preds,
+            False,  # predecessor_withdrawn (held fixed; covered elsewhere)
             in_scope,
             False,  # parked_tagged (held fixed; covered elsewhere)
             failed_tag,

@@ -408,7 +408,7 @@ def _build_facts(
     branch: str = _branch_for(item, status, config)
     spec: SandboxSpec = _spec_for(item.item_id, branch, config)
     worktree: Path = _worktree_for(branch, config)
-    in_scope, predecessors_done = _queued_gates(seams, config, item, lifecycle)
+    gates: _QueuedGates = _queued_gates(seams, config, item, lifecycle)
 
     # Container liveness/exit — only meaningful for an in-flight, fleet-claimed
     # increment; gathering it for the queued/done buckets is pointless I/O.
@@ -431,8 +431,9 @@ def _build_facts(
     return LifecycleFacts(
         lifecycle=lifecycle,
         is_fleet_claimed=is_claimed,
-        predecessors_done=predecessors_done,
-        in_claim_scope=in_scope,
+        predecessors_done=gates.predecessors_done,
+        predecessor_withdrawn=gates.predecessor_withdrawn,
+        in_claim_scope=gates.in_claim_scope,
         parked_tagged=any(tag in tags.parked for tag in item.tags),
         failed_tagged=tags.failed in item.tags,
         needs_decision_tagged=tags.needs_decision in item.tags,
@@ -473,23 +474,42 @@ def _container_facts(status: SandboxStatus) -> tuple[bool, bool, int | None]:
     return False, False, None
 
 
+@dataclass(frozen=True, slots=True)
+class _QueuedGates:
+    """The board facts that gate a queued candidate's claim."""
+
+    in_claim_scope: bool
+    predecessors_done: bool
+    predecessor_withdrawn: bool
+
+
+_UNGATED: _QueuedGates = _QueuedGates(
+    in_claim_scope=True, predecessors_done=True, predecessor_withdrawn=False
+)
+
+
 def _queued_gates(
     seams: TickSeams, config: SquadraConfig, item: WorkItem, lifecycle: Lifecycle
-) -> tuple[bool, bool]:
-    """``(in_claim_scope, predecessors_done)`` for a queued candidate, from one link read.
+) -> _QueuedGates:
+    """Read the claim gates for a queued candidate, from one link read.
 
-    Only the queued bucket gates on these; for any other bucket both are moot
+    Only the queued bucket gates on these; for any other bucket they are moot
     (the engine ignores them) and no link is read, so an in-flight item reparented
     out of scope still finalizes or reaps. An out-of-scope item's predecessors are
     moot too (the engine reports it out of scope first), so they are not read.
+    Each predecessor's state is read once: a withdrawn predecessor is never done,
+    and is reported apart from one still in flight.
     """
     if lifecycle is not Lifecycle.QUEUED:
-        return True, True
+        return _UNGATED
     links: WorkItemLinks = seams.ado.item_links(item.item_id)
     if config.claim_scope is ClaimScope.PARENTS and links.parent_id not in config.parent_scope_ids:
-        return False, True
-    return True, all(
-        seams.ado.item_state(predecessor) == Lifecycle.DONE for predecessor in links.predecessor_ids
+        return replace(_UNGATED, in_claim_scope=False)
+    states: list[Lifecycle] = [seams.ado.item_state(pred) for pred in links.predecessor_ids]
+    return _QueuedGates(
+        in_claim_scope=True,
+        predecessors_done=all(state is Lifecycle.DONE for state in states),
+        predecessor_withdrawn=Lifecycle.WITHDRAWN in states,
     )
 
 

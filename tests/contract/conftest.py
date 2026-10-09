@@ -24,7 +24,11 @@ from squadra.board import BoardAccess
 from squadra.cleanup import CleanupAccess, DeterministicCleanup
 from squadra.domain import Lifecycle, SandboxSpec, Tags
 from squadra.worktree import GitWorktreeAccess, WorktreeAccess
-from tests.helpers.board_fakes import AdoShapedFakeBoard, GitHubShapedFakeBoard
+from tests.helpers.board_fakes import (
+    ADO_STATES_WITH_WITHDRAWN,
+    AdoShapedFakeBoard,
+    GitHubShapedFakeBoard,
+)
 from tests.helpers.cleanup_fakes import FakeCleanup
 from tests.helpers.sandbox_fakes import FakeSandbox
 from tests.helpers.worktree_fakes import FakeWorktree
@@ -38,6 +42,7 @@ QUEUED_ID: int = 101
 ACTIVE_ID: int = 102
 DONE_ID: int = 103
 LINKED_ID: int = 104  # has a parent + predecessors
+WITHDRAWN_ID: int = 105
 
 PARENT_ID: int = 200
 PRED_IDS: tuple[int, ...] = (150, 151)
@@ -48,7 +53,7 @@ PR_URL: str = "https://example.invalid/pr/42"
 
 def _seed_ado() -> AdoShapedFakeBoard:
     """Build a correctly-configured ADO-shaped board under the shared seed."""
-    board = AdoShapedFakeBoard(tags=TAGS)
+    board = AdoShapedFakeBoard(states=ADO_STATES_WITH_WITHDRAWN, tags=TAGS)
     board.add(QUEUED_ID, "queued increment", Lifecycle.QUEUED)
     board.add(ACTIVE_ID, "active increment", Lifecycle.ACTIVE, tags=(TAGS.claimed,))
     board.add(DONE_ID, "done increment", Lifecycle.DONE)
@@ -59,6 +64,7 @@ def _seed_ado() -> AdoShapedFakeBoard:
         parent_id=PARENT_ID,
         predecessor_ids=PRED_IDS,
     )
+    board.add(WITHDRAWN_ID, "withdrawn increment", Lifecycle.WITHDRAWN)
     board.seed_pr(PR_BRANCH, PR_URL)
     return board
 
@@ -79,6 +85,7 @@ def _seed_github() -> GitHubShapedFakeBoard:
         parent_id=PARENT_ID,
         predecessor_ids=PRED_IDS,
     )
+    board.add(WITHDRAWN_ID, "withdrawn increment", Lifecycle.WITHDRAWN)
     board.seed_pr(PR_BRANCH, PR_URL)
     return board
 

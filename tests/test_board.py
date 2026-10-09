@@ -42,6 +42,7 @@ _STATES: dict[Lifecycle, tuple[str, ...]] = {
     Lifecycle.QUEUED: ("New", "Approved"),
     Lifecycle.ACTIVE: ("Active", "Committed"),
     Lifecycle.DONE: ("Closed", "Done"),
+    Lifecycle.WITHDRAWN: ("Removed",),
 }
 
 _TAGS: Tags = Tags("fleet:")
@@ -127,19 +128,20 @@ def _patched_value(body: str) -> str:
     return value
 
 
-def _adapter(
+def _adapter(  # noqa: PLR0913 - mirrors the adapter's DI seam
     runner: _RecordingAzRunner,
     *,
     http_run: _RecordingCurlRunner | None = None,
     organization: str | None = "https://dev.azure.com/acme",
     base_branch: str = "main",
+    states: dict[Lifecycle, tuple[str, ...]] = _STATES,
 ) -> AzCliAdo:
     return AzCliAdo(
         runner,
         project="example-project",
         http_run=http_run if http_run is not None else _RecordingCurlRunner(runner),
         organization=organization,
-        states=_STATES,
+        states=states,
         base_branch=base_branch,
         tags=_TAGS,
     )
@@ -308,11 +310,36 @@ def test_item_state_reverse_maps_a_secondary_native_name_to_its_bucket() -> None
     assert _adapter(runner).item_state(70) == Lifecycle.ACTIVE
 
 
-def test_item_state_maps_an_unmapped_native_state_to_queued() -> None:
+def test_item_state_maps_a_withdrawn_native_state_to_withdrawn() -> None:
     payload: str = json.dumps({"fields": {"System.State": "Removed"}})
     runner = _RecordingAzRunner({"work-item show": payload})
-    # An unmapped column is treated as not-done (blocking) → QUEUED.
-    assert _adapter(runner).item_state(70) == Lifecycle.QUEUED
+    assert _adapter(runner).item_state(70) == Lifecycle.WITHDRAWN
+
+
+def test_item_state_raises_on_an_unmapped_native_state() -> None:
+    # Never defaulted: an unmapped withdrawn column read as QUEUED would be claimable.
+    payload: str = json.dumps({"fields": {"System.State": "Cancelled"}})
+    runner = _RecordingAzRunner({"work-item show": payload})
+    with pytest.raises(BoardValidationError, match="Cancelled"):
+        _adapter(runner).item_state(70)
+
+
+_NO_WITHDRAWN: dict[Lifecycle, tuple[str, ...]] = {
+    lifecycle: names for lifecycle, names in _STATES.items() if lifecycle is not Lifecycle.WITHDRAWN
+}
+
+
+def test_items_in_state_of_an_unmapped_bucket_is_empty_without_a_query() -> None:
+    runner = _RecordingAzRunner({})
+    assert _adapter(runner, states=_NO_WITHDRAWN).items_in_state(Lifecycle.WITHDRAWN) == ()
+    assert runner.calls == []
+
+
+def test_set_state_into_an_unmapped_bucket_raises_without_a_write() -> None:
+    runner = _RecordingAzRunner({})
+    with pytest.raises(BoardValidationError, match="withdrawn"):
+        _adapter(runner, states=_NO_WITHDRAWN).set_state(70, Lifecycle.WITHDRAWN)
+    assert runner.calls == []
 
 
 def test_set_state_writes_the_first_native_name_of_the_bucket() -> None:
@@ -429,3 +456,16 @@ def test_validate_config_raises_naming_the_missing_state() -> None:
     with pytest.raises(BoardValidationError) as excinfo:
         _adapter(runner).validate_config()
     assert "Committed" in str(excinfo.value)
+
+
+def test_validate_config_raises_naming_an_unmapped_board_state() -> None:
+    # The live board has a state the configured map leaves out.
+    runner = _RecordingAzRunner(
+        {
+            "workItemTypeStates": _states_resp(
+                "New", "Approved", "Active", "Committed", "Closed", "Done", "Removed", "Cut"
+            )
+        }
+    )
+    with pytest.raises(BoardValidationError, match="'Cut'"):
+        _adapter(runner).validate_config()

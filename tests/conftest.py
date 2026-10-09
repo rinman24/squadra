@@ -186,6 +186,7 @@ def default_facts() -> LifecycleFacts:
         lifecycle=Lifecycle.ACTIVE,
         is_fleet_claimed=True,
         predecessors_done=True,
+        predecessor_withdrawn=False,
         in_claim_scope=True,
         parked_tagged=False,
         failed_tagged=False,

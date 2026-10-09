@@ -129,6 +129,32 @@ def test_blocked_issue_is_skipped_until_predecessors_done(
     assert fake_board.item_state(6) == Lifecycle.ACTIVE  # unblocked, claimed
 
 
+def test_withdrawn_items_and_their_successors_are_never_claimed(
+    fake_board: FakeBoard,
+    make_issue: Callable[..., FakeIssue],
+    make_seams: Callable[..., TickSeams],
+    make_config: Callable[..., SquadraConfig],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    make_issue(3, state=Lifecycle.WITHDRAWN)
+    make_issue(4, state=Lifecycle.ACTIVE)  # in flight
+    make_issue(5, predecessor_ids=(3,))  # behind a withdrawn predecessor
+    make_issue(6, predecessor_ids=(3, 4))  # withdrawn outranks in flight
+    make_issue(7, predecessor_ids=(4,))  # plainly blocked
+
+    assert run_tick(make_seams(), make_config()) == 0
+
+    for item_id in (3, 5, 6, 7):
+        assert fake_board.item_state(item_id) is not Lifecycle.ACTIVE
+    out: str = capsys.readouterr().out
+    # A withdrawn predecessor is never done and gets its own reason, not "blocked".
+    assert "5: 'predecessor-withdrawn'" in out
+    assert "6: 'predecessor-withdrawn'" in out
+    assert "7: 'blocked'" in out
+    # The withdrawn item itself is not a fleet candidate at all.
+    assert "3: " not in out.split("states=", 1)[1].split("}", 1)[0]
+
+
 def test_fleet_tagged_queued_issue_is_never_claimed(
     fake_board: FakeBoard,
     fake_sandbox: FakeSandbox,

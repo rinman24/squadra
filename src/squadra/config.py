@@ -68,7 +68,11 @@ _LIFECYCLE_BY_TOML_KEY: Final[Mapping[str, Lifecycle]] = {
     "queued": Lifecycle.QUEUED,
     "active": Lifecycle.ACTIVE,
     "done": Lifecycle.DONE,
+    "withdrawn": Lifecycle.WITHDRAWN,
 }
+# A board need not have a withdrawn column (ADO-Basic has none), so that bucket
+# may be omitted; every other bucket must be declared.
+_OPTIONAL_STATE_KEYS: Final[frozenset[str]] = frozenset({"withdrawn"})
 
 
 class ConfigError(ValueError):
@@ -264,9 +268,11 @@ def _resolve_states(
 ) -> Mapping[Lifecycle, tuple[str, ...]]:
     """Resolve the Lifecycle→native-state mapping (declared, or inferred for ADO).
 
-    ``[board.states]`` declares ``queued``/``active``/``done`` as lists of native
-    state names (many-native→one-neutral allowed). It is required unless the
-    provider's process is inferable (only ADO-Basic today).
+    ``[board.states]`` declares ``queued``/``active``/``done`` and, optionally,
+    ``withdrawn`` as lists of native state names (many-native→one-neutral
+    allowed; one native name in two buckets is refused, since it would make an
+    item's bucket ambiguous). It is required unless the provider's process is
+    inferable (only ADO-Basic today, which has no withdrawn state).
     """
     raw_states: object = board.get("states")
     if raw_states is None:
@@ -280,11 +286,21 @@ def _resolve_states(
         raise ConfigError(f"[board.states] must be a table, got {raw_states!r}")
     section: Mapping[str, object] = cast("Mapping[str, object]", raw_states)
     resolved: dict[Lifecycle, tuple[str, ...]] = {}
+    bucket_of: dict[str, str] = {}
     for key, lifecycle in _LIFECYCLE_BY_TOML_KEY.items():
         names: object = section.get(key)
         if names is None:
+            if key in _OPTIONAL_STATE_KEYS:
+                continue
             raise ConfigError(f"[board.states] is missing required bucket {key!r}")
         resolved[lifecycle] = _state_names(key, names)
+        for name in resolved[lifecycle]:
+            if bucket_of.get(name, key) != key:
+                raise ConfigError(
+                    f"[board.states] maps native state {name!r} to both "
+                    f"{bucket_of[name]!r} and {key!r}; each native state belongs to one bucket"
+                )
+            bucket_of[name] = key
     return resolved
 
 
