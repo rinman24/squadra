@@ -21,8 +21,9 @@ Under ~100K tokens per session, hard ceiling 120K, one unit per session.
 | ID | Item | DB-D1 activity | Depends on | Status |
 |---|---|---|---|---|
 | SQ1 | `Lifecycle.WITHDRAWN`, transitions, second blocked reason, unmapped states fail `validate_config`, glossary rows Origin and Withdrawn | A (part) | DB-D1 | done (PR #43, merged) |
-| SQ2 | Verb contract (`IncrementBoard` + two `BoardAccess` primitives, ADR-0005) + CLI surface; Origin stored opaquely; ACTIVE → WITHDRAWN rule (DB-D2) | A (rest) | SQ1; DB-D2–DB-D5 | done (PR open) |
-| SQ3 | Fake provider implementing the two primitives (`create_increment`, `items_with_origin`) and the read half, registered in `PROVIDERS`; run the `BoardAccess` and increment contract suites against it | B | SQ2 | todo |
+| SQ2 | Verb contract (`IncrementBoard` + two `BoardAccess` primitives, ADR-0005) + CLI surface; Origin stored opaquely; ACTIVE → WITHDRAWN rule (DB-D2) | A (rest) | SQ1; DB-D2–DB-D5 | done (PR #44, merged) |
+| SQ2b | Consult Juval on N6–N8, settle them on Rich's delegation, build what the settlement changes (`handoffs/SQ2b-settle-n6-n8.md`) | A (rest) | SQ2 | todo |
+| SQ3 | Fake provider implementing the two primitives (`create_increment`, `items_with_origin`) and the read half, registered in `PROVIDERS`; run the `BoardAccess` and increment contract suites against it | B | SQ2, SQ2b | todo |
 | SQ4 | `squadra board {queue,withdraw,origins}` as Clients over `IncrementBoard`, per `verb-contract.md` (the rules already live in `IncrementBoard`) | C | SQ2, SQ3 | todo |
 | SQ5 | GitHub adapter, reads and writes; `[[boards]]` and `in_claim_scope` (WSQ1) | D | SQ2; after design-to-board F per DB-D1 order | todo |
 
@@ -53,14 +54,14 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
   orchestration, and the tick, the query and the writes now share one scope
   predicate, `engines.parent_in_claim_scope`. The ADO adapter raises
   `NotImplementedError` for both primitives.
-- N6 (SQ2): two fail-closed narrowings beyond the rulings, for Rich to confirm:
+- N6 (SQ2), to settle in SQ2b: two fail-closed narrowings beyond the rulings:
   `queue_increment` refuses an Origin that is on the board as WITHDRAWN
   (glossary: never reused) instead of returning it, and `withdraw_increment`
   refuses an item outside the claim scope (Juval case 5: write nothing).
-- N7 (SQ2), open: `withdraw_increment` accepts any in-scope QUEUED item,
+- N7 (SQ2), to settle in SQ2b: `withdraw_increment` accepts any in-scope QUEUED item,
   including one queued by hand with no Origin. Restricting it to Origin-bearing
   items costs one board-wide read per withdraw. Not ruled; decide before SQ4.
-- N8 (SQ2), for SQ5: `create_increment` is one business write. If GitHub needs
+- N8 (SQ2), to settle in SQ2b, built in SQ5: `create_increment` is one business write. If GitHub needs
   several calls (create issue, sub-issue link, dependencies, project status),
   the adapter must order them so no tick can claim the item before its links
   exist. Under `"whole-board"` an unlinked QUEUED issue is claimable, so links

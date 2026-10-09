@@ -1,7 +1,7 @@
 # Handoff: SQ3 · a registered fake provider (board-writes, part 3)
 
 Rich starts a fresh `claude` session in `~/Code/squadra` and gives it this file.
-**Do not start until SQ2's PR (`feat/board-writes`) has merged.** If it is still
+**Do not start until SQ2b's PR (`feat/board-writes`) has merged.** If it is still
 open, stop and tell Rich.
 
 ## Context
@@ -49,7 +49,7 @@ Estimated work: ~50–70K tokens (budget: under 100K total, hard stop at 120K)
 
 - CLI subcommands (SQ4), though the fake must be loadable via `build_board`.
 - The GitHub adapter (SQ5).
-- Ledger note N7 (Origin required to withdraw): Rich's call, before SQ4.
+- Revisiting N6–N8: SQ2b settled them (ledger). Build the fake to that settlement.
 - Any write in claude-skills or board-knowledge.
 
 ## Wrap-up
