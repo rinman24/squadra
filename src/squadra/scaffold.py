@@ -133,23 +133,29 @@ def _render_states_block(provider: str) -> str:
     """
     if provider == DEFAULT_PROVIDER:
         return """\
-# [board.states] maps squadra's three neutral lifecycle buckets to your board's
-# native state names (lists; many native names may map to one bucket). For the
-# "ado" provider this is OPTIONAL — ADO-Basic's To Do/Doing/Done is inferred if
-# you omit the table. Shown here (inferred defaults) for reference:
+# [board.states] maps squadra's neutral lifecycle buckets to your board's
+# native state names (lists; many native names may map to one bucket, each
+# native name to one bucket only). Every Issue state on the board must be
+# mapped: an unmapped state fails validation. For the "ado" provider this is
+# OPTIONAL — ADO-Basic's To Do/Doing/Done is inferred if you omit the table.
+# Shown here (inferred defaults) for reference:
 [board.states]
 queued = ["To Do"]
 active = ["Doing"]
 done = ["Done"]
+# withdrawn = ["Removed"]  # optional: a state for increments that will never be delivered
 """
     return f"""\
 # [board.states] is REQUIRED for provider "{provider}": its statuses are
 # user-defined and cannot be inferred. EDIT the values below to your board's
-# actual native state names (lists; many native names may map to one bucket).
+# actual native state names (lists; many native names may map to one bucket,
+# each native name to one bucket only). Every status on the board must be
+# mapped: an unmapped status fails validation.
 [board.states]
 queued = ["TODO"]        # <-- EDIT: your "not started" state name(s)
 active = ["In Progress"] # <-- EDIT: your "in flight" state name(s)
 done = ["Done"]          # <-- EDIT: your "finished" state name(s)
+# withdrawn = ["Withdrawn"]  # optional: your "will never be delivered" state name(s)
 """
 
 

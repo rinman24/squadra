@@ -5,7 +5,9 @@ model their native semantics differently on purpose, to prove the seam is
 provider-blind:
 
 - :class:`AdoShapedFakeBoard` mimics Azure DevOps Basic: native states are the
-  ADO-Basic strings (``To Do``/``Doing``/``Done``); tags are stored as a single
+  ADO-Basic strings (``To Do``/``Doing``/``Done``), with no withdrawn state
+  unless one is configured (the contract seed adds ``Removed``, as ADO's other
+  processes have); tags are stored as a single
   ``;``-joined ``System.Tags``-style string; comments render to HTML via the
   shipped :func:`squadra.board.render_ado_html`.
 - :class:`GitHubShapedFakeBoard` mimics a GitHub Projects board: arbitrary
@@ -15,6 +17,9 @@ provider-blind:
 
 Each fake stores a seedable in-memory board and records its mutations so tests
 can inspect recorded comments / tags / state without asserting native dialect.
+Both honour the adapter's mapping rules: an unmapped native state raises rather
+than defaulting to a bucket, and ``validate_config`` fails on a configured name
+the board lacks or a board state the map leaves out.
 """
 
 from collections.abc import Mapping
@@ -41,6 +46,12 @@ GITHUB_STATES: Mapping[Lifecycle, tuple[str, ...]] = {
     Lifecycle.QUEUED: ("Backlog", "Triage"),
     Lifecycle.ACTIVE: ("In Progress",),
     Lifecycle.DONE: ("Shipped", "Closed-merged"),
+    Lifecycle.WITHDRAWN: ("Withdrawn",),
+}
+# ADO-Basic plus the ``Removed`` state of ADO's other processes, mapped to WITHDRAWN.
+ADO_STATES_WITH_WITHDRAWN: Mapping[Lifecycle, tuple[str, ...]] = {
+    **ADO_BASIC_STATES,
+    Lifecycle.WITHDRAWN: ("Removed",),
 }
 
 
@@ -141,7 +152,7 @@ class AdoShapedFakeBoard:
 
     def items_in_state(self, state: Lifecycle) -> tuple[WorkItem, ...]:
         """Return the work items whose native state maps to ``state``."""
-        names: tuple[str, ...] = self._states[state]
+        names: tuple[str, ...] = self._states.get(state, ())
         return tuple(
             WorkItem(item_id=item.item_id, title=item.title, tags=_split_ado_tags(item.tags_raw))
             for item in self.items.values()
@@ -163,11 +174,11 @@ class AdoShapedFakeBoard:
         for lifecycle, names in self._states.items():
             if native in names:
                 return lifecycle
-        return Lifecycle.QUEUED
+        raise BoardValidationError(f"native state {native!r} maps to no lifecycle bucket")
 
     def set_state(self, item_id: int, state: Lifecycle) -> None:
         """Write the first native name of ``state`` and record the write."""
-        native: str = self._states[state][0]
+        native: str = _first_native(self._states, state)
         self.items[item_id].state = native
         self.state_writes.append((item_id, native))
 
@@ -195,13 +206,29 @@ class AdoShapedFakeBoard:
         self.comments.setdefault(item_id, []).append(html)
 
     def validate_config(self) -> None:
-        """Raise if any configured state is absent from the available set."""
-        configured: set[str] = {name for names in self._states.values() for name in names}
-        missing: list[str] = sorted(name for name in configured if name not in self._available)
-        if missing:
-            raise BoardValidationError(
-                f"configured board state(s) {missing} not among available {sorted(self._available)}"
-            )
+        """Raise if a configured state is absent from the board, or a board state is unmapped."""
+        _check_state_map(self._states, self._available)
+
+
+def _first_native(states: Mapping[Lifecycle, tuple[str, ...]], state: Lifecycle) -> str:
+    """The native name a write to ``state`` uses; raise if the bucket is unmapped."""
+    names: tuple[str, ...] = states.get(state, ())
+    if not names:
+        raise BoardValidationError(f"no native state maps to {state.value!r}")
+    return names[0]
+
+
+def _check_state_map(states: Mapping[Lifecycle, tuple[str, ...]], available: set[str]) -> None:
+    """Check a state map against a board's states both ways, as the adapter does."""
+    configured: set[str] = {name for names in states.values() for name in names}
+    missing: list[str] = sorted(configured - available)
+    if missing:
+        raise BoardValidationError(
+            f"configured state(s) {missing} not among available {sorted(available)}"
+        )
+    unmapped: list[str] = sorted(available - configured)
+    if unmapped:
+        raise BoardValidationError(f"board state(s) {unmapped} map to no lifecycle bucket")
 
 
 def _split_ado_tags(raw: str) -> tuple[str, ...]:
@@ -287,7 +314,7 @@ class GitHubShapedFakeBoard:
 
     def items_in_state(self, state: Lifecycle) -> tuple[WorkItem, ...]:
         """Return the issues whose native status maps to ``state``."""
-        names: tuple[str, ...] = self._states[state]
+        names: tuple[str, ...] = self._states.get(state, ())
         return tuple(
             WorkItem(item_id=item.item_id, title=item.title, tags=tuple(item.labels))
             for item in self.items.values()
@@ -309,11 +336,11 @@ class GitHubShapedFakeBoard:
         for lifecycle, names in self._states.items():
             if status in names:
                 return lifecycle
-        return Lifecycle.QUEUED
+        raise BoardValidationError(f"status {status!r} maps to no lifecycle bucket")
 
     def set_state(self, item_id: int, state: Lifecycle) -> None:
         """Write the first native status of ``state`` and record the write."""
-        status: str = self._states[state][0]
+        status: str = _first_native(self._states, state)
         self.items[item_id].status = status
         self.state_writes.append((item_id, status))
 
@@ -339,10 +366,5 @@ class GitHubShapedFakeBoard:
         self.comments.setdefault(item_id, []).append(markdown)
 
     def validate_config(self) -> None:
-        """Raise if any configured status is absent from the available set."""
-        configured: set[str] = {name for names in self._states.values() for name in names}
-        missing: list[str] = sorted(name for name in configured if name not in self._available)
-        if missing:
-            raise BoardValidationError(
-                f"configured status(es) {missing} not among available {sorted(self._available)}"
-            )
+        """Raise if a configured status is absent from the board, or a board status is unmapped."""
+        _check_state_map(self._states, self._available)

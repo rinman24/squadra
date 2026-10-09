@@ -28,6 +28,7 @@ from tests.contract.conftest import (
     PR_URL,
     PRED_IDS,
     QUEUED_ID,
+    WITHDRAWN_ID,
 )
 from tests.helpers.board_fakes import AdoShapedFakeBoard, GitHubShapedFakeBoard
 
@@ -45,6 +46,7 @@ def test_items_in_state_returns_only_that_buckets_items(board: BoardAccess) -> N
     assert _ids(board.items_in_state(Lifecycle.QUEUED)) == {QUEUED_ID, LINKED_ID}
     assert _ids(board.items_in_state(Lifecycle.ACTIVE)) == {ACTIVE_ID}
     assert _ids(board.items_in_state(Lifecycle.DONE)) == {DONE_ID}
+    assert _ids(board.items_in_state(Lifecycle.WITHDRAWN)) == {WITHDRAWN_ID}
 
 
 def test_items_in_state_empty_bucket_returns_empty_tuple(board: BoardAccess) -> None:
@@ -56,7 +58,7 @@ def test_items_in_state_empty_bucket_returns_empty_tuple(board: BoardAccess) -> 
 # --- set_state / item_state round-trips ---------------------------------------
 
 
-@pytest.mark.parametrize("target", [Lifecycle.DONE, Lifecycle.QUEUED, Lifecycle.ACTIVE])
+@pytest.mark.parametrize("target", list(Lifecycle))
 def test_set_state_roundtrips_and_moves_buckets(board: BoardAccess, target: Lifecycle) -> None:
     old: Lifecycle = board.item_state(QUEUED_ID)
     board.set_state(QUEUED_ID, target)
@@ -72,6 +74,38 @@ def test_secondary_native_done_name_reports_done(board: BoardAccess) -> None:
     # both shapes must still report it as DONE.
     assert board.item_state(DONE_ID) == Lifecycle.DONE
     assert DONE_ID in _ids(board.items_in_state(Lifecycle.DONE))
+
+
+def test_withdrawn_item_reports_withdrawn_never_queued_or_done(board: BoardAccess) -> None:
+    assert board.item_state(WITHDRAWN_ID) == Lifecycle.WITHDRAWN
+    assert WITHDRAWN_ID not in _ids(board.items_in_state(Lifecycle.QUEUED))
+    assert WITHDRAWN_ID not in _ids(board.items_in_state(Lifecycle.DONE))
+
+
+def test_board_without_a_withdrawn_state_has_an_empty_withdrawn_bucket() -> None:
+    # ADO-Basic has no withdrawn column: the bucket is simply empty, and a write
+    # to it fails loudly instead of landing in some other column.
+    board = AdoShapedFakeBoard()
+    board.add(QUEUED_ID, "queued increment", Lifecycle.QUEUED)
+    board.validate_config()  # must not raise
+    assert board.items_in_state(Lifecycle.WITHDRAWN) == ()
+    with pytest.raises(BoardValidationError):
+        board.set_state(QUEUED_ID, Lifecycle.WITHDRAWN)
+
+
+@pytest.mark.parametrize("shape", ["ado", "github"])
+def test_unmapped_native_state_raises_instead_of_defaulting(shape: str) -> None:
+    # Never QUEUED by default: an unmapped withdrawn column read as queued
+    # would make every withdrawn item claimable.
+    board: AdoShapedFakeBoard | GitHubShapedFakeBoard
+    if shape == "ado":
+        board = AdoShapedFakeBoard()
+        board.add(QUEUED_ID, "x", Lifecycle.QUEUED, native_state="Removed")
+    else:
+        board = GitHubShapedFakeBoard()
+        board.add(QUEUED_ID, "x", Lifecycle.QUEUED, native_status="Cancelled")
+    with pytest.raises(BoardValidationError):
+        board.item_state(QUEUED_ID)
 
 
 # --- tags ---------------------------------------------------------------------
@@ -175,6 +209,31 @@ def test_validate_config_raises_on_state_mismatch_ado() -> None:
 
 
 def test_validate_config_raises_on_state_mismatch_github() -> None:
-    board = GitHubShapedFakeBoard(available_statuses=("Backlog", "Triage", "In Progress"))
+    board = GitHubShapedFakeBoard(
+        available_statuses=("Backlog", "Triage", "In Progress", "Withdrawn")
+    )
     with pytest.raises(BoardValidationError):
+        board.validate_config()
+
+
+def test_validate_config_raises_on_an_unmapped_board_state_ado() -> None:
+    # the board has a state the configured map leaves out
+    board = AdoShapedFakeBoard(available_states=("To Do", "Doing", "Done", "Removed"))
+    with pytest.raises(BoardValidationError, match="Removed"):
+        board.validate_config()
+
+
+def test_validate_config_raises_on_an_unmapped_board_state_github() -> None:
+    board = GitHubShapedFakeBoard(
+        available_statuses=(
+            "Backlog",
+            "Triage",
+            "In Progress",
+            "Shipped",
+            "Closed-merged",
+            "Withdrawn",
+            "Cancelled",
+        )
+    )
+    with pytest.raises(BoardValidationError, match="Cancelled"):
         board.validate_config()

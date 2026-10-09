@@ -1,4 +1,4 @@
-"""Contract test: the real ``squadra tick --dry-run`` honours the declared claim scope.
+"""Contract test: the real ``squadra tick --dry-run`` honours claim scope and withdrawal.
 
 End to end through the CLI: ``squadra tick --dry-run`` → ``supervisor.main`` →
 ``load_config`` (reading ``squadra.toml``) → ``build_seams(dry_run=True)`` →
@@ -11,11 +11,14 @@ The board fixture holds one item per scope case (WSQ1, WD18):
 - #5 in scope, unblocked — the only item the tick may claim;
 - #6 in scope, blocked on #5 — reported blocked;
 - #7 out of scope, unblocked — reported out of scope, not blocked;
+- #8 withdrawn, in scope — never claimed, never counted done;
+- #9 in scope, behind withdrawn #8 — reported predecessor-withdrawn, not blocked;
 - #40 merged, fleet-claimed, reparented out of scope — still finalizes;
 - #41 crashed in flight, fleet-claimed, reparented out of scope — still reaped.
 
 The runner cap is raised well above the candidate count so the claim budget
-cannot mask a scope leak: if scope failed open, #7 would be claimed too.
+cannot mask a scope leak: if scope failed open, #7 would be claimed too, and if
+withdrawal read as queued or done, #8 or #9 would be.
 """
 
 from collections.abc import Callable
@@ -80,6 +83,8 @@ def test_tick_dry_run_claims_exactly_the_in_scope_unblocked_items(
     make_issue(5, title="feat: in scope", parent_id=_IN_SCOPE_PARENT)
     make_issue(6, title="feat: blocked", parent_id=_IN_SCOPE_PARENT, predecessor_ids=(5,))
     make_issue(7, title="feat: not ours", parent_id=_OTHER_PARENT)
+    make_issue(8, title="feat: withdrawn", state=Lifecycle.WITHDRAWN, parent_id=_IN_SCOPE_PARENT)
+    make_issue(9, title="feat: stranded", parent_id=_IN_SCOPE_PARENT, predecessor_ids=(8,))
     # In flight, then reparented out of scope: merged (finalize) and crashed (reap).
     make_issue(
         40,
@@ -128,6 +133,9 @@ def test_tick_dry_run_claims_exactly_the_in_scope_unblocked_items(
     assert states[5] == "claimable"
     assert states[6] == "blocked"
     assert states[7] == "out-of-scope"
+    # Withdrawn is neither claimable nor done; its successor is stranded, not "blocked".
+    assert 8 not in states
+    assert states[9] == "predecessor-withdrawn"
     # The reparented in-flight items are still driven: #40 finalizes, #41 is reaped.
     assert states[40] == "finalizing"
     assert "WOULD delete branch 'feat/increment-40-merged'" in out

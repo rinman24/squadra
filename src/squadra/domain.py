@@ -4,8 +4,8 @@ Pure data, no I/O and no provider specifics. The supervisor and the pure
 engines speak this vocabulary; the ``BoardAccess`` adapter translates it to and
 from a concrete board's native semantics at the boundary:
 
-- :class:`Lifecycle` — the 3-bucket state invariant (QUEUED/ACTIVE/DONE) that
-  replaces board-native state strings everywhere in core.
+- :class:`Lifecycle` — the 4-bucket state model (QUEUED/ACTIVE/DONE/WITHDRAWN)
+  that replaces board-native state strings everywhere in core.
 - :class:`WorkItem` / :class:`WorkItemLinks` — the work-item DTOs the passes
   operate on (were ``IssueRef`` / ``IssueLinks``).
 - the :data:`CommentEvent` union — structured discussion events the adapter
@@ -32,16 +32,25 @@ from squadra.constants import (
 
 
 class Lifecycle(Enum):
-    """The neutral 3-bucket state a board column maps onto (a domain invariant).
+    """The neutral 4-bucket state a board column maps onto (ADR-0004).
 
-    Many native states may map to one bucket (e.g. ADO ``Approved`` + ``Done``
-    both → ``DONE``); the adapter owns that translation. No board-native state
-    string ever appears in the supervisor or the engines.
+    Every native state maps to exactly one bucket, and many native states may
+    map to one bucket (e.g. ADO ``Approved`` + ``Done`` both → ``DONE``); the
+    adapter owns that translation and an unmapped native state is a
+    configuration error, never a default. No board-native state string ever
+    appears in the supervisor or the engines.
+
+    ``WITHDRAWN`` is terminal: the increment will never be delivered. It is
+    reachable only before delivery, is never claimed and never counts as done,
+    so a successor of a withdrawn increment can never become claimable. The
+    permitted transitions into and out of it are
+    :func:`squadra.engines.check_transition`.
     """
 
     QUEUED = "queued"  # claimable / not started
     ACTIVE = "active"  # claimed / in-flight
     DONE = "done"  # finalize-eligible
+    WITHDRAWN = "withdrawn"  # terminal: never delivered, never claimed, never done
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,6 +218,10 @@ class State(Enum):
     independently persisted source of truth (ADR-0002 decision 3):
 
     - :attr:`BLOCKED` — predecessors not all done; not yet claimable.
+    - :attr:`PREDECESSOR_WITHDRAWN` — blocked for good: a predecessor was
+      withdrawn, so it will never be done. Distinct from :attr:`BLOCKED` ("still
+      in flight, wait") because no tick can unblock it; only re-planning on the
+      board can.
     - :attr:`OUT_OF_SCOPE` — terminal for the fleet: a queued item outside the
       declared ``[board].claim_scope``. "Not mine", as distinct from
       :attr:`BLOCKED` ("not yet"); never claimed, whatever its predecessors.
@@ -232,6 +245,8 @@ class State(Enum):
     - :attr:`FINALIZING` — the increment's PR has completed; deterministic cleanup
       (branch delete + worktree prune + ``compose down -v``) runs.
     - :attr:`DONE` — terminal: finalized and retired.
+    - :attr:`WITHDRAWN` — terminal: the increment itself was withdrawn; never
+      claimed, never finalized.
     - :attr:`ESCALATED` — terminal: retries exhausted, or an immediate-escalation
       edge (egress-denied) fired; tagged failed for a human.
     - :attr:`PARKED_DECISION` — terminal-for-the-fleet: parked awaiting a human
@@ -239,6 +254,7 @@ class State(Enum):
     """
 
     BLOCKED = "blocked"
+    PREDECESSOR_WITHDRAWN = "predecessor-withdrawn"
     OUT_OF_SCOPE = "out-of-scope"
     CLAIMABLE = "claimable"
     PROVISIONING = "provisioning"
@@ -250,6 +266,7 @@ class State(Enum):
     AWAITING_PR = "awaiting-pr"
     FINALIZING = "finalizing"
     DONE = "done"
+    WITHDRAWN = "withdrawn"
     ESCALATED = "escalated"
     PARKED_DECISION = "parked-decision"
 
@@ -309,10 +326,11 @@ class LifecycleFacts:  # noqa: PLR0902 - a fact projection is intentionally wide
     Fields, grouped by source:
 
     - ``lifecycle`` / ``is_fleet_claimed`` / ``predecessors_done`` /
-      ``in_claim_scope`` — board truth: the neutral bucket, whether the fleet (not
-      a human) claimed it, whether every predecessor increment is done, and
-      whether the item falls inside the declared claim scope. The last two gate
-      the queued bucket only and are moot elsewhere.
+      ``predecessor_withdrawn`` / ``in_claim_scope`` — board truth: the neutral
+      bucket, whether the fleet (not a human) claimed it, whether every
+      predecessor increment is done, whether any predecessor was withdrawn, and
+      whether the item falls inside the declared claim scope. The last three
+      gate the queued bucket only and are moot elsewhere.
     - ``parked_tagged`` / ``failed_tagged`` / ``needs_decision_tagged`` — fleet
       tags already on the item (a deliberate park, an escalation, a decision
       park). ``parked_tagged`` is the prefix-based "carries any parked tag".
@@ -340,6 +358,7 @@ class LifecycleFacts:  # noqa: PLR0902 - a fact projection is intentionally wide
     lifecycle: Lifecycle
     is_fleet_claimed: bool
     predecessors_done: bool
+    predecessor_withdrawn: bool
     in_claim_scope: bool
     # fleet tags
     parked_tagged: bool

@@ -48,7 +48,7 @@ class BoardAccess(Protocol):
     """The provider-neutral board operations the supervisor passes need."""
 
     def items_in_state(self, state: Lifecycle) -> tuple[WorkItem, ...]:
-        """Return all work items whose native state maps to ``state``."""
+        """Return all work items whose native state maps to ``state`` (none if unmapped)."""
         ...
 
     def completed_pr_url(self, branch: str) -> str | None:
@@ -60,11 +60,19 @@ class BoardAccess(Protocol):
         ...
 
     def item_state(self, item_id: int) -> Lifecycle:
-        """Return the neutral lifecycle bucket of one work item."""
+        """Return the neutral lifecycle bucket of one work item.
+
+        A native state that maps to no bucket raises ``BoardValidationError``;
+        it is never defaulted to a bucket.
+        """
         ...
 
     def set_state(self, item_id: int, state: Lifecycle) -> None:
-        """Transition a work item into the native state of ``state``."""
+        """Transition a work item into the native state of ``state``.
+
+        A raw write: the transition rule is the caller's
+        (:func:`squadra.engines.check_transition`).
+        """
         ...
 
     def add_tag(self, item_id: int, tag: str) -> None:
@@ -80,7 +88,11 @@ class BoardAccess(Protocol):
         ...
 
     def validate_config(self) -> None:
-        """Resolve the configuration against the live board; raise loud on mismatch."""
+        """Resolve the configuration against the live board; raise loud on mismatch.
+
+        A mismatch is a configured state the board lacks, or a board state that
+        maps to no lifecycle bucket.
+        """
         ...
 
 
@@ -186,7 +198,10 @@ class AzCliAdo:
         invoke`` instead: ``wit/wiql`` for the matching ids, then
         ``wit/workitemsbatch`` for their fields.
         """
-        in_clause: str = ", ".join(f"'{name}'" for name in self._states[state])
+        names: tuple[str, ...] = self._states.get(state, ())
+        if not names:
+            return ()  # no native state maps to this bucket (e.g. no withdrawn column)
+        in_clause: str = ", ".join(f"'{name}'" for name in names)
         wiql: str = (
             "SELECT [System.Id] FROM WorkItems "
             "WHERE [System.TeamProject] = @project "
@@ -330,15 +345,27 @@ class AzCliAdo:
         return self._lifecycle_of(native if isinstance(native, str) else "")
 
     def _lifecycle_of(self, native: str) -> Lifecycle:
-        """Reverse-map a native state to its bucket; unmapped → QUEUED (not done)."""
+        """Reverse-map a native state to its bucket; an unmapped state raises.
+
+        ``validate_config`` refuses a board with an unmapped state, so reaching
+        the raise means the board changed since the preflight. Defaulting would
+        be silent: an unmapped withdrawn column read as QUEUED is claimable.
+        """
         for lifecycle, names in self._states.items():
             if native in names:
                 return lifecycle
-        return Lifecycle.QUEUED
+        raise BoardValidationError(
+            f"native state {native!r} maps to no lifecycle bucket; fix squadra.toml [board.states]"
+        )
 
     def set_state(self, item_id: int, state: Lifecycle) -> None:
         """Transition the work item into the first native name of ``state``."""
-        native: str = self._states[state][0]
+        names: tuple[str, ...] = self._states.get(state, ())
+        if not names:
+            raise BoardValidationError(
+                f"no native state maps to {state.value!r}; fix squadra.toml [board.states]"
+            )
+        native: str = names[0]
         self._run(
             ["boards", "work-item", "update", "--id", str(item_id), "--state", native, "-o", "none"]
         )
@@ -374,18 +401,25 @@ class AzCliAdo:
         )
 
     def validate_config(self) -> None:
-        """Check every configured native state exists among the project's states.
+        """Check the configured state map against the project's Issue states, both ways.
 
-        This is the safety mechanism: a misconfigured state name fails the
-        startup preflight loudly rather than silently mis-mutating the board.
+        This is the safety mechanism: a configured name the board lacks, or a
+        board state the map leaves out, fails the startup preflight loudly
+        rather than silently mis-mutating the board or misreading an item.
         """
         available: set[str] = self._board_state_names()
         configured: set[str] = {name for names in self._states.values() for name in names}
-        missing: list[str] = sorted(name for name in configured if name not in available)
+        missing: list[str] = sorted(configured - available)
         if missing:
             raise BoardValidationError(
                 f"configured board state(s) {missing} not found among this project's "
                 f"Issue states {sorted(available)}; fix squadra.toml [board.states]"
+            )
+        unmapped: list[str] = sorted(available - configured)
+        if unmapped:
+            raise BoardValidationError(
+                f"this project's Issue state(s) {unmapped} map to no lifecycle bucket; "
+                "map each in squadra.toml [board.states] (queued/active/done/withdrawn)"
             )
 
     def _board_state_names(self) -> set[str]:

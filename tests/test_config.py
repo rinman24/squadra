@@ -1,4 +1,4 @@
-"""Unit tests for ``squadra.config``: the mandatory, fail-closed claim scope.
+"""Unit tests for ``squadra.config``: the fail-closed claim scope and the state map.
 
 ``[board].claim_scope`` is required and has no default (WSQ1): nothing on a
 board is claimable until the operator has declared what is. Loading fails with
@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from squadra.config import CONFIG_FILENAME, ClaimScope, ConfigError, SquadraConfig, load_config
+from squadra.domain import Lifecycle
 
 
 def _load(tmp_path: Path, board_lines: str) -> SquadraConfig:
@@ -74,3 +75,37 @@ def test_scope_env_vars_are_not_an_entry_point(
         _load(tmp_path, "")
     config = _load(tmp_path, 'claim_scope = "whole-board"\n')
     assert config.parent_scope_ids == ()
+
+
+# --- [board.states]: the four lifecycle buckets (ADR-0004) --------------------
+
+_WHOLE_BOARD: str = 'claim_scope = "whole-board"\n'
+
+
+def test_declared_withdrawn_bucket_maps_to_withdrawn(tmp_path: Path) -> None:
+    config = _load(
+        tmp_path,
+        _WHOLE_BOARD + "[board.states]\n"
+        'queued = ["New"]\nactive = ["Active"]\ndone = ["Closed"]\nwithdrawn = ["Removed"]\n',
+    )
+    assert config.states[Lifecycle.WITHDRAWN] == ("Removed",)
+
+
+def test_withdrawn_bucket_is_optional(tmp_path: Path) -> None:
+    # A board need not have a withdrawn column; ADO-Basic's inferred map has none.
+    declared = _load(
+        tmp_path,
+        _WHOLE_BOARD + '[board.states]\nqueued = ["New"]\nactive = ["Active"]\ndone = ["Closed"]\n',
+    )
+    assert Lifecycle.WITHDRAWN not in declared.states
+    assert Lifecycle.WITHDRAWN not in _load(tmp_path, _WHOLE_BOARD).states
+
+
+def test_a_native_state_in_two_buckets_fails(tmp_path: Path) -> None:
+    # Ambiguous: the item's bucket would depend on lookup order.
+    with pytest.raises(ConfigError, match="'Closed'"):
+        _load(
+            tmp_path,
+            _WHOLE_BOARD + "[board.states]\n"
+            'queued = ["New"]\nactive = ["Active"]\ndone = ["Closed"]\nwithdrawn = ["Closed"]\n',
+        )

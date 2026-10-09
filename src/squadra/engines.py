@@ -1,6 +1,7 @@
 """Pure decision functions for the supervisor tick.
 
-Data in, decision out — no I/O, no board calls. Branch naming and the subsuming
+Data in, decision out — no I/O, no board calls. Branch naming, the
+:class:`~squadra.domain.Lifecycle` transition rule and the subsuming
 derived-state FSM live here; the orchestration and I/O that consume them stay in
 ``supervisor``.
 
@@ -56,6 +57,39 @@ def increment_branch(
     return f"{template.format(id=item_id, slug=slug)}{suffix}"
 
 
+class TransitionRefusedError(ValueError):
+    """Raised for a :class:`~squadra.domain.Lifecycle` transition the model forbids."""
+
+
+def check_transition(current: Lifecycle, target: Lifecycle) -> None:
+    """Refuse a lifecycle transition that the four-bucket model does not allow.
+
+    Only the edges touching ``WITHDRAWN`` are constrained (ADR-0004); every
+    transition among QUEUED, ACTIVE and DONE stays permitted, as before:
+
+    - QUEUED → WITHDRAWN is allowed: the increment was never started.
+    - DONE → WITHDRAWN is refused: a delivered increment cannot be undelivered.
+    - ACTIVE → WITHDRAWN is refused *for now*: whether a claimed, in-flight
+      increment may be withdrawn (and what happens to its attempt) is not yet
+      decided, so the safe answer is no.
+    - WITHDRAWN is terminal: no transition leaves it. Withdrawing a withdrawn
+      increment again is a no-op, so WITHDRAWN → WITHDRAWN is allowed.
+    """
+    if current is Lifecycle.WITHDRAWN and target is not Lifecycle.WITHDRAWN:
+        raise TransitionRefusedError(
+            f"cannot move a withdrawn increment to {target.value}: withdrawn is terminal"
+        )
+    if target is not Lifecycle.WITHDRAWN:
+        return
+    if current is Lifecycle.DONE:
+        raise TransitionRefusedError("cannot withdraw a done increment: it was delivered")
+    if current is Lifecycle.ACTIVE:
+        raise TransitionRefusedError(
+            "cannot withdraw an active increment: withdrawing a claimed, in-flight "
+            "increment is not supported yet"
+        )
+
+
 # --- LifecycleEngine: the derived-state FSM (ADR-0002 decision 3) -------------
 
 
@@ -73,10 +107,11 @@ class LifecycleEngine:
 
     ``decide`` is **total**: every combination of facts yields a decision and
     none raises. Guards are evaluated in a fixed priority order — already-decided
-    board tags first (escalated / decision parks are terminal), then the done
-    bucket (finalize vs. await PR), then the in-flight classification (the
-    completion triple, the failure edges, liveness), then the queued bucket
-    (out of scope, then claimable vs. blocked). An orthogonal failed-teardown leak is appended to
+    board tags first (escalated / decision parks are terminal), then the
+    withdrawn bucket (terminal), then the done bucket (finalize vs. await PR),
+    then the in-flight classification (the completion triple, the failure edges,
+    liveness), then the queued bucket (out of scope, then a withdrawn
+    predecessor, then claimable vs. blocked). An orthogonal failed-teardown leak is appended to
     whatever the primary lifecycle decision was, since a leak never blocks the
     increment's board lifecycle (ADR-0002 decision 6).
 
@@ -115,13 +150,18 @@ class LifecycleEngine:
         if facts.needs_decision_tagged:
             return _terminal(State.PARKED_DECISION)
 
-        # 2. The done bucket: a fleet-claimed increment whose PR completed finalizes
+        # 2. The withdrawn bucket is terminal: never claimed, never finalized,
+        #    whatever else is true of it.
+        if facts.lifecycle is Lifecycle.WITHDRAWN:
+            return _terminal(State.WITHDRAWN)
+
+        # 3. The done bucket: a fleet-claimed increment whose PR completed finalizes
         #    (deterministic cleanup); otherwise it parks awaiting the merge. A
         #    done item the fleet never claimed is a human's — invisible/terminal.
         if facts.lifecycle is Lifecycle.DONE:
             return self._classify_done(facts)
 
-        # 3. The active bucket: an in-flight, fleet-claimed increment is classified
+        # 4. The active bucket: an in-flight, fleet-claimed increment is classified
         #    by its container / manifest / liveness / failure-edge facts. A
         #    human's active item (unclaimed) is invisible to the fleet.
         if facts.lifecycle is Lifecycle.ACTIVE:
@@ -129,14 +169,19 @@ class LifecycleEngine:
                 return _terminal(State.RUNNING)
             return self._classify_inflight(facts)
 
-        # 4. The queued bucket, out of the declared claim scope: not the fleet's,
-        #    whatever its predecessors. Gated on the queued bucket only (steps 2
-        #    and 3 returned already), so an in-flight item reparented out of
+        # 5. The queued bucket, out of the declared claim scope: not the fleet's,
+        #    whatever its predecessors. Gated on the queued bucket only (steps 2-4
+        #    returned already), so an in-flight item reparented out of
         #    scope still finalizes or reaps instead of leaking.
         if not facts.in_claim_scope:
             return _terminal(State.OUT_OF_SCOPE)
 
-        # 5. The queued bucket: claimable when unblocked, else blocked.
+        # 6. The queued bucket, behind a withdrawn predecessor: blocked for good,
+        #    reported apart from an in-flight block because no tick can clear it.
+        if facts.predecessor_withdrawn:
+            return _terminal(State.PREDECESSOR_WITHDRAWN)
+
+        # 7. The queued bucket: claimable when unblocked, else blocked.
         if facts.predecessors_done:
             return LifecycleDecision(state=State.CLAIMABLE, actions=(SignalClaimable(),))
         return _terminal(State.BLOCKED)
