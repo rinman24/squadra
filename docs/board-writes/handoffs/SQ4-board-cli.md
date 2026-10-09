@@ -60,10 +60,8 @@ Estimated work: ~50–70K tokens (budget: under 100K total, hard stop at 120K)
 - Changing the verb contract or the fake's file format (raise a ledger note
   instead).
 - Any write in claude-skills or board-knowledge. The N7/N8 reopening of
-  DB-D1/DB-D4 is recorded there as DB-D10 (item DB-R, in progress on
-  claude-skills `feat/design-to-board`); it matches `verb-contract.md`. If it
-  has merged, point the ledger's SQ2c row at DB-D10; if it differs, raise a
-  ledger note.
+  DB-D1/DB-D4 is recorded there as DB-D10 (claude-skills PR #14); it matches
+  `verb-contract.md`. If it differs, raise a ledger note.
 
 ## Wrap-up
 
