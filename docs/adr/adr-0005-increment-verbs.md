@@ -1,7 +1,8 @@
 # ADR-0005 — The increment verbs: rules in squadra, primitives in each adapter
 
 - Status: **Accepted** — 2026-10-09; implemented by the PR that adds this ADR
-  (board-writes SQ2). Decision 3 amended by SQ2b, 2026-10-09 (ledger N6).
+  (board-writes SQ2). Decision 3 amended by SQ2b, 2026-10-09 (ledger N6);
+  decisions 1 and 2 to be amended by SQ2c (ledger N7, N8; see Consequences).
 - Date: 2026-10-09
 - Context origin: claude-skills `docs/design-to-board/LEDGER.md` DB-D1 (writes
   live in squadra; amendment A2: squadra's orchestration applies claim scope
@@ -64,12 +65,23 @@ definition of scope.
   `create_increment`, returning 0, which is never a board item.
 - The CLI (SQ4) composes `IncrementBoard` from the loaded config; nothing calls
   the primitives directly except `IncrementBoard`.
-- Open with Rich (ledger N7, N8): Juval recommends withdrawing by Origin
-  instead of item id, and a crash-safe `create_increment` that finishes a
-  partial item on retry. Both change DB-D rulings, so SQ2b did not build them.
-  Until Rich rules, decision 1 stands as written: the adapter orders its calls
-  so no tick can claim the item before its links exist, and a retry after a
-  crash mid-create is refused by A3.
+- Ruled by Rich, 2026-10-09 (ledger N7, N8; board-knowledge
+  `sessions/2026-10-09-juval-increment-verb-settlement.md`), reopening
+  DB-D1/DB-D4. SQ2c builds both and amends decisions 1 and 2:
+  - `withdraw_increment` takes an Origin instead of an item id (CLI
+    `--origin`). It refuses an Origin that is not on the board, checks scope
+    against the record's parent, and re-reads `item_state` just before
+    `set_state`.
+  - `create_increment` is crash-safe. The adapter keeps the guarantee through
+    four call-order obligations: the Origin goes on with the first call; the
+    item is in no bucket until one final write puts it in QUEUED; and
+    `items_with_origin` can see it in between. A `queue_increment` retry
+    finishes a partial item whose fields agree with the request (its
+    predecessors may be a subset) and refuses any other difference.
+    `OriginRecord` gains a completeness field, `create_increment` gains an
+    incomplete-item parameter, and `increments_by_origin` leaves incomplete
+    items out.
+  Until SQ2c merges, decisions 1 and 2 stand as written.
 - Open (ledger N10): `withdraw_increment` reads the state, then writes it. The
   ticker can claim the item in between, leaving an item WITHDRAWN while a
   runner works on it. Closing that gap needs a compare-and-set write from the

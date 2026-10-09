@@ -22,8 +22,9 @@ Under ~100K tokens per session, hard ceiling 120K, one unit per session.
 |---|---|---|---|---|
 | SQ1 | `Lifecycle.WITHDRAWN`, transitions, second blocked reason, unmapped states fail `validate_config`, glossary rows Origin and Withdrawn | A (part) | DB-D1 | done (PR #43, merged) |
 | SQ2 | Verb contract (`IncrementBoard` + two `BoardAccess` primitives, ADR-0005) + CLI surface; Origin stored opaquely; ACTIVE → WITHDRAWN rule (DB-D2) | A (rest) | SQ1; DB-D2–DB-D5 | done (PR #44, merged) |
-| SQ2b | Consult Juval on N6–N8, settle them on Rich's delegation, build what the settlement changes (`handoffs/SQ2b-settle-n6-n8.md`) | A (rest) | SQ2 | N6 settled and built (PR #46); N7, N8 with Rich |
-| SQ3 | Fake provider implementing the two primitives (`create_increment`, `items_with_origin`) and the read half, registered in `PROVIDERS`; run the `BoardAccess` and increment contract suites against it | B | SQ2, SQ2b; Rich's N7, N8 ruling | todo |
+| SQ2b | Consult Juval on N6–N8, settle them on Rich's delegation, build what the settlement changes (`handoffs/SQ2b-settle-n6-n8.md`) | A (rest) | SQ2 | done (PR #46, merged); N7, N8 ruled by Rich, built in SQ2c |
+| SQ2c | Build Rich's N7 and N8 rulings: `withdraw_increment(origin)`; crash-safe `create_increment` (completeness on `OriginRecord`, the consistency rule, `incomplete_item`, `increments_by_origin` omits incomplete items); Eric names the two new terms (`handoffs/SQ2c-build-n7-n8.md`) | A (rest) | SQ2b | todo |
+| SQ3 | Fake provider implementing the two primitives (`create_increment`, `items_with_origin`) and the read half, registered in `PROVIDERS`; run the `BoardAccess` and increment contract suites against it | B | SQ2, SQ2b, SQ2c | todo |
 | SQ4 | `squadra board {queue,withdraw,origins}` as Clients over `IncrementBoard`, per `verb-contract.md` (the rules already live in `IncrementBoard`) | C | SQ2, SQ3 | todo |
 | SQ5 | GitHub adapter, reads and writes; `[[boards]]` and `in_claim_scope` (WSQ1) | D | SQ2; after design-to-board F per DB-D1 order | todo |
 
@@ -62,15 +63,15 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
   Origin; `squadra stop`, restore scope, withdraw again, `squadra start`
   (restoring scope first lets the next tick claim the item). ADR-0005
   decision 3 amended; contract and signatures unchanged.
-- N7 (SQ2), **put to Rich by SQ2b** (board-knowledge `sessions/2026-10-09-juval-increment-verb-settlement.md`): `withdraw_increment` accepts any in-scope QUEUED item,
+- N7 (SQ2), **ruled by Rich, 2026-10-09: option (iii), withdraw by Origin; built in SQ2c**. Put to him by SQ2b (board-knowledge `sessions/2026-10-09-juval-increment-verb-settlement.md`): `withdraw_increment` accepts any in-scope QUEUED item,
   including one queued by hand with no Origin. Restricting it to Origin-bearing
-  items costs one board-wide read per withdraw. Not ruled; decide before SQ4.
+  items costs one board-wide read per withdraw.
   Juval: option (iii), `withdraw_increment(origin)`, CLI `--origin`. It changes
   the signature DB-D1 and DB-D4 froze, so SQ2b did not settle it (handoff
   rule). If Rich takes it, record it as reopening DB-D1/DB-D4 in claude-skills;
   Eric names the not-found refusal; the verb re-reads `item_state` just
   before `set_state`.
-- N8 (SQ2), **put to Rich by SQ2b** (board-knowledge `sessions/2026-10-09-juval-increment-verb-settlement.md`), built in SQ5: `create_increment` is one business write. If GitHub needs
+- N8 (SQ2), **ruled by Rich, 2026-10-09: Juval's design; contract built in SQ2c, fault-injecting fake in SQ3, GitHub in SQ5**. Put to him by SQ2b (board-knowledge `sessions/2026-10-09-juval-increment-verb-settlement.md`): `create_increment` is one business write. If GitHub needs
   several calls (create issue, sub-issue link, dependencies, project status),
   the adapter must order them so no tick can claim the item before its links
   exist. Under `"whole-board"` an unlinked QUEUED issue is claimable, so links
@@ -105,3 +106,4 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
 | SQ1 | 2026-10-09 | SQ1 | `Lifecycle.WITHDRAWN` (terminal), `check_transition`, `predecessor-withdrawn` tick state, unmapped states fail `validate_config` and `item_state`, fakes + `[board.states].withdrawn`, ADR-0004, glossary Origin + Withdrawn. ruff, pyright, 399 tests green | `handoffs/SQ2-verb-contract.md` |
 | SQ2 | 2026-10-09 | SQ2 | Gate checked (DB-D2–DB-D5 ruled, PR #43 merged). `IncrementBoard` verbs, `BoardAccess.create_increment` / `items_with_origin`, engine rules (scope, A2, A3), DB-D2 in `check_transition` and ADR-0004, ADR-0005, `verb-contract.md` with the SQ4 CLI surface. ruff, pyright, 462 tests green | `handoffs/SQ3-fake-provider.md` |
 | SQ2b | 2026-10-09 | SQ2b | Juval consulted on N6–N8 (method). N6 settled: both refusals kept, each naming its way out; ADR-0005 decision 3, `verb-contract.md`, contract tests (Juval's 9, 10). N7 (withdraw by Origin) and N8 (crash-safe create) put to Rich: both change DB-D rulings. N10 opened. ruff, pyright, tests green | `handoffs/SQ3-fake-provider.md` (gate: SQ2b merged + Rich's N7/N8 ruling) |
+| SQ2b (ruling) | 2026-10-09 | SQ2b | Rich ruled N7 (withdraw by Origin) and N8 (Juval's crash-safe create), both reopening DB-D1/DB-D4; recorded in the session file's Choice, ADR-0005 and `verb-contract.md`. Build deferred to SQ2c (session budget) | `handoffs/SQ2c-build-n7-n8.md` |

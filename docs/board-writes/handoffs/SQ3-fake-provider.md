@@ -1,9 +1,8 @@
 # Handoff: SQ3 · a registered fake provider (board-writes, part 3)
 
 Rich starts a fresh `claude` session in `~/Code/squadra` and gives it this file.
-**Do not start until SQ2b's PR has merged** and the ledger records Rich's
-ruling on N7 and N8 (SQ2b put both to him), plus any build that ruling
-needs before a fake can be written. If either is missing, stop and tell Rich.
+**Do not start until SQ2c's PR has merged** (it builds Rich's N7 and N8
+rulings into the contract). If it is still open, stop and tell Rich.
 
 ## Context
 
@@ -43,6 +42,14 @@ Goal: a production fake provider, `provider = "fake"`:
   to reverse.
 - Add it to the `board` and `fake_board` contract fixtures so both suites run
   against it as a third shape.
+- N8 (Rich's ruling, Juval's design): the fake models `create_increment` as k
+  separate steps and can be told to fail after step j. Juval's tests 1–5
+  (board-knowledge `sessions/2026-10-09-juval-increment-verb-settlement.md`,
+  "The tests that discriminate") run against it for every j < k: the partial
+  item is in no bucket and `tick --dry-run` claims nothing new; it is left out
+  of `increments_by_origin`; a same-argument retry returns the same id, now
+  complete, with one record throughout; a different-parent retry is refused;
+  a complete and an incomplete item with one Origin raise `DuplicateOriginError`.
 Then a PR to squadra `main`.
 Estimated work: ~50–70K tokens (budget: under 100K total, hard stop at 120K)
 
@@ -50,10 +57,8 @@ Estimated work: ~50–70K tokens (budget: under 100K total, hard stop at 120K)
 
 - CLI subcommands (SQ4), though the fake must be loadable via `build_board`.
 - The GitHub adapter (SQ5).
-- Revisiting N6–N8: SQ2b settled N6, and Rich ruled N7 and N8 (ledger). Build
-  the fake to that settlement. If the N8 ruling takes Juval's design, the fake
-  models `create_increment` as separate steps with fault injection (board-knowledge
-  `sessions/2026-10-09-juval-increment-verb-settlement.md`, tests 1–5).
+- Revisiting N6–N8: SQ2b settled N6, Rich ruled N7 and N8, and SQ2c built
+  them (ledger). Build the fake to that contract.
 - Any write in claude-skills or board-knowledge.
 
 ## Wrap-up

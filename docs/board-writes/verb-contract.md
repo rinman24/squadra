@@ -26,10 +26,12 @@ Notes:
   withdrawal) were kept by SQ2b (ledger N6). Each names its way out: queue the
   work under a new Origin; or `squadra stop`, restore scope, withdraw again,
   `squadra start`.
-- Pending Rich's ruling (ledger N7, N8): Juval recommends
-  `withdraw_increment(origin)` (CLI `--origin`) in place of the item id, and a
-  `queue_increment` retry that finishes an item left partial by a crash
-  mid-create. Until then this table is the contract.
+- Ruled by Rich, 2026-10-09 (ledger N7, N8), built by SQ2c:
+  `withdraw_increment(origin)` (CLI `--origin`) replaces the item id, and a
+  `queue_increment` retry finishes an item left partial by a crash mid-create
+  when the item agrees with the request; `increments_by_origin` leaves
+  incomplete items out. SQ2c rewrites this table and the CLI surface; until
+  it merges, the table above is the contract.
 
 ## The CLI surface (built in SQ4)
 
