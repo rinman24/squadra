@@ -95,9 +95,14 @@ base_branch = "{DEFAULT_BASE_BRANCH}"
 # Override: FLEET_TAG_PREFIX.
 tag_prefix = "{DEFAULT_TAG_PREFIX}"
 
-# Optional parent-link claim filter: only claim work items under these parent
-# ids (epics/features). Empty = claim from the whole board. Override:
-# FLEET_PARENT_SCOPE_IDS / FLEET_EPIC_IDS (comma-separated).
+# REQUIRED, no default: what on this board the fleet may claim. Left empty on
+# purpose; squadra will not load until you choose one:
+#   "parents"     claim only work items under the parent ids below
+#                 (epics/features); parent_scope_ids must be non-empty.
+#   "whole-board" claim every queued work item on the board;
+#                 parent_scope_ids must be empty.
+# No env override: this file is the only place claim scope is declared.
+claim_scope = ""
 parent_scope_ids = []
 
 {states_block}

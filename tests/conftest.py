@@ -16,6 +16,7 @@ from squadra.config import (
     DEFAULT_RUNNER_SKILL,
     DEFAULT_TDD_SKILL,
     DEFAULT_WORKTREE_DIR,
+    ClaimScope,
     SquadraConfig,
 )
 from squadra.constants import (
@@ -149,6 +150,7 @@ def make_config(fleet_root: Path, tmp_path: Path) -> Callable[..., SquadraConfig
             provider=DEFAULT_PROVIDER,
             base_branch=DEFAULT_BASE_BRANCH,
             tag_prefix=DEFAULT_TAG_PREFIX,
+            claim_scope=ClaimScope.WHOLE_BOARD,
             parent_scope_ids=(),
             states=ADO_BASIC_STATES,
             branch_template=DEFAULT_BRANCH_TEMPLATE,

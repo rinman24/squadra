@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 import fcntl
 from pathlib import Path
 
-from squadra.config import SquadraConfig
+from squadra.config import ClaimScope, SquadraConfig
 from squadra.constants import SUPERVISOR_LOCK_FILENAME
 from squadra.domain import Claimed, Lifecycle, RolledBack
 from squadra.status import FleetStatus, write
@@ -321,7 +321,7 @@ def test_parent_scope_filter_limits_claims(
 ) -> None:
     make_issue(5, parent_id=68)
     make_issue(6, parent_id=99)
-    config: SquadraConfig = make_config(parent_scope_ids=(68,))
+    config: SquadraConfig = make_config(claim_scope=ClaimScope.PARENTS, parent_scope_ids=(68,))
 
     assert run_tick(make_seams(), config) == 0
 

@@ -56,8 +56,15 @@ def test_init_writes_squadra_toml_and_skill_templates(tmp_path: Path) -> None:
     board: dict[str, object] = _table(parsed, "board")
     pipeline: dict[str, object] = _table(parsed, "pipeline")
 
-    assert set(board) >= {"provider", "base_branch", "tag_prefix", "parent_scope_ids"}
+    assert set(board) >= {
+        "provider",
+        "base_branch",
+        "tag_prefix",
+        "claim_scope",
+        "parent_scope_ids",
+    }
     assert board["provider"] == "ado"
+    assert board["claim_scope"] == ""  # undeclared until the operator chooses
     assert set(pipeline) >= {
         "branch_template",
         "worktree_dir",
@@ -96,12 +103,18 @@ def test_init_force_overwrites(tmp_path: Path) -> None:
     assert "[board]" in config_path.read_text(encoding="utf-8")
 
 
-def test_init_check_validates_against_board(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _declare_scope(fleet_home: Path) -> None:
+    """Fill in the scaffold's empty ``claim_scope``, as an operator would."""
+    config_path: Path = fleet_home / "squadra.toml"
+    text: str = config_path.read_text(encoding="utf-8")
+    config_path.write_text(
+        text.replace('claim_scope = ""', 'claim_scope = "whole-board"', 1), encoding="utf-8"
+    )
+
+
+def test_init_check_fails_until_claim_scope_is_declared(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # Stub the board seam so --check runs without a live az CLI. FLEET_EPIC_IDS
-    # is set in the dev container, so an explicit --fleet-home keeps load_config
-    # hermetic; we do not assert on parent_scope_ids here.
     validated: list[bool] = []
 
     class _OkBoard:
@@ -112,6 +125,32 @@ def test_init_check_validates_against_board(
         return _OkBoard()
 
     monkeypatch.setattr(board_module, "build_board", _build)
+
+    rc: int = cli.main(["init", "--fleet-home", str(tmp_path), "--check"])
+    assert rc == 1
+    err: str = capsys.readouterr().err
+    assert "claim_scope" in err
+    assert '"parents"' in err
+    assert '"whole-board"' in err
+    assert validated == []  # the board is never reached without a declared scope
+
+
+def test_init_check_validates_against_board(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Stub the board seam so --check runs without a live az CLI.
+    validated: list[bool] = []
+
+    class _OkBoard:
+        def validate_config(self) -> None:
+            validated.append(True)
+
+    def _build(_config: object) -> _OkBoard:
+        return _OkBoard()
+
+    monkeypatch.setattr(board_module, "build_board", _build)
+    cli.main(["init", "--fleet-home", str(tmp_path)])
+    _declare_scope(tmp_path)
 
     rc: int = cli.main(["init", "--fleet-home", str(tmp_path), "--check"])
     assert rc == 0
@@ -129,6 +168,8 @@ def test_init_check_reports_validation_failure(
         return _BadBoard()
 
     monkeypatch.setattr(board_module, "build_board", _build)
+    cli.main(["init", "--fleet-home", str(tmp_path)])
+    _declare_scope(tmp_path)
 
     rc: int = cli.main(["init", "--fleet-home", str(tmp_path), "--check"])
     assert rc != 0
@@ -266,6 +307,13 @@ def test_install_units_renders_and_writes(tmp_path: Path) -> None:
     assert "Environment=FLEET_KEY_VAULT=the-vault" in service
     assert "ExecStart=/opt/squadra/venv/bin/squadra fleet-tick" in service
     assert (dest / "squadra.timer").is_file()
+
+
+def test_install_units_has_no_scope_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    # Claim scope is declared in squadra.toml only; the unit has no second way in.
+    with pytest.raises(SystemExit):
+        cli.main(["install-units", "--help"])
+    assert "--parent-scope-ids" not in capsys.readouterr().out
 
 
 def test_fleetctl_subcommand_shells_to_script(monkeypatch: pytest.MonkeyPatch) -> None:

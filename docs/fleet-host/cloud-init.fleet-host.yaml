@@ -51,7 +51,6 @@ write_files:
       FLEET_KEY_VAULT=fleet-kv
       FLEET_HOME=/opt/squadra/app-backend
       FLEET_APP_REPO_URL=https://dev.azure.com/your-org/example-project/_git/app-backend
-      FLEET_PARENT_SCOPE_IDS=139
       FLEET_VENV=/opt/squadra/venv
       FLEET_USER=azureuser
       FLEET_ADO_ORG=https://dev.azure.com/your-org
@@ -93,7 +92,7 @@ write_files:
       "$VENV/bin/pip" install --upgrade --force-reinstall "squadra==${SQUADRA_VERSION}"
       sudo "$VENV/bin/squadra" install-units \
         --key-vault "$FLEET_KEY_VAULT" --fleet-home "$FLEET_HOME" --venv-bin "$VENV/bin" \
-        --app-repo-url "${FLEET_APP_REPO_URL:-}" --parent-scope-ids "${FLEET_PARENT_SCOPE_IDS:-}"
+        --app-repo-url "${FLEET_APP_REPO_URL:-}"
       sudo systemctl daemon-reload
       # az devops defaults the board adapter reads — set for BOTH azureuser (this
       # script) and root (the goss smoke runs as root). Stored per-user in ~/.azure.

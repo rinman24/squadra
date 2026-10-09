@@ -69,7 +69,7 @@ from typing import Final
 
 from squadra.board import BoardAccess, BoardValidationError, TagWriteError, build_board
 from squadra.cleanup import CleanupAccess, DeterministicCleanup
-from squadra.config import SquadraConfig, load_config
+from squadra.config import ConfigError, SquadraConfig, load_config
 from squadra.constants import FLEET_DRY_RUN, FLEET_MODEL
 from squadra.domain import (
     AwaitAgent,
@@ -1025,9 +1025,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         "FLEET_DRY_RUN=1 is equivalent",
     )
     args: argparse.Namespace = parser.parse_args(argv)
-    config: SquadraConfig = load_config(
-        fleet_root=args.fleet_root, fleet_home=args.fleet_home, provider=args.provider
-    )
+    try:
+        config: SquadraConfig = load_config(
+            fleet_root=args.fleet_root, fleet_home=args.fleet_home, provider=args.provider
+        )
+    except ConfigError as exc:
+        print(f"supervisor: configuration invalid: {exc}", file=sys.stderr)
+        return 1
     dry_run: bool = bool(args.dry_run) or FLEET_DRY_RUN
     seams: TickSeams = build_seams(config, dry_run=dry_run)
     try:
