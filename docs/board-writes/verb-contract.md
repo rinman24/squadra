@@ -22,6 +22,14 @@ Notes:
   on a missing, withdrawn or out-of-scope predecessor Origin (DB-D4).
 - Filtering Origins by map prefix (`<map>:`) is design-to-board's job; squadra
   never parses an Origin.
+- The two refusals beyond the rulings (a withdrawn Origin, an out-of-scope
+  withdrawal) were kept by SQ2b (ledger N6). Each names its way out: queue the
+  work under a new Origin; or `squadra stop`, restore scope, withdraw again,
+  `squadra start`.
+- Pending Rich's ruling (ledger N7, N8): Juval recommends
+  `withdraw_increment(origin)` (CLI `--origin`) in place of the item id, and a
+  `queue_increment` retry that finishes an item left partial by a crash
+  mid-create. Until then this table is the contract.
 
 ## The CLI surface (built in SQ4)
 
