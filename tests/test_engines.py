@@ -171,6 +171,6 @@ def test_check_queue_matches_refuses_any_difference_naming_it(
         check_queue_matches(_RECORD, request_)
 
 
-def test_check_queue_matches_refuses_a_withdrawn_origin() -> None:
-    with pytest.raises(QueueRefusedError, match="never reused"):
+def test_check_queue_matches_refuses_a_withdrawn_origin_naming_the_way_out() -> None:
+    with pytest.raises(QueueRefusedError, match="never reused: queue the work again under a new"):
         check_queue_matches(replace(_RECORD, lifecycle=Lifecycle.WITHDRAWN), _REQUEST)

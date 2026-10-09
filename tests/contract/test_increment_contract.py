@@ -158,10 +158,11 @@ def test_queue_increment_refuses_any_other_difference(
 
 
 def test_queue_increment_never_reuses_a_withdrawn_origin(board: BoardAccess) -> None:
+    """SQ2b N6(a), Juval's test 9: refused, not returned, and the message says what to do."""
     verbs: IncrementBoard = _verbs(board)
     item_id: int = verbs.queue_increment("A:I2", P, (), "I2", "b")
     verbs.withdraw_increment(item_id)
-    with pytest.raises(QueueRefusedError, match="never reused"):
+    with pytest.raises(QueueRefusedError, match="never reused: queue the work again under a new"):
         verbs.queue_increment("A:I2", P, (), "I2", "b")
     assert _origin_count(board) == 1
 
@@ -255,8 +256,13 @@ def test_withdraw_increment_again_writes_nothing(
 
 
 def test_withdraw_increment_refuses_an_item_outside_the_claim_scope(board: BoardAccess) -> None:
-    with pytest.raises(ClaimScopeRefusedError, match="outside"):
+    """SQ2b N6(b), Juval's test 10: the refusal names ``squadra stop`` before restoring scope."""
+    with pytest.raises(ClaimScopeRefusedError) as refused:
         _verbs(board).withdraw_increment(QUEUED_ID)  # no parent: outside "parents"
+    message: str = str(refused.value)
+    assert "outside [board].claim_scope" in message
+    assert message.index("`squadra stop`") < message.index("add the parent back")
+    assert message.index("withdraw it again") < message.index("`squadra start`")
     assert board.item_state(QUEUED_ID) is Lifecycle.QUEUED
 
 

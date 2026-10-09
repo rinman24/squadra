@@ -1,8 +1,9 @@
 # Handoff: SQ3 · a registered fake provider (board-writes, part 3)
 
 Rich starts a fresh `claude` session in `~/Code/squadra` and gives it this file.
-**Do not start until SQ2b's PR (`feat/board-writes`) has merged.** If it is still
-open, stop and tell Rich.
+**Do not start until SQ2b's PR has merged** and the ledger records Rich's
+ruling on N7 and N8 (SQ2b put both to him), plus any build that ruling
+needs before a fake can be written. If either is missing, stop and tell Rich.
 
 ## Context
 
@@ -17,7 +18,7 @@ can run end to end without GitHub.
 
 Read first, in order:
 1. squadra `CLAUDE.md`, `GLOSSARY.md`, ADR-0001, ADR-0004, ADR-0005.
-2. `docs/board-writes/LEDGER.md` (notes N5–N9) and `docs/board-writes/verb-contract.md`.
+2. `docs/board-writes/LEDGER.md` (notes N5–N10) and `docs/board-writes/verb-contract.md`.
 3. `src/squadra/board.py` (`BoardAccess`, `PROVIDERS`, `build_board`),
    `src/squadra/increments.py`, `src/squadra/config.py`.
 4. `tests/contract/` (`conftest.py`, `test_board_contract.py`,
@@ -49,7 +50,10 @@ Estimated work: ~50–70K tokens (budget: under 100K total, hard stop at 120K)
 
 - CLI subcommands (SQ4), though the fake must be loadable via `build_board`.
 - The GitHub adapter (SQ5).
-- Revisiting N6–N8: SQ2b settled them (ledger). Build the fake to that settlement.
+- Revisiting N6–N8: SQ2b settled N6, and Rich ruled N7 and N8 (ledger). Build
+  the fake to that settlement. If the N8 ruling takes Juval's design, the fake
+  models `create_increment` as separate steps with fault injection (board-knowledge
+  `sessions/2026-10-09-juval-increment-verb-settlement.md`, tests 1–5).
 - Any write in claude-skills or board-knowledge.
 
 ## Wrap-up

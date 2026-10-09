@@ -156,13 +156,15 @@ def check_queue_matches(existing: OriginRecord, request: IncrementRequest) -> No
     claude-skills DB-D4 (A3): an Origin already on the board returns its item
     only when every argument matches; any difference names the fields and
     writes nothing, so squadra never quietly re-parents or re-links. A
-    withdrawn Origin is refused too: an Origin is never reused.
+    withdrawn Origin is refused too, never returned: an Origin is never reused,
+    and returning a withdrawn item would let the caller link successors to work
+    that will never be delivered (SQ2b, N6). The message names the way out.
     Predecessors compare as a set, since a board keeps no order of its links.
     """
     if existing.lifecycle is Lifecycle.WITHDRAWN:
         raise QueueRefusedError(
             f"origin {request.origin!r} was withdrawn (item {existing.item_id}); "
-            "an Origin is never reused"
+            "an Origin is never reused: queue the work again under a new Origin"
         )
     differs: list[str] = []
     if existing.parent != request.parent:

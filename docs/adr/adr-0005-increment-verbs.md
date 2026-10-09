@@ -1,7 +1,7 @@
 # ADR-0005 — The increment verbs: rules in squadra, primitives in each adapter
 
 - Status: **Accepted** — 2026-10-09; implemented by the PR that adds this ADR
-  (board-writes SQ2).
+  (board-writes SQ2). Decision 3 amended by SQ2b, 2026-10-09 (ledger N6).
 - Date: 2026-10-09
 - Context origin: claude-skills `docs/design-to-board/LEDGER.md` DB-D1 (writes
   live in squadra; amendment A2: squadra's orchestration applies claim scope
@@ -38,9 +38,19 @@ definition of scope.
    `squadra.engines`: `parent_in_claim_scope` (now also the tick's claim gate),
    `check_transition`, `index_by_origin` (A2) and `check_queue_matches` (A3).
    Every refusal raises before any write.
-3. Two narrowings beyond the rulings, both fail-closed: a withdrawn Origin is
-   never re-queued (the glossary's "never reused"), and `withdraw_increment`
-   refuses an item outside the claim scope (DB-D1 A2 applies scope to writes).
+3. Two narrowings beyond the rulings, both fail-closed, kept by SQ2b (ledger
+   N6; board-knowledge `sessions/2026-10-09-juval-increment-verb-settlement.md`):
+   - A withdrawn Origin is never re-queued (the glossary's "never reused"). It
+     is refused, not returned: returning it would let the caller link
+     successors to work that will never be delivered. The refusal tells the
+     caller to queue the work under a new Origin.
+   - `withdraw_increment` refuses an item outside the claim scope (DB-D1 A2
+     applies scope to writes). The refusal names the safe order: `squadra
+     stop`, restore scope, withdraw again, `squadra start`. Restoring scope
+     while the fleet runs lets the next tick claim the item, and the
+     withdrawal is then refused as ACTIVE (DB-D2).
+   Neither fires on design-to-board's legitimate path; both catch a broken
+   document or reconcile.
 4. The ADO adapter raises `NotImplementedError` for both primitives. Board writes
    ship with the GitHub adapter (DB-D1, SQ5).
 
@@ -54,6 +64,16 @@ definition of scope.
   `create_increment`, returning 0, which is never a board item.
 - The CLI (SQ4) composes `IncrementBoard` from the loaded config; nothing calls
   the primitives directly except `IncrementBoard`.
+- Open with Rich (ledger N7, N8): Juval recommends withdrawing by Origin
+  instead of item id, and a crash-safe `create_increment` that finishes a
+  partial item on retry. Both change DB-D rulings, so SQ2b did not build them.
+  Until Rich rules, decision 1 stands as written: the adapter orders its calls
+  so no tick can claim the item before its links exist, and a retry after a
+  crash mid-create is refused by A3.
+- Open (ledger N10): `withdraw_increment` reads the state, then writes it. The
+  ticker can claim the item in between, leaving an item WITHDRAWN while a
+  runner works on it. Closing that gap needs a compare-and-set write from the
+  provider or a tick rule for it.
 
 ## Alternatives considered
 
