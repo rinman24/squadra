@@ -67,6 +67,7 @@ A single unified `squadra` CLI is installed (the API / composition root):
 | `squadra tick [--dry-run]` | run one supervisor tick in-process |
 | `squadra {start\|stop\|status\|log}` | hands-on ticker control (shells to the packaged `fleetctl.sh`) |
 | `squadra increment {init\|update\|heartbeat\|show}` | the per-increment status-file ops (used by the runner wrapper) |
+| `squadra board {queue\|withdraw\|origins}` | the increment verbs an outside planner calls (JSON on stdout, exit 0/1/2/3; [`verb-contract.md`](docs/board-writes/verb-contract.md)) |
 
 `python -m squadra.supervisor` (one tick) and `python -m squadra.status` (the
 status-file CLI) remain as internal module entry points. The deprecated

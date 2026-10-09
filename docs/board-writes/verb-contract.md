@@ -65,7 +65,8 @@ squadra board origins
     Partial items are not in it; `origins` writes one stderr line per partial
     item, naming its item id and Origin, and still exits `0`. A partial item
     whose row was withdrawn before a retry finished it stays on the board for
-    good, and this line is the only place it shows.
+    good, and this line is the only place it shows. Both halves come from one
+    board read, `IncrementBoard.increments_and_partial_items()` (ledger N18).
 - Exit codes: `0` done; `2` usage or configuration (argparse, `ConfigError`,
   `BoardValidationError`); `3` refused by a rule (`ClaimScopeRefusedError`,
   `QueueRefusedError`, `TransitionRefusedError`, `DuplicateOriginError`,

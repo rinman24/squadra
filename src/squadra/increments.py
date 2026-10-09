@@ -18,8 +18,9 @@ them:
 
 Every refusal raises before any write. The Origin is opaque: squadra stores it
 and compares it for equality, never parses it. The contract is per board: a
-predecessor on another board is not visible here. The CLI subcommands that
-expose these verbs (SQ4) are designed in ``docs/board-writes/verb-contract.md``.
+predecessor on another board is not visible here. ``squadra board
+{queue,withdraw,origins}`` (:mod:`squadra.cli`, SQ4) exposes these verbs as
+``docs/board-writes/verb-contract.md`` specifies.
 """
 
 from collections.abc import Sequence
@@ -135,12 +136,31 @@ class IncrementBoard:
         the item (SQ2c, ledger N8). Raises :class:`DuplicateOriginError` on an
         Origin carried by two items, naming both, counting partial items.
         """
+        increments: dict[str, Increment]
+        increments, _ = self.increments_and_partial_items()
+        return increments
+
+    def increments_and_partial_items(
+        self,
+    ) -> tuple[dict[str, Increment], tuple[OriginRecord, ...]]:
+        """Return :meth:`increments_by_origin` and the partial items it leaves out, from one read.
+
+        ``squadra board origins`` names each partial item on stderr, its only
+        view of one whose row was withdrawn before a retry finished it
+        (ADR-0005). One board-wide read serves both halves, so an item a
+        concurrent retry finishes cannot fall between two reads (SQ4, ledger
+        N18). Raises :class:`DuplicateOriginError` as :meth:`increments_by_origin` does.
+        """
         records: dict[str, OriginRecord] = index_by_origin(self._board.items_with_origin())
-        return {
+        increments: dict[str, Increment] = {
             origin: as_increment(record, self._claim_scope, self._parent_scope_ids)
             for origin, record in records.items()
             if not record.partial
         }
+        partial_items: tuple[OriginRecord, ...] = tuple(
+            record for record in records.values() if record.partial
+        )
+        return increments, partial_items
 
     def _in_scope(self, parent: int | None) -> bool:
         return parent_in_claim_scope(parent, self._claim_scope, self._parent_scope_ids)
