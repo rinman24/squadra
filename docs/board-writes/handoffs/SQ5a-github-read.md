@@ -1,10 +1,13 @@
 # Handoff: SQ5a · the GitHub adapter's read half (board-writes, part 5a)
 
 Rich starts a fresh `claude` session in `~/Code/squadra` and gives it this file.
-**Do not start until the SQ5 split PR has merged** on squadra `main` (it adds
-this file, SQ5a–SQ5c and N20–N21 to the ledger). If it is still open, stop and
-tell Rich. Then check N20: if Rich has ruled on it, build his ruling; if not,
-build the proposal and say so in the PR.
+**Do not start until both hold:** the SQ5 split PR (#51) has merged on
+squadra `main` (it adds this file, SQ5a–SQ5c and N20–N21 to the ledger), and
+Rich has ruled on N20 after consulting Juval and Eric (their session files in
+board-knowledge `sessions/`, the ruling recorded in N20). If either is
+missing, stop and tell Rich; do not build the proposal in its place. Build
+what the ruling says. Where it differs from the proposal, the ruling wins
+everywhere this handoff cites N20.
 
 ## Context
 
@@ -39,8 +42,9 @@ one repository's issues and one Projects v2 board:
   (owner and number), as a provider-scoped table so SQ5c's `[[boards]]` can
   carry one per entry. Additive, no ADR. A missing key is a `ConfigError`
   naming it, only when `provider = "github"`.
-- Native state per N20: `Status` while open, `closed:<state_reason>` once
-  closed, closure wins; not on the project or empty Status is in no bucket.
+- Native state per Rich's N20 ruling (the proposal was: `Status` while open,
+  `closed:<state_reason>` once closed, closure wins; not on the project or
+  empty Status is in no bucket).
 - Reads: `items_in_state`, `item_state` (an unmapped state raises, a
   no-bucket item raises), `item_links` (sub-issue parent, "blocked by" as
   predecessors), `completed_pr_url` (a merged PR from the branch into

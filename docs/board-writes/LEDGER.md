@@ -27,7 +27,7 @@ Under ~100K tokens per session, hard ceiling 120K, one unit per session.
 | SQ3 | Fake provider implementing the two primitives (`create_increment`, `items_with_origin`) and the read half, registered in `PROVIDERS`; run the `BoardAccess` and increment contract suites against it | B | SQ2, SQ2b, SQ2c | done (PR #49); N16, N17 |
 | SQ4 | `squadra board {queue,withdraw,origins}` as Clients over `IncrementBoard`, per `verb-contract.md` (the rules already live in `IncrementBoard`) | C | SQ2, SQ3 | done (PR #50); N18, N19 |
 | SQ5 | GitHub adapter, reads and writes; `[[boards]]` and `in_claim_scope` (WSQ1). Split by the SQ5 session into SQ5a–SQ5c below | D | SQ2; after design-to-board F per DB-D1 order (claude-skills DB4, PR #16, merged) | in progress (split, PR #51) |
-| SQ5a | `provider = "github"` registered: transport (the unit's choice, a ledger note), `[board.github]` config, the native-state model (N20), the read half (`items_in_state`, `item_state`, `item_links`, `completed_pr_url`), `validate_config` against a real board, and the tick's writes (`set_state` into Status buckets, labels as tags, Markdown comments). The `board` contract suite runs against it offline over a stubbed transport; `create_increment` / `items_with_origin` raise `NotImplementedError` as ADO's do. Cut line if long: the tick's writes to SQ5b | D | SQ5 split; N20 | todo |
+| SQ5a | `provider = "github"` registered: transport (the unit's choice, a ledger note), `[board.github]` config, the native-state model (N20), the read half (`items_in_state`, `item_state`, `item_links`, `completed_pr_url`), `validate_config` against a real board, and the tick's writes (`set_state` into Status buckets, labels as tags, Markdown comments). The `board` contract suite runs against it offline over a stubbed transport; `create_increment` / `items_with_origin` raise `NotImplementedError` as ADO's do. Cut line if long: the tick's writes to SQ5b | D | SQ5 split; N20 ruled by Rich (after Juval, Eric) | todo |
 | SQ5b | `create_increment` (with `partial_item`) and `items_with_origin` on GitHub, proving obligations 1–4 (N15; N14's title and body on the first call), `set_state` into WITHDRAWN (closed, not planned, DB-D2); the `increment` and crash-safe contract suites against the stubbed transport with a fault after each write j < k. Unblocks claude-skills DB5 (G) | D | SQ5a | todo |
 | SQ5c | WSQ1's deferred parts: `[[boards]]` with `claim_scope` per entry (the check fires wherever a board is added), adapter-owned `in_claim_scope(item_id)` (the supervisor stops reading parent links for scope), rename `seams.ado`; N10's compare-and-set if GitHub offers one, else record that it doesn't. Not needed by DB5 | D | SQ5b | todo |
 
@@ -199,8 +199,9 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
   compare it exactly (N14). `--help` keeps argparse's usual output and exit 0.
   claude-skills DB-D10 (PR #14) matches `verb-contract.md` on every point SQ4
   builds; no difference to raise.
-- N20 (SQ5 split), **for Rich; SQ5a builds the proposal unless he rules
-  otherwise**: GitHub's native state. DB-D2 fixes only WITHDRAWN (closed,
+- N20 (SQ5 split), **for Rich, after `/ask-juval` and `/ask-eric`; SQ5a
+  waits for the ruling** (record it here, with the two session files):
+  GitHub's native state. DB-D2 fixes only WITHDRAWN (closed,
   reason "not planned"); the rest is open, and the names are user-facing
   vocabulary in every GitHub `squadra.toml`, costly to change once a real
   board is configured. Proposal: an item's native state is its Projects v2
