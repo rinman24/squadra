@@ -19,6 +19,7 @@ from squadra.engines import (
     QueueRefusedError,
     TransitionRefusedError,
     as_increment,
+    check_queue_finishes,
     check_queue_matches,
     check_transition,
     increment_branch,
@@ -174,3 +175,46 @@ def test_check_queue_matches_refuses_any_difference_naming_it(
 def test_check_queue_matches_refuses_a_withdrawn_origin_naming_the_way_out() -> None:
     with pytest.raises(QueueRefusedError, match="never reused: queue the work again under a new"):
         check_queue_matches(replace(_RECORD, lifecycle=Lifecycle.WITHDRAWN), _REQUEST)
+
+
+# --- finishing a partial item (SQ2c, ledger N8) -----------------------------------
+
+_PARTIAL: OriginRecord = replace(_RECORD, parent=None, predecessors=(), lifecycle=None)
+
+
+def test_a_record_with_no_lifecycle_is_partial() -> None:
+    assert (_PARTIAL.partial, _RECORD.partial) == (True, False)
+
+
+def test_as_increment_refuses_a_partial_record() -> None:
+    with pytest.raises(ValueError, match="item 7 is partial"):
+        as_increment(_PARTIAL, ClaimScope.WHOLE_BOARD, ())
+
+
+@pytest.mark.parametrize(
+    "partial",
+    [
+        _PARTIAL,
+        replace(_PARTIAL, parent=200),
+        replace(_PARTIAL, parent=200, predecessors=(151,)),
+        replace(_PARTIAL, parent=200, predecessors=(150, 151)),
+    ],
+)
+def test_check_queue_finishes_accepts_what_is_on_the_board_so_far(partial: OriginRecord) -> None:
+    check_queue_finishes(partial, _REQUEST)  # must not raise
+
+
+@pytest.mark.parametrize(
+    ("partial", "named"),
+    [
+        (replace(_PARTIAL, parent=201), "parent 201 != 200"),
+        (replace(_PARTIAL, predecessors=(150, 152)), r"predecessors \[152\] on the item"),
+        (replace(_PARTIAL, title="u"), "title"),
+        (replace(_PARTIAL, body="c"), "body differs"),
+    ],
+)
+def test_check_queue_finishes_refuses_disagreement_naming_the_item(
+    partial: OriginRecord, named: str
+) -> None:
+    with pytest.raises(QueueRefusedError, match=f"partial item 7, .*{named}"):
+        check_queue_finishes(partial, _REQUEST)

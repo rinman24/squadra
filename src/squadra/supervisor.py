@@ -959,8 +959,11 @@ class ReadOnlyBoard:
         """Pass the read through to the wrapped client."""
         return self._inner.items_with_origin()
 
-    def create_increment(self, request: IncrementRequest) -> int:
-        """Absorb the write, logging it; return 0, which is no board item."""
+    def create_increment(self, request: IncrementRequest, partial_item: int | None = None) -> int:
+        """Absorb the write, logging it; return the item finished, else 0 (no board item)."""
+        if partial_item is not None:
+            _log(f"[dry-run] WOULD finish #{partial_item} for origin {request.origin!r}")
+            return partial_item
         _log(f"[dry-run] WOULD queue origin {request.origin!r} under #{request.parent}")
         return 0
 

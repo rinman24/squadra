@@ -22,7 +22,11 @@ GitHub fake in a hidden marker appended to the issue body (escaped, so any
 string round-trips). ``items_with_origin`` hands back exactly what
 ``create_increment`` was given. Both honour the adapter's mapping rules: an unmapped native state raises rather
 than defaulting to a bucket, and ``validate_config`` fails on a configured name
-the board lacks or a board state the map leaves out.
+the board lacks or a board state the map leaves out. A partial item (a create
+not yet committed) has no native state at all (``None``), so it is in no bucket;
+``seed_partial`` places one by hand, as a crash mid-create would leave it,
+and ``create_increment(request, partial_item=...)`` finishes it (SQ2c,
+ledger N8). The fault-injecting create is SQ3's.
 """
 
 from collections.abc import Iterable, Mapping
@@ -92,7 +96,7 @@ class _AdoItem:
 
     item_id: int
     title: str
-    state: str  # native ADO-Basic state string
+    state: str | None  # native ADO-Basic state string; None while partial
     tags_raw: str = ""  # ``;``-joined System.Tags-style string
     parent_id: int | None = None
     predecessor_ids: tuple[int, ...] = ()
@@ -178,7 +182,9 @@ class AdoShapedFakeBoard:
 
     def item_state(self, item_id: int) -> Lifecycle:
         """Reverse-map the item's native state to its lifecycle bucket."""
-        native: str = self.items[item_id].state
+        native: str | None = self.items[item_id].state
+        if native is None:
+            raise BoardValidationError(_PARTIAL.format(item_id=item_id))
         for lifecycle, names in self._states.items():
             if native in names:
                 return lifecycle
@@ -217,8 +223,15 @@ class AdoShapedFakeBoard:
         """Raise if a configured state is absent from the board, or a board state is unmapped."""
         _check_state_map(self._states, self._available)
 
-    def create_increment(self, request: IncrementRequest) -> int:
-        """Create a QUEUED Issue carrying the Origin in a field of its own."""
+    def create_increment(self, request: IncrementRequest, partial_item: int | None = None) -> int:
+        """Create a QUEUED Issue carrying the Origin in a field of its own, or finish one."""
+        if partial_item is not None:
+            item: _AdoItem = self.items[partial_item]
+            _check_finishable(partial_item, item.origin, item.state, request)
+            item.parent_id = request.parent if item.parent_id is None else item.parent_id
+            item.predecessor_ids = _with_missing(item.predecessor_ids, request.predecessors)
+            item.state = _first_native(self._states, Lifecycle.QUEUED)  # the commit, last
+            return partial_item
         item_id: int = _next_id(self.items.keys())
         self.items[item_id] = _AdoItem(
             item_id=item_id,
@@ -232,7 +245,7 @@ class AdoShapedFakeBoard:
         return item_id
 
     def items_with_origin(self) -> tuple[OriginRecord, ...]:
-        """Return every Issue whose Origin field is set, duplicates included."""
+        """Return every Issue whose Origin field is set, duplicates and partial ones included."""
         return tuple(
             OriginRecord(
                 item_id=item.item_id,
@@ -241,7 +254,7 @@ class AdoShapedFakeBoard:
                 predecessors=item.predecessor_ids,
                 title=item.title,
                 body=item.body,
-                lifecycle=self.item_state(item.item_id),
+                lifecycle=None if item.state is None else self.item_state(item.item_id),
             )
             for item in self.items.values()
             if item.origin is not None
@@ -250,6 +263,44 @@ class AdoShapedFakeBoard:
     def seed_origin(self, item_id: int, origin: str) -> None:
         """Set an Origin on a seeded Issue by hand (e.g. to inject a duplicate)."""
         self.items[item_id].origin = origin
+
+    def seed_partial(
+        self,
+        origin: str,
+        title: str,
+        body: str,
+        *,
+        parent_id: int | None = None,
+        predecessor_ids: tuple[int, ...] = (),
+    ) -> int:
+        """Place an Issue a crash mid-create left behind: Origin set, no state yet."""
+        item_id: int = _next_id(self.items.keys())
+        self.items[item_id] = _AdoItem(
+            item_id=item_id,
+            title=title,
+            state=None,
+            parent_id=parent_id,
+            predecessor_ids=predecessor_ids,
+            origin=origin,
+            body=body,
+        )
+        return item_id
+
+
+_PARTIAL: str = "item {item_id} is partial: its create has not committed it, so it is in no bucket"
+
+
+def _check_finishable(
+    item_id: int, origin: str | None, native: str | None, request: IncrementRequest
+) -> None:
+    """Refuse to finish an item that is not the request's partial item (a caller bug)."""
+    if origin != request.origin or native is not None:
+        raise ValueError(f"item {item_id} is not a partial item carrying origin {request.origin!r}")
+
+
+def _with_missing(present: tuple[int, ...], requested: tuple[int, ...]) -> tuple[int, ...]:
+    """Add the requested links not yet present, keeping the present ones (an idempotent write)."""
+    return present + tuple(link for link in requested if link not in present)
 
 
 def _first_native(states: Mapping[Lifecycle, tuple[str, ...]], state: Lifecycle) -> str:
@@ -297,7 +348,7 @@ class _GitHubItem:
 
     item_id: int
     title: str
-    status: str  # arbitrary GitHub Projects status name
+    status: str | None  # GitHub Projects status name; None while partial
     labels: list[str] = field(default_factory=list[str])
     parent_id: int | None = None  # "sub-issue" parent
     predecessor_ids: tuple[int, ...] = ()  # "dependency" links
@@ -380,7 +431,9 @@ class GitHubShapedFakeBoard:
 
     def item_state(self, item_id: int) -> Lifecycle:
         """Reverse-map the issue's native status to its lifecycle bucket."""
-        status: str = self.items[item_id].status
+        status: str | None = self.items[item_id].status
+        if status is None:
+            raise BoardValidationError(_PARTIAL.format(item_id=item_id))
         for lifecycle, names in self._states.items():
             if status in names:
                 return lifecycle
@@ -417,8 +470,18 @@ class GitHubShapedFakeBoard:
         """Raise if a configured status is absent from the board, or a board status is unmapped."""
         _check_state_map(self._states, self._available)
 
-    def create_increment(self, request: IncrementRequest) -> int:
-        """Create a queued issue with the Origin in a hidden marker at the end of its body."""
+    def create_increment(self, request: IncrementRequest, partial_item: int | None = None) -> int:
+        """Create a queued issue with the Origin in a hidden body marker, or finish one."""
+        if partial_item is not None:
+            item: _GitHubItem = self.items[partial_item]
+            split: tuple[str, str] | None = _split_origin_marker(item.body)
+            _check_finishable(
+                partial_item, None if split is None else split[1], item.status, request
+            )
+            item.parent_id = request.parent if item.parent_id is None else item.parent_id
+            item.predecessor_ids = _with_missing(item.predecessor_ids, request.predecessors)
+            item.status = _first_native(self._states, Lifecycle.QUEUED)  # the commit, last
+            return partial_item
         item_id: int = _next_id(self.items.keys())
         self.items[item_id] = _GitHubItem(
             item_id=item_id,
@@ -431,7 +494,7 @@ class GitHubShapedFakeBoard:
         return item_id
 
     def items_with_origin(self) -> tuple[OriginRecord, ...]:
-        """Return every issue whose body ends in an Origin marker, duplicates included."""
+        """Return every issue whose body ends in an Origin marker, duplicates and partial ones included."""
         records: list[OriginRecord] = []
         for item in self.items.values():
             split: tuple[str, str] | None = _split_origin_marker(item.body)
@@ -446,7 +509,7 @@ class GitHubShapedFakeBoard:
                     predecessors=item.predecessor_ids,
                     title=item.title,
                     body=body,
-                    lifecycle=self.item_state(item.item_id),
+                    lifecycle=None if item.status is None else self.item_state(item.item_id),
                 )
             )
         return tuple(records)
@@ -455,6 +518,27 @@ class GitHubShapedFakeBoard:
         """Set an Origin on a seeded issue by hand (e.g. to inject a duplicate)."""
         item: _GitHubItem = self.items[item_id]
         item.body = _with_origin_marker(item.body, origin)
+
+    def seed_partial(
+        self,
+        origin: str,
+        title: str,
+        body: str,
+        *,
+        parent_id: int | None = None,
+        predecessor_ids: tuple[int, ...] = (),
+    ) -> int:
+        """Place an issue a crash mid-create left behind: Origin marker set, no status yet."""
+        item_id: int = _next_id(self.items.keys())
+        self.items[item_id] = _GitHubItem(
+            item_id=item_id,
+            title=title,
+            status=None,
+            parent_id=parent_id,
+            predecessor_ids=predecessor_ids,
+            body=_with_origin_marker(body, origin),
+        )
+        return item_id
 
 
 _ORIGIN_MARKER: str = "\n<!-- squadra-origin: "

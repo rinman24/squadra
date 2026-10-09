@@ -21,7 +21,7 @@ from squadra import supervisor
 from squadra.board import AzCliAdo
 from squadra.cleanup import DeterministicCleanup
 from squadra.config import SquadraConfig
-from squadra.domain import Lifecycle, SandboxExited
+from squadra.domain import IncrementRequest, Lifecycle, SandboxExited
 from squadra.dry_run import DryRunCleanup, DryRunWorktree
 from squadra.sandbox import ComposeSandbox, DryRunSandbox
 from squadra.status import FleetStatus, load, write
@@ -196,6 +196,16 @@ def test_read_only_board_passes_reads_through(
     assert client.item_state(40) == Lifecycle.DONE
     assert client.completed_pr_url("feat/increment-40-merged") == "https://pr/40"
     assert client.item_links(40).parent_id is None
+
+
+def test_read_only_board_absorbs_create_increment_and_finishing_a_partial_item(
+    fake_board: FakeBoard,
+) -> None:
+    """The wrapped board raises if reached; the dry run returns 0 or the item it would finish."""
+    client = ReadOnlyBoard(fake_board)
+    request: IncrementRequest = IncrementRequest("A:I1", 200, (), "I1", "")
+    assert client.create_increment(request) == 0
+    assert client.create_increment(request, partial_item=77) == 77
 
 
 def test_main_engages_dry_run_from_the_flag_and_the_env(

@@ -95,7 +95,14 @@ class OriginRecord:
 
     Unkeyed on purpose: two items with one Origin are two records, so the
     duplicate is visible to :func:`squadra.engines.index_by_origin`. ``parent``
-    is ``None`` only if the item was unparented by hand after it was queued.
+    is ``None`` only if the item was unparented by hand after it was queued, or
+    if it is a partial item whose parent link is not written yet.
+
+    ``lifecycle`` is ``None`` for a partial item: ``create_increment`` has
+    stamped its Origin but not yet made the final write that puts it in
+    QUEUED, so it is in no bucket (SQ2c, ledger N8). A partial item is not an
+    Increment. Its links may be missing, and a ``queue_increment`` retry
+    finishes it.
     """
 
     item_id: int
@@ -104,7 +111,12 @@ class OriginRecord:
     predecessors: tuple[int, ...]
     title: str
     body: str
-    lifecycle: Lifecycle
+    lifecycle: Lifecycle | None
+
+    @property
+    def partial(self) -> bool:
+        """Whether this is a partial item: its create has not committed it, so it is in no bucket."""
+        return self.lifecycle is None
 
 
 @dataclass(frozen=True, slots=True)

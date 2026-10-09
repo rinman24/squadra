@@ -65,7 +65,8 @@ class BoardAccess(Protocol):
         """Return the neutral lifecycle bucket of one work item.
 
         A native state that maps to no bucket raises ``BoardValidationError``;
-        it is never defaulted to a bucket.
+        it is never defaulted to a bucket. So does a partial item, which is
+        in no bucket until its create commits (:meth:`create_increment`).
         """
         ...
 
@@ -97,15 +98,32 @@ class BoardAccess(Protocol):
         """
         ...
 
-    def create_increment(self, request: IncrementRequest) -> int:
-        """Create one item in the QUEUED bucket and return its id.
+    def create_increment(self, request: IncrementRequest, partial_item: int | None = None) -> int:
+        """Land one item in the QUEUED bucket and return its id.
 
         The item carries ``request``'s Origin (stored as given, never parsed),
         its parent and predecessor links, title and body, and reads back exactly
-        through :meth:`items_with_origin`. One business write: if the provider
-        needs several calls, the adapter orders them so that no tick can claim
-        the item before its links exist (claude-skills DB-D1, A1). A raw write:
-        claim scope and idempotency are the caller's
+        through :meth:`items_with_origin`. One business write. If the provider
+        needs several calls, the adapter keeps four obligations so that no tick
+        can claim the item before its links exist, and a crash part-way leaves
+        an item a retry can find and finish (SQ2c, ledger N8):
+
+        1. The Origin, title and body go on with the first call that creates
+           the item. An item never exists without its Origin.
+        2. Until the last write, the item is in no bucket: :meth:`items_in_state`
+           returns it for none of the four. This is an absence the adapter
+           recognises structurally, not a native state.
+        3. Meanwhile :meth:`items_with_origin` still returns it, marked
+           partial (``lifecycle`` ``None``).
+        4. One write commits the item, the one that puts it in QUEUED. It comes
+           last, and nothing follows it.
+
+        With ``partial_item``, the adapter finishes that item instead of
+        creating one: it adds whatever of ``request`` is missing, each write
+        idempotent, makes the commit write last, and returns the same id. The
+        caller has already checked the item carries ``request``'s Origin, is
+        partial and agrees with ``request``. A raw write: claim scope,
+        idempotency and that check are the caller's
         (:class:`squadra.increments.IncrementBoard`).
         """
         ...
@@ -115,6 +133,8 @@ class BoardAccess(Protocol):
 
         Board-wide, never filtered by claim scope, and unkeyed: two items that
         carry one Origin are both returned. Items with no Origin are left out.
+        Partial items (a create not yet committed, :meth:`create_increment`
+        obligation 3) are included, with ``lifecycle`` ``None``.
         """
         ...
 
@@ -445,7 +465,7 @@ class AzCliAdo:
                 "map each in squadra.toml [board.states] (queued/active/done/withdrawn)"
             )
 
-    def create_increment(self, request: IncrementRequest) -> int:
+    def create_increment(self, request: IncrementRequest, partial_item: int | None = None) -> int:
         """Not supported: the ADO adapter has no write half (claude-skills DB-D1)."""
         raise NotImplementedError(
             f"the ado provider cannot queue increments (origin {request.origin!r}); "
