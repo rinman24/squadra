@@ -209,6 +209,9 @@ class State(Enum):
     independently persisted source of truth (ADR-0002 decision 3):
 
     - :attr:`BLOCKED` — predecessors not all done; not yet claimable.
+    - :attr:`OUT_OF_SCOPE` — terminal for the fleet: a queued item outside the
+      declared ``[board].claim_scope``. "Not mine", as distinct from
+      :attr:`BLOCKED` ("not yet"); never claimed, whatever its predecessors.
     - :attr:`CLAIMABLE` — unblocked, unclaimed, queued; the engine emits the
       per-increment signal and the orchestrator claims up to the cross-increment cap.
     - :attr:`PROVISIONING` — claimed, runner not yet observed running (no
@@ -236,6 +239,7 @@ class State(Enum):
     """
 
     BLOCKED = "blocked"
+    OUT_OF_SCOPE = "out-of-scope"
     CLAIMABLE = "claimable"
     PROVISIONING = "provisioning"
     RUNNING = "running"
@@ -304,9 +308,11 @@ class LifecycleFacts:  # noqa: PLR0902 - a fact projection is intentionally wide
 
     Fields, grouped by source:
 
-    - ``lifecycle`` / ``is_fleet_claimed`` / ``predecessors_done`` — board truth:
-      the neutral bucket, whether the fleet (not a human) claimed it, and whether
-      every predecessor increment is done.
+    - ``lifecycle`` / ``is_fleet_claimed`` / ``predecessors_done`` /
+      ``in_claim_scope`` — board truth: the neutral bucket, whether the fleet (not
+      a human) claimed it, whether every predecessor increment is done, and
+      whether the item falls inside the declared claim scope. The last two gate
+      the queued bucket only and are moot elsewhere.
     - ``parked_tagged`` / ``failed_tagged`` / ``needs_decision_tagged`` — fleet
       tags already on the item (a deliberate park, an escalation, a decision
       park). ``parked_tagged`` is the prefix-based "carries any parked tag".
@@ -334,6 +340,7 @@ class LifecycleFacts:  # noqa: PLR0902 - a fact projection is intentionally wide
     lifecycle: Lifecycle
     is_fleet_claimed: bool
     predecessors_done: bool
+    in_claim_scope: bool
     # fleet tags
     parked_tagged: bool
     failed_tagged: bool

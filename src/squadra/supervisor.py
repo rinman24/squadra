@@ -69,7 +69,7 @@ from typing import Final
 
 from squadra.board import BoardAccess, BoardValidationError, TagWriteError, build_board
 from squadra.cleanup import CleanupAccess, DeterministicCleanup
-from squadra.config import ConfigError, SquadraConfig, load_config
+from squadra.config import ClaimScope, ConfigError, SquadraConfig, load_config
 from squadra.constants import FLEET_DRY_RUN, FLEET_MODEL
 from squadra.domain import (
     AwaitAgent,
@@ -408,6 +408,7 @@ def _build_facts(
     branch: str = _branch_for(item, status, config)
     spec: SandboxSpec = _spec_for(item.item_id, branch, config)
     worktree: Path = _worktree_for(branch, config)
+    in_scope, predecessors_done = _queued_gates(seams, config, item, lifecycle)
 
     # Container liveness/exit — only meaningful for an in-flight, fleet-claimed
     # increment; gathering it for the queued/done buckets is pointless I/O.
@@ -430,7 +431,8 @@ def _build_facts(
     return LifecycleFacts(
         lifecycle=lifecycle,
         is_fleet_claimed=is_claimed,
-        predecessors_done=_predecessors_done(seams, config, item, lifecycle),
+        predecessors_done=predecessors_done,
+        in_claim_scope=in_scope,
         parked_tagged=any(tag in tags.parked for tag in item.tags),
         failed_tagged=tags.failed in item.tags,
         needs_decision_tagged=tags.needs_decision in item.tags,
@@ -471,21 +473,22 @@ def _container_facts(status: SandboxStatus) -> tuple[bool, bool, int | None]:
     return False, False, None
 
 
-def _predecessors_done(
+def _queued_gates(
     seams: TickSeams, config: SquadraConfig, item: WorkItem, lifecycle: Lifecycle
-) -> bool:
-    """Whether a queued candidate is unblocked (all predecessors done, in scope).
+) -> tuple[bool, bool]:
+    """``(in_claim_scope, predecessors_done)`` for a queued candidate, from one link read.
 
-    Only the queued bucket gates on this; for any other bucket the field is moot
-    (the engine ignores it). An out-of-parent-scope item is reported blocked so it
-    is never claimed (parity with the legacy claim filter).
+    Only the queued bucket gates on these; for any other bucket both are moot
+    (the engine ignores them) and no link is read, so an in-flight item reparented
+    out of scope still finalizes or reaps. An out-of-scope item's predecessors are
+    moot too (the engine reports it out of scope first), so they are not read.
     """
     if lifecycle is not Lifecycle.QUEUED:
-        return True
+        return True, True
     links: WorkItemLinks = seams.ado.item_links(item.item_id)
-    if config.parent_scope_ids and links.parent_id not in config.parent_scope_ids:
-        return False
-    return all(
+    if config.claim_scope is ClaimScope.PARENTS and links.parent_id not in config.parent_scope_ids:
+        return False, True
+    return True, all(
         seams.ado.item_state(predecessor) == Lifecycle.DONE for predecessor in links.predecessor_ids
     )
 

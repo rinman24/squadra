@@ -76,7 +76,7 @@ class LifecycleEngine:
     board tags first (escalated / decision parks are terminal), then the done
     bucket (finalize vs. await PR), then the in-flight classification (the
     completion triple, the failure edges, liveness), then the queued bucket
-    (claimable vs. blocked). An orthogonal failed-teardown leak is appended to
+    (out of scope, then claimable vs. blocked). An orthogonal failed-teardown leak is appended to
     whatever the primary lifecycle decision was, since a leak never blocks the
     increment's board lifecycle (ADR-0002 decision 6).
 
@@ -129,7 +129,14 @@ class LifecycleEngine:
                 return _terminal(State.RUNNING)
             return self._classify_inflight(facts)
 
-        # 4. The queued bucket: claimable when unblocked, else blocked.
+        # 4. The queued bucket, out of the declared claim scope: not the fleet's,
+        #    whatever its predecessors. Gated on the queued bucket only (steps 2
+        #    and 3 returned already), so an in-flight item reparented out of
+        #    scope still finalizes or reaps instead of leaking.
+        if not facts.in_claim_scope:
+            return _terminal(State.OUT_OF_SCOPE)
+
+        # 5. The queued bucket: claimable when unblocked, else blocked.
         if facts.predecessors_done:
             return LifecycleDecision(state=State.CLAIMABLE, actions=(SignalClaimable(),))
         return _terminal(State.BLOCKED)
