@@ -199,8 +199,12 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
   compare it exactly (N14). `--help` keeps argparse's usual output and exit 0.
   claude-skills DB-D10 (PR #14) matches `verb-contract.md` on every point SQ4
   builds; no difference to raise.
-- N20 (SQ5 split), **for Rich, after `/ask-juval` and `/ask-eric`; SQ5a
-  waits for the ruling** (record it here, with the two session files):
+- N20 (SQ5 split), **ruled by Rich, 2026-10-09: the proposal with seven
+  changes, below; partial by commit marker (N15's fallback)**. Put to him
+  after `/ask-juval` and `/ask-eric` (board-knowledge
+  `sessions/2026-10-09-juval-github-native-state.md`,
+  `sessions/2026-10-09-eric-github-native-state.md`). The ruling wins over
+  the proposal everywhere SQ5a's handoff cites N20. Proposal as put:
   GitHub's native state. DB-D2 fixes only WITHDRAWN (closed,
   reason "not planned"); the rest is open, and the names are user-facing
   vocabulary in every GitHub `squadra.toml`, costly to change once a real
@@ -218,6 +222,96 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
   the reason for a `closed:` name, and refuses (`BoardValidationError`) a
   Status name on a closed issue rather than silently reopening it; no tick
   path requeues a closed issue.
+  Ruling (Rich accepted all seven recommendations; both advisors agreed on
+  closure wins in the adapter, the `closed:` prefix guard, raising on an
+  unknown reason, no glossary term, and no silent reopen):
+  1. **Partial by marker, not by structure** (Juval; Eric: "no bucket" was a
+     splinter, history and current state under one word, and empty Status is
+     a native state in disguise). A partial item is an Origin-bearing issue
+     without the adapter's commit marker. The Origin goes on first (with
+     title and body, N14), the marker last: the marker write is obligation
+     4's commit, and nobody else writes either. Add-to-project and Status
+     may land anywhere before it, each idempotent under `partial_item`.
+     The marker gates Origin-bearing items only (an issue with no Origin
+     maps from Status and closure, as on ADO; gating every item would be
+     WSQ1's shelved form (b)); it lives outside `tag_prefix` (finalize
+     clears that namespace by prefix; no exemption is added to finalize);
+     it is an additive write, never a read-modify-write of the body; it is
+     adapter-internal and never appears in `[board.states]`. Off the project
+     or an empty Status is "in no bucket" only for a partial item; on any
+     other item it is unmapped and `item_state` raises (ADR-0004 rule 3), so
+     a committed increment a human takes off the project is loud, never
+     reported partial and requeued. ADR-0005 is unchanged: this is the
+     fallback N15 and its Consequences already name.
+  2. **The closed names are squadra's constants** (Juval, over Eric's
+     byte-for-byte raw reason): `closed:completed`, `closed:not_planned`,
+     `closed:duplicate`, defined in the adapter and translated from the
+     transport's spelling at the boundary. `validate_config` refuses any
+     Status option whose name starts with `closed:`. `item_state` raises on
+     a closed reason outside the set, never defaulting; if a closed issue
+     can carry no reason, its name is the reserved `closed:` (Eric), mapped
+     like the others. The precedence lives in one named function whose
+     docstring states it, pinned by a test: a closed issue whose Status names
+     a queued column is never QUEUED.
+  3. **DONE closes the issue.** `set_state(DONE)` closes it as completed,
+     `set_state(WITHDRAWN)` closes it as not planned (DB-D2), QUEUED and
+     ACTIVE write a Status option: every `set_state` is one write. A Status
+     option mapped to DONE is valid only on a closed issue: open + DONE
+     raises in `item_state` (catches a reopened withdrawn issue whose Status
+     the "Item closed" workflow left at Done, and a hand drag to Done).
+     `set_state` into the bucket the item is already in writes nothing
+     (finalize after a merged PR closed the issue). The default map puts
+     `closed:duplicate` in `withdrawn`, never `done`; the scaffold comment
+     says a hand close as completed counts as delivered.
+  4. **"Item added to project" workflow:** tolerated only if the Status it
+     sets maps to QUEUED, otherwise required off. `validate_config` checks it
+     if the API exposes the workflow's setting; if not, the scaffold
+     documents the requirement, the adapter reads Status back once after the
+     marker write (detection, not a guarantee), and the ADR records that
+     obligation 4 then holds on GitHub only by configuration.
+  5. **"Item closed" workflow:** tolerated, safe under 3. The scaffold
+     advises turning it off and says the project view is not authoritative
+     for closed issues. N21's "harmless" holds only with 3's guard.
+  6. **A closed issue is never reopened, and the tick goes on.** `set_state`
+     still refuses a Status name on a closed issue (a reopen would be two
+     writes). No tick path requeues a closed issue; a requeue that finds one
+     reports it for that item and the tick continues, never ending on it.
+  7. **Where it is written:** SQ5a writes an ADR for GitHub's native state
+     (composition, closure wins, the closed names, the marker, both
+     workflows). "Native state" is not a new term and stays out of
+     `GLOSSARY.md` (Eric): it is defined once in the board-seam docs (the
+     provider-side name `[board.states]` maps from; on GitHub computed, not
+     stored), GitHub's rule in the adapter's docs, and a comment beside the
+     default GitHub map in the scaffold. Eric's optional reason under
+     Withdrawn's _Avoid_ "closed" ("a provider's word; on GitHub a closed
+     issue can be done or withdrawn") is SQ5a's call. In adapter code,
+     `completed` names only GitHub's reason, never delivery (N13).
+  Changes to the SQ5a handoff: the reads recognise partial items, so SQ5a
+  fixes how the Origin and the marker are encoded and reads both
+  (`items_in_state` leaves partial items out, `item_state` raises on one);
+  SQ5b writes them. `validate_config` gains the `closed:` prefix guard and,
+  if the API allows, the workflow check (4). `item_state` raises on an
+  unknown reason, open + DONE, and a non-partial item off the project or
+  with an empty Status. `set_state` follows 3 and 6, and the tick reports a
+  refused requeue per item: a tick change, in SQ5a's scope with the tick's
+  writes (the existing cut line moves both to SQ5b). SQ5a writes the ADR,
+  the scaffold comment and the native-state definition (7). The handoff's
+  N20 unit tests become: closed beats Status; partial vs committed, each
+  off the project and with an empty Status; `closed:duplicate` unmapped and
+  a `closed:`-prefixed Status option each fail `validate_config`; an
+  unknown reason and open + DONE raise; a Status write on a closed issue
+  refuses; a same-bucket `set_state` writes nothing; plus a contract case:
+  an ACTIVE item closed between ticks with each reason is neither reopened
+  nor ends the next tick, and is reported. N21 gains four facts to verify:
+  every `state_reason` value the transport returns and whether one can be
+  null; whether the API exposes the project workflows' settings; whether a
+  merged PR's closing reference closes its issue; whether add-to-project
+  can set Status in one call. SQ5b gains Juval's interloper test (after each
+  write j < k an outside actor adds the item to the project and sets every
+  QUEUED-mapped Status: `items_in_state(QUEUED)` leaves it out,
+  `items_with_origin` returns it with `lifecycle` `None`, `item_state`
+  raises) and Eric's cleared-Status test (a committed ACTIVE item with its
+  Status cleared, or taken off the project, raises and is not requeued).
 - N21 (SQ5 split): GitHub facts each unit verifies before relying on them,
   none checked by the split session: the sub-issue and issue-dependency
   ("blocked by") APIs and whether `gh api` reaches both (SQ5a reads them,
