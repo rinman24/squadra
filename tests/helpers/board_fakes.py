@@ -26,12 +26,15 @@ the board lacks or a board state the map leaves out. A partial item (a create
 not yet committed) has no native state at all (``None``), so it is in no bucket;
 ``seed_partial`` places one by hand, as a crash mid-create would leave it,
 and ``create_increment(request, partial_item=...)`` finishes it (SQ2c,
-ledger N8). The fault-injecting create is SQ3's.
+ledger N8). The fault-injecting create is the registered fake's
+(:mod:`squadra.fake_board`), the third shape the contract suites run against,
+here as :class:`RecordingFileBoard`.
 """
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 import json
+from pathlib import Path
 
 from squadra.board import BoardValidationError, render_ado_html
 from squadra.config import ADO_BASIC_STATES
@@ -49,6 +52,7 @@ from squadra.domain import (
     WorkItem,
     WorkItemLinks,
 )
+from squadra.fake_board import JsonFileBoard
 
 # A GitHub-shaped status map: MANY native names per neutral bucket on purpose,
 # so the contract exercises the many-native→one-neutral collapse.
@@ -57,6 +61,13 @@ GITHUB_STATES: Mapping[Lifecycle, tuple[str, ...]] = {
     Lifecycle.ACTIVE: ("In Progress",),
     Lifecycle.DONE: ("Shipped", "Closed-merged"),
     Lifecycle.WITHDRAWN: ("Withdrawn",),
+}
+# The registered fake's map in the contract suites: one plain name per bucket.
+FILE_STATES: Mapping[Lifecycle, tuple[str, ...]] = {
+    Lifecycle.QUEUED: ("queued",),
+    Lifecycle.ACTIVE: ("active",),
+    Lifecycle.DONE: ("done",),
+    Lifecycle.WITHDRAWN: ("withdrawn",),
 }
 # ADO-Basic plus the ``Removed`` state of ADO's other processes, mapped to WITHDRAWN.
 ADO_STATES_WITH_WITHDRAWN: Mapping[Lifecycle, tuple[str, ...]] = {
@@ -559,3 +570,30 @@ def _split_origin_marker(raw: str) -> tuple[str, str] | None:
     encoded: str = raw[at + len(_ORIGIN_MARKER) : -len(_MARKER_END)]
     decoded: object = json.loads(encoded)
     return (raw[:at], decoded) if isinstance(decoded, str) else None
+
+
+# --- the registered fake, recording -------------------------------------------
+
+
+class RecordingFileBoard(JsonFileBoard):
+    """The registered fake provider, recording its state writes for assertions."""
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        states: Mapping[Lifecycle, tuple[str, ...]] = FILE_STATES,
+        tags: Tags = Tags(),
+    ) -> None:
+        """Open the board file at ``path``; nothing is written until the first call."""
+        super().__init__(path, states=states, tags=tags)
+        self.state_writes: list[tuple[int, Lifecycle]] = []
+
+    def set_state(self, item_id: int, state: Lifecycle) -> None:
+        """Write the state and record the write."""
+        super().set_state(item_id, state)
+        self.state_writes.append((item_id, state))
+
+
+# Every fake a contract test can seed Origins and partial items on by hand.
+SeedableFakeBoard = AdoShapedFakeBoard | GitHubShapedFakeBoard | RecordingFileBoard

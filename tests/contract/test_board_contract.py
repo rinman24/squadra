@@ -1,9 +1,12 @@
 """The provider-agnostic ``BoardAccess`` conformance suite.
 
-Every test here runs against BOTH fakes (via the parametrized ``board`` fixture)
+Every test here runs against all three shapes (the ADO- and GitHub-shaped fakes
+and the registered fake provider, via the parametrized ``board`` fixture)
 and asserts only neutral behavior — never a native state string or markup
 dialect. Any implementation that passes this suite satisfies the seam contract.
 """
+
+from pathlib import Path
 
 import pytest
 
@@ -30,7 +33,12 @@ from tests.contract.conftest import (
     QUEUED_ID,
     WITHDRAWN_ID,
 )
-from tests.helpers.board_fakes import AdoShapedFakeBoard, GitHubShapedFakeBoard
+from tests.helpers.board_fakes import (
+    AdoShapedFakeBoard,
+    GitHubShapedFakeBoard,
+    RecordingFileBoard,
+    SeedableFakeBoard,
+)
 
 TAGS: Tags = Tags()
 
@@ -93,14 +101,17 @@ def test_board_without_a_withdrawn_state_has_an_empty_withdrawn_bucket() -> None
         board.set_state(QUEUED_ID, Lifecycle.WITHDRAWN)
 
 
-@pytest.mark.parametrize("shape", ["ado", "github"])
-def test_unmapped_native_state_raises_instead_of_defaulting(shape: str) -> None:
+@pytest.mark.parametrize("shape", ["ado", "github", "file"])
+def test_unmapped_native_state_raises_instead_of_defaulting(shape: str, tmp_path: Path) -> None:
     # Never QUEUED by default: an unmapped withdrawn column read as queued
     # would make every withdrawn item claimable.
-    board: AdoShapedFakeBoard | GitHubShapedFakeBoard
+    board: SeedableFakeBoard
     if shape == "ado":
         board = AdoShapedFakeBoard()
         board.add(QUEUED_ID, "x", Lifecycle.QUEUED, native_state="Removed")
+    elif shape == "file":
+        board = RecordingFileBoard(tmp_path / "fake-board.json")
+        board.add(QUEUED_ID, "x", Lifecycle.QUEUED, native_state="cancelled")
     else:
         board = GitHubShapedFakeBoard()
         board.add(QUEUED_ID, "x", Lifecycle.QUEUED, native_status="Cancelled")
@@ -166,8 +177,8 @@ def test_add_comment_accepts_every_event_variant(board: BoardAccess, event: Comm
 def test_add_comment_records_one_comment_per_call(board: BoardAccess) -> None:
     for event in _ALL_EVENTS:
         board.add_comment(ACTIVE_ID, event)
-    # both fakes expose a per-item comment log (assert count, not dialect)
-    assert isinstance(board, AdoShapedFakeBoard | GitHubShapedFakeBoard)
+    # every fake exposes a per-item comment log (assert count, not dialect)
+    assert isinstance(board, SeedableFakeBoard)
     assert len(board.comments[ACTIVE_ID]) == len(_ALL_EVENTS)
 
 

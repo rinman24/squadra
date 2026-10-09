@@ -30,8 +30,15 @@ import pytest
 
 from squadra import cli, supervisor
 import squadra.config as config_module
-from squadra.config import SquadraConfig
-from squadra.domain import Lifecycle, SandboxExited
+from squadra.config import ClaimScope, SquadraConfig, load_config
+from squadra.domain import IncrementRequest, Lifecycle, SandboxExited
+from squadra.fake_board import (
+    InjectedCrashError,
+    JsonFileBoard,
+    create_step_count,
+    fake_board_path,
+)
+from squadra.increments import IncrementBoard
 from squadra.status import FleetStatus, write
 from tests.helpers.fleet_fakes import FakeBoard, FakeIssue
 from tests.helpers.sandbox_fakes import FakeSandbox
@@ -146,4 +153,79 @@ def test_tick_dry_run_claims_exactly_the_in_scope_unblocked_items(
     # And it is still a dry run: nothing on the board changed.
     assert [call for call in fake_board.calls if call[0] in _MUTATING_CALLS] == []
     assert fake_board.issues == issues_before
+    assert fake_sandbox.launches == []
+
+
+# --- the registered fake provider: a crashed create is never claimed (ledger N8) ----
+
+_FAKE_STATES_TOML: str = (
+    "[board.states]\n"
+    'queued = ["queued"]\n'
+    'active = ["active"]\n'
+    'done = ["done"]\n'
+    'withdrawn = ["withdrawn"]\n'
+)
+_CRASHED_REQUEST: IncrementRequest = IncrementRequest("A:I2", _IN_SCOPE_PARENT, (5,), "I2", "b")
+
+
+@pytest.mark.parametrize("scope", [ClaimScope.WHOLE_BOARD, ClaimScope.PARENTS])
+@pytest.mark.parametrize("j", range(1, create_step_count(_CRASHED_REQUEST)))
+def test_tick_dry_run_claims_nothing_new_after_a_crashed_create(
+    tmp_path: Path,
+    fake_sandbox: FakeSandbox,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    scope: ClaimScope,
+    j: int,
+) -> None:
+    """Juval's test 1, end to end on ``provider = "fake"``: only ``build_board``'s file is real.
+
+    Under ``"whole-board"`` a claim-time check on the parent link would not
+    help: an unlinked queued item is claimable there. The partial item is in
+    no bucket, so the tick never sees it under either scope.
+    """
+    fleet_home: Path = tmp_path / "home"
+    fleet_home.mkdir()
+    scope_ids: str = (
+        f"parent_scope_ids = [{_IN_SCOPE_PARENT}]\n" if scope is ClaimScope.PARENTS else ""
+    )
+    (fleet_home / "squadra.toml").write_text(
+        f'[board]\nprovider = "fake"\nclaim_scope = "{scope.value}"\n{scope_ids}{_FAKE_STATES_TOML}',
+        encoding="utf-8",
+    )
+    for var in ("FLEET_PROVIDER", "FLEET_TAG_PREFIX", "FLEET_BASE_BRANCH", "FLEET_DRY_RUN"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(config_module, "FLEET_MAX_RUNNERS", 10)
+    monkeypatch.setattr(supervisor, "ComposeSandbox", lambda: fake_sandbox)
+
+    board: JsonFileBoard = JsonFileBoard(
+        fake_board_path(fleet_home), states=load_config(fleet_home=fleet_home).states
+    )
+    board.add(4, "feat: delivered", Lifecycle.DONE, parent_id=_IN_SCOPE_PARENT)
+    board.add(
+        5, "feat: in scope", Lifecycle.QUEUED, parent_id=_IN_SCOPE_PARENT, predecessor_ids=(4,)
+    )
+    board.arm_create_fault(j)
+    verbs: IncrementBoard = IncrementBoard(board, scope, (_IN_SCOPE_PARENT,))
+    with pytest.raises(InjectedCrashError):
+        verbs.queue_increment("A:I2", _IN_SCOPE_PARENT, (5,), "I2", "b")
+    (partial,) = (record.item_id for record in board.items_with_origin())
+    before: str = fake_board_path(fleet_home).read_text(encoding="utf-8")
+
+    rc: int = cli.main(
+        [
+            "tick",
+            "--dry-run",
+            "--fleet-home",
+            str(fleet_home),
+            "--fleet-root",
+            str(tmp_path / "fleet"),
+        ]
+    )
+
+    assert rc == 0
+    out: str = capsys.readouterr().out
+    assert _would(r"WOULD move #(\d+) to active", out) == {5}
+    assert partial not in _reported_states(out)
+    assert fake_board_path(fleet_home).read_text(encoding="utf-8") == before
     assert fake_sandbox.launches == []

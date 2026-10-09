@@ -1,8 +1,9 @@
 """Fixtures for the ResourceAccess conformance suites.
 
-The ``BoardAccess`` suite runs against BOTH a freshly-seeded ADO-shaped fake and
-a GitHub-shaped fake, under one shared logical seed, via the parametrized
-``board`` fixture. The deterministic ``CleanupAccess`` suite runs against BOTH
+The ``BoardAccess`` suite runs against a freshly-seeded ADO-shaped fake, a
+GitHub-shaped fake and the registered fake provider (a JSON file under
+``tmp_path``), under one shared logical seed, via the parametrized ``board``
+fixture. The deterministic ``CleanupAccess`` suite runs against BOTH
 the real :class:`squadra.cleanup.DeterministicCleanup` (driven by a recording
 runner — no live git/docker) and an in-memory fake, via the parametrized
 ``cleanup`` fixture. The ``WorktreeAccess`` suite runs against the real
@@ -28,6 +29,8 @@ from tests.helpers.board_fakes import (
     ADO_STATES_WITH_WITHDRAWN,
     AdoShapedFakeBoard,
     GitHubShapedFakeBoard,
+    RecordingFileBoard,
+    SeedableFakeBoard,
 )
 from tests.helpers.cleanup_fakes import FakeCleanup
 from tests.helpers.sandbox_fakes import FakeSandbox
@@ -90,22 +93,46 @@ def _seed_github() -> GitHubShapedFakeBoard:
     return board
 
 
-@pytest.fixture(params=["ado", "github"])
-def board(request: pytest.FixtureRequest) -> BoardAccess:
-    """A freshly-seeded conforming board of each shape (parametrized over both)."""
-    shape: str = request.param
+def seed_file_board(tmp_path: Path) -> RecordingFileBoard:
+    """Build the registered fake provider under the shared seed, in a fresh file."""
+    board = RecordingFileBoard(tmp_path / ".squadra" / "fake-board.json", tags=TAGS)
+    board.add(QUEUED_ID, "queued increment", Lifecycle.QUEUED)
+    board.add(ACTIVE_ID, "active increment", Lifecycle.ACTIVE, tags=(TAGS.claimed,))
+    board.add(DONE_ID, "done increment", Lifecycle.DONE)
+    board.add(
+        LINKED_ID,
+        "linked increment",
+        Lifecycle.QUEUED,
+        parent_id=PARENT_ID,
+        predecessor_ids=PRED_IDS,
+    )
+    board.add(WITHDRAWN_ID, "withdrawn increment", Lifecycle.WITHDRAWN)
+    board.seed_pr(PR_BRANCH, PR_URL)
+    board.state_writes.clear()
+    return board
+
+
+def _seed(shape: str, tmp_path: Path) -> SeedableFakeBoard:
     if shape == "ado":
         return _seed_ado()
-    return _seed_github()
+    if shape == "github":
+        return _seed_github()
+    return seed_file_board(tmp_path)
 
 
-@pytest.fixture(params=["ado", "github"])
-def fake_board(request: pytest.FixtureRequest) -> AdoShapedFakeBoard | GitHubShapedFakeBoard:
+SHAPES: tuple[str, ...] = ("ado", "github", "file")
+
+
+@pytest.fixture(params=SHAPES)
+def board(request: pytest.FixtureRequest, tmp_path: Path) -> BoardAccess:
+    """A freshly-seeded conforming board of each shape (parametrized over all three)."""
+    return _seed(request.param, tmp_path)
+
+
+@pytest.fixture(params=SHAPES)
+def fake_board(request: pytest.FixtureRequest, tmp_path: Path) -> SeedableFakeBoard:
     """The ``board`` seed of each shape, typed concretely so tests can seed Origins by hand."""
-    shape: str = request.param
-    if shape == "ado":
-        return _seed_ado()
-    return _seed_github()
+    return _seed(request.param, tmp_path)
 
 
 def _all_succeed(_args: Sequence[str]) -> int:

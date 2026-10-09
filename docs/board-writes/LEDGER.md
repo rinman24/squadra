@@ -23,8 +23,8 @@ Under ~100K tokens per session, hard ceiling 120K, one unit per session.
 | SQ1 | `Lifecycle.WITHDRAWN`, transitions, second blocked reason, unmapped states fail `validate_config`, glossary rows Origin and Withdrawn | A (part) | DB-D1 | done (PR #43, merged) |
 | SQ2 | Verb contract (`IncrementBoard` + two `BoardAccess` primitives, ADR-0005) + CLI surface; Origin stored opaquely; ACTIVE → WITHDRAWN rule (DB-D2) | A (rest) | SQ1; DB-D2–DB-D5 | done (PR #44, merged) |
 | SQ2b | Consult Juval on N6–N8, settle them on Rich's delegation, build what the settlement changes (`handoffs/SQ2b-settle-n6-n8.md`) | A (rest) | SQ2 | done (PR #46, merged); N7, N8 ruled by Rich, built in SQ2c |
-| SQ2c | Build Rich's N7 and N8 rulings: `withdraw_increment(origin)`; crash-safe `create_increment` (completeness on `OriginRecord`, the consistency rule, `incomplete_item`, `increments_by_origin` omits incomplete items); Eric names the two new terms (`handoffs/SQ2c-build-n7-n8.md`) | A (rest) | SQ2b | done (PR #48); claude-skills DB-D1/DB-D4 reopening still owed |
-| SQ3 | Fake provider implementing the two primitives (`create_increment`, `items_with_origin`) and the read half, registered in `PROVIDERS`; run the `BoardAccess` and increment contract suites against it | B | SQ2, SQ2b, SQ2c | todo |
+| SQ2c | Build Rich's N7 and N8 rulings: `withdraw_increment(origin)`; crash-safe `create_increment` (completeness on `OriginRecord`, the consistency rule, `incomplete_item`, `increments_by_origin` omits incomplete items); Eric names the two new terms (`handoffs/SQ2c-build-n7-n8.md`) | A (rest) | SQ2b | done (PR #48); recorded in claude-skills as DB-D10, amending DB-D1/DB-D4 (claude-skills PR #14) |
+| SQ3 | Fake provider implementing the two primitives (`create_increment`, `items_with_origin`) and the read half, registered in `PROVIDERS`; run the `BoardAccess` and increment contract suites against it | B | SQ2, SQ2b, SQ2c | done (PR #49); N16, N17 |
 | SQ4 | `squadra board {queue,withdraw,origins}` as Clients over `IncrementBoard`, per `verb-contract.md` (the rules already live in `IncrementBoard`) | C | SQ2, SQ3 | todo |
 | SQ5 | GitHub adapter, reads and writes; `[[boards]]` and `in_claim_scope` (WSQ1) | D | SQ2; after design-to-board F per DB-D1 order | todo |
 
@@ -136,6 +136,44 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
   completion marker last and filters its bucket reads on it (Juval, "Where the
   work lands"). The invariant and its owner do not change.
 
+- N16 (SQ3): `provider = "fake"` is `squadra.fake_board.JsonFileBoard`, one
+  JSON file at `<FLEET_HOME>/.squadra/fake-board.json`. No config key: the
+  file goes wherever `FLEET_HOME` goes, beside the `squadra.toml` that names
+  the provider, and `SquadraConfig` grows nothing provider-specific. Adding a
+  key later is additive, so no ADR. A missing file is an empty board whose
+  states are the configured ones; a file's own `states` list is what
+  `validate_config` checks `[board.states]` against both ways (ADR-0004 rule
+  3). A test seeds it by writing the file (format in the module docstring;
+  every key optional, `state: null` is a partial item) or through the
+  seeding methods (`add`, `seed_pr`, `seed_origin`, `seed_partial`,
+  `arm_create_fault`). Two concurrent CLI calls: every write is one
+  read-modify-write under an exclusive `flock` on a sidecar `.lock`, saved
+  by temp file and `os.replace`; reads take no lock and see one whole
+  version. The lock keeps the file whole, not the verbs atomic: two
+  concurrent `queue_increment` calls with one new Origin can both create,
+  and every later call then raises `DuplicateOriginError`, loud, as on any
+  provider without a compare-and-set (cf. N10). POSIX only (`fcntl`), as the
+  fleet already is. A malformed file raises `BoardValidationError` naming it.
+- N17 (SQ3): the fake's `create_increment` is k = 3 + len(predecessors)
+  separate locked writes: `create` (Origin, title, body, in no bucket),
+  `parent`, one per predecessor, `commit` (QUEUED). Finishing a partial item
+  writes only what is missing, then commits. `fail_create_after_step: j` in
+  the file is a one-shot fault (so it crosses processes, for
+  design-to-board's F tests): the next create stops after write j and raises
+  `InjectedCrashError` (exit 1 in SQ4: a provider failure); j > k is refused
+  before any write. Juval's tests 1–5 run for every j < k
+  (`tests/contract/test_crash_safe_create_contract.py`, and test 1's tick
+  half end to end through `squadra tick --dry-run` on `provider = "fake"`
+  under both scopes). One case does not hold for every j, by design: after a
+  crash at j = 1 nothing on the board names a parent, so a different-parent
+  retry finishes the item under the new parent instead of being refused
+  (N14: the parent is compared only once set). Test 4 runs for j ≥ 2, and a
+  test pins the j = 1 behaviour. j = k (the commit lands, the response is
+  lost) is a plain A3 retry and returns the item. The fake is also the third
+  shape of the `board` and `fake_board` contract fixtures; tests record
+  state writes through `tests.helpers.board_fakes.RecordingFileBoard`, so
+  the production class keeps no recording.
+
 ## Session log
 
 | Session | Date | Unit | Outcome | Handoff written |
@@ -145,3 +183,4 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
 | SQ2b | 2026-10-09 | SQ2b | Juval consulted on N6–N8 (method). N6 settled: both refusals kept, each naming its way out; ADR-0005 decision 3, `verb-contract.md`, contract tests (Juval's 9, 10). N7 (withdraw by Origin) and N8 (crash-safe create) put to Rich: both change DB-D rulings. N10 opened. ruff, pyright, tests green | `handoffs/SQ3-fake-provider.md` (gate: SQ2b merged + Rich's N7/N8 ruling) |
 | SQ2b (ruling) | 2026-10-09 | SQ2b | Rich ruled N7 (withdraw by Origin) and N8 (Juval's crash-safe create), both reopening DB-D1/DB-D4; recorded in the session file's Choice, ADR-0005 and `verb-contract.md`. Build deferred to SQ2c (session budget) | `handoffs/SQ2c-build-n7-n8.md` |
 | SQ2c | 2026-10-09 | SQ2c | Gate checked (PR #47 merged). Eric named `UnknownOriginError` and *partial* (N13). `withdraw_increment(origin)` (N11); crash-safe create contract: `OriginRecord.lifecycle` `None` for a partial item (N12), `create_increment(request, partial_item=None)` with the four obligations, `check_queue_finishes` (N14), `increments_by_origin` omits partial items; both fakes with `seed_partial`; Juval's tests 2–8 plus a subset-finish retry. ADR-0005 decisions 1–2 amended, `verb-contract.md` rewritten. claude-skills DB-D1/DB-D4 still owed. ruff, pyright, tests green | `handoffs/SQ3-fake-provider.md` (gate: SQ2c's PR merged) |
+| SQ3 | 2026-10-09 | SQ3 | Gate checked (PR #48 merged). `provider = "fake"` registered: `JsonFileBoard` over `<FLEET_HOME>/.squadra/fake-board.json`, flock + atomic replace (N16); create as k locked writes with a one-shot, file-carried fault (N17). Third shape in the `board`/`fake_board` contract fixtures; Juval's tests 1–5 for every j < k, test 1 also end to end through `tick --dry-run` under both scopes; test 4 holds for j ≥ 2 only (N14, pinned). README provider row. ruff, pyright, 617 tests green | `handoffs/SQ4-board-cli.md` |
