@@ -87,7 +87,7 @@ built-in defaults  <  squadra.toml  <  FLEET_* env  <  CLI flag
 
 | Section / key | Default | Meaning |
 |---|---|---|
-| `[board].provider` | `ado` | `ado` \| `github` \| `gitlab`. Selects the `BoardAccess` adapter (registry in the CLI composition root). ADO ships today; GitHub/GitLab are tracked backlog adapters. |
+| `[board].provider` | `ado` | `ado` \| `fake` \| `github` \| `gitlab`. Selects the `BoardAccess` adapter (registry in `squadra.board.PROVIDERS`). ADO ships today; GitHub/GitLab are tracked backlog adapters. `fake` is a local board in `<FLEET_HOME>/.squadra/fake-board.json` (a missing file is an empty board) for tests and end-to-end runs without a live board; it needs `[board.states]`, and its file format is documented in `squadra.fake_board`. |
 | `[board].base_branch` | `main` | The branch an increment PR must complete against for finalize-eligibility. |
 | `[board].tag_prefix` | `fleet:` | Configurable namespace for the fleet's tags; detection is prefix-based (`startswith`). The five suffixes are fixed (see [Tag vocabulary](#tag-vocabulary)). |
 | `[board].claim_scope` | — | **REQUIRED, no default, no env override.** `"parents"` (claim only increments under `parent_scope_ids`) or `"whole-board"` (claim every queued increment). Loading fails until it is declared; see [Scoping](#scoping). |
@@ -102,7 +102,7 @@ built-in defaults  <  squadra.toml  <  FLEET_* env  <  CLI flag
 
 ```toml
 [board]
-provider         = "ado"          # ado | github | gitlab   (REQUIRED)
+provider         = "ado"          # ado | fake | github | gitlab   (REQUIRED)
 base_branch      = "main"
 tag_prefix       = "fleet:"
 claim_scope      = "parents"      # "parents" | "whole-board"   (REQUIRED, no default)

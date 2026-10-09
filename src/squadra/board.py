@@ -583,9 +583,17 @@ def _build_ado(config: SquadraConfig) -> BoardAccess:
     return AzCliAdo(states=config.states, base_branch=config.base_branch, tags=config.tags)
 
 
+def _build_fake(config: SquadraConfig) -> BoardAccess:
+    """Construct the fake provider over ``<FLEET_HOME>/.squadra/fake-board.json``."""
+    from squadra.fake_board import JsonFileBoard, fake_board_path  # noqa: PLC0415 - import cycle
+
+    return JsonFileBoard(fake_board_path(config.fleet_home), states=config.states, tags=config.tags)
+
+
 # Hardcoded name → adapter factory. New providers register here; out-of-tree
-# entry-point plugins are a deferred future volatility, not built now.
-PROVIDERS: Final[dict[str, ProviderFactory]] = {"ado": _build_ado}
+# entry-point plugins are a deferred future volatility, not built now. ``fake``
+# is a local JSON-file board for tests and end-to-end runs without a live board.
+PROVIDERS: Final[dict[str, ProviderFactory]] = {"ado": _build_ado, "fake": _build_fake}
 
 
 def build_board(config: SquadraConfig) -> BoardAccess:
