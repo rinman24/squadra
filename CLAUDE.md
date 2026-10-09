@@ -27,6 +27,7 @@ src/squadra/
 ├── config.py           # SquadraConfig + tomllib loader (defaults < toml < env < flag)
 ├── board.py            # BoardAccess seam + AzCliAdo adapter + provider registry
 ├── engines.py          # pure claim/reap/finalize/naming decisions (no I/O)
+├── increments.py       # IncrementBoard: the queue/withdraw/by-origin verbs (ADR-0005)
 ├── status.py           # per-increment status.json convention + ops (`squadra increment`)
 ├── supervisor.py       # the deterministic, token-free tick (python -m squadra.supervisor)
 ├── cli.py              # unified argparse `squadra` — the API / composition root
