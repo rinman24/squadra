@@ -28,17 +28,29 @@ into one surface (ADR-0001 decision 3), superseding the earlier thin
 - ``squadra increment {init|update|heartbeat|show}`` — the per-increment
   ``status.json`` ops (the new noun replacing the retired ``squadra-status``
   console script).
+- ``squadra board {queue|withdraw|origins}`` — the increment verbs an outside
+  planner calls (board-writes SQ4, ``docs/board-writes/verb-contract.md``): thin
+  Clients over :class:`squadra.increments.IncrementBoard`, which holds every
+  rule. stdout is one JSON document; an error is one stderr line prefixed
+  ``squadra board <verb>:``; exit ``0`` done, ``2`` usage or configuration,
+  ``3`` refused by a rule (nothing written), ``1`` anything else.
 """
 
 import argparse
 from collections.abc import Sequence
+import json
 import os
 from pathlib import Path
 import sys
+from typing import TYPE_CHECKING, NoReturn
 
 from squadra import scaffold, status
 from squadra._resources import resolve_script
 from squadra.config import DEFAULT_PROVIDER, ConfigError, load_config
+from squadra.domain import Lifecycle
+
+if TYPE_CHECKING:
+    from squadra.increments import IncrementBoard
 
 _FLEETCTL_SUBCOMMANDS: tuple[str, ...] = ("start", "stop", "status", "log")
 _INCREMENT_SUBCOMMANDS: tuple[str, ...] = ("init", "update", "heartbeat", "show")
@@ -68,7 +80,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Dispatch tables keep this within the return-count budget: namespace-driven
     # handlers vs pass-through (`extra`) handlers, then the special cases.
     namespace_handlers = {"init": _cmd_init, "install-units": _cmd_install_units}
-    extra_handlers = {"tick": _cmd_tick, "fleet-tick": _cmd_fleet_tick}
+    extra_handlers = {"tick": _cmd_tick, "fleet-tick": _cmd_fleet_tick, "board": _cmd_board}
     if command in namespace_handlers:
         return namespace_handlers[command](namespace)
     if command in extra_handlers:
@@ -159,6 +171,10 @@ def _build_parser() -> tuple[argparse.ArgumentParser, frozenset[str]]:
         subparsers.add_parser(name, help=f"ticker control: {name} (shells to fleetctl.sh)")
     subparsers.add_parser(
         "increment", help="per-increment status.json ops {init|update|heartbeat|show}"
+    )
+    # add_help=False: `squadra board <verb> --help` passes through to _board_parser.
+    subparsers.add_parser(
+        "board", add_help=False, help="increment verbs on the board {queue|withdraw|origins}"
     )
 
     return parser, frozenset(_FLEETCTL_SUBCOMMANDS)
@@ -356,6 +372,169 @@ def _cmd_increment(args: argparse.Namespace, extra: Sequence[str]) -> int:
         )
         return 2
     return status.main(list(extra))
+
+
+class _BoardUsageError(Exception):
+    """An argparse error under ``squadra board``, already prefixed with its prog."""
+
+
+class _BoardArgumentParser(argparse.ArgumentParser):
+    """An argparse parser whose usage errors are one ``squadra board <verb>:`` line.
+
+    argparse prints the usage block and exits; the verb contract wants one
+    stderr line and exit ``2``, so :meth:`error` raises for
+    :func:`_cmd_board` to report. Subparsers inherit the class.
+    """
+
+    def error(self, message: str) -> NoReturn:
+        """Raise the usage error instead of printing usage and exiting."""
+        raise _BoardUsageError(f"{self.prog}: {message}")
+
+
+def _board_parser() -> _BoardArgumentParser:
+    """Build the ``squadra board`` tree exactly as ``verb-contract.md`` specifies."""
+    parser = _BoardArgumentParser(
+        prog="squadra board",
+        description="Queue, withdraw and list increments by Origin (verb-contract.md).",
+    )
+    verbs = parser.add_subparsers(dest="verb", required=True)
+    queue = verbs.add_parser("queue", help="queue one increment under --parent")
+    queue.add_argument("--origin", required=True, help="the planner's opaque Origin")
+    queue.add_argument("--parent", type=int, required=True, help="parent item id (in scope)")
+    queue.add_argument(
+        "--predecessor",
+        type=int,
+        action="append",
+        default=[],
+        help="predecessor item id (repeatable)",
+    )
+    queue.add_argument("--title", required=True, help="the item's title")
+    queue.add_argument(
+        "--body-file", required=True, help="file holding the item's body, or - for stdin"
+    )
+    withdraw = verbs.add_parser("withdraw", help="withdraw the QUEUED increment carrying --origin")
+    withdraw.add_argument("--origin", required=True, help="the Origin to withdraw")
+    verbs.add_parser("origins", help="every Origin on the board, as JSON")
+    return parser
+
+
+def _cmd_board(extra: Sequence[str]) -> int:
+    """Run one ``squadra board`` verb over :class:`~squadra.increments.IncrementBoard`.
+
+    Composes ``load_config`` → ``build_board`` → ``validate_config()`` →
+    ``IncrementBoard``; no rule lives here. Prints one JSON document on success
+    and one prefixed stderr line on failure, returning the contract's exit code.
+    """
+    # Imported here, as in _check_config, so `squadra init` / `increment` never
+    # load a board adapter.
+    from squadra.board import BoardValidationError, build_board  # noqa: PLC0415
+    from squadra.engines import (  # noqa: PLC0415
+        ClaimScopeRefusedError,
+        DuplicateOriginError,
+        QueueRefusedError,
+        TransitionRefusedError,
+        UnknownOriginError,
+    )
+    from squadra.increments import IncrementBoard  # noqa: PLC0415
+
+    try:
+        args, body = _parse_board_args(extra)
+    except _BoardUsageError as exc:
+        print(_one_line(str(exc)), file=sys.stderr)
+        return 2
+    verb: str = args.verb
+    prefix: str = f"squadra board {verb}:"
+    try:
+        config = load_config()
+        board = build_board(config)
+        board.validate_config()
+        increments = IncrementBoard(board, config.claim_scope, config.parent_scope_ids)
+        result: dict[str, object] = _run_board_verb(verb, args, body, increments, prefix)
+    except (ConfigError, BoardValidationError) as exc:
+        print(_one_line(f"{prefix} {exc}"), file=sys.stderr)
+        return 2
+    except (
+        ClaimScopeRefusedError,
+        QueueRefusedError,
+        TransitionRefusedError,
+        DuplicateOriginError,
+        UnknownOriginError,
+    ) as exc:
+        print(_one_line(f"{prefix} {exc}"), file=sys.stderr)
+        return 3
+    except Exception as exc:  # noqa: BLE001 - the contract's exit 1: any provider failure
+        print(_one_line(f"{prefix} {type(exc).__name__}: {exc}"), file=sys.stderr)
+        return 1
+    print(json.dumps(result))
+    return 0
+
+
+def _parse_board_args(extra: Sequence[str]) -> tuple[argparse.Namespace, str]:
+    """Parse one ``squadra board`` verb and read ``queue``'s body, before any board read.
+
+    Raises :class:`_BoardUsageError` for every usage error, each naming the verb
+    once it is known: argparse's own, an unrecognized argument (argparse would
+    name the top-level prog), and an unreadable ``--body-file``.
+    """
+    unknown: list[str]
+    args, unknown = _board_parser().parse_known_args(list(extra))
+    prefix: str = f"squadra board {args.verb}:"
+    if unknown:
+        raise _BoardUsageError(f"{prefix} unrecognized arguments: {' '.join(unknown)}")
+    if args.verb != "queue":
+        return args, ""
+    try:
+        return args, _read_body(args.body_file)
+    except OSError as exc:
+        raise _BoardUsageError(f"{prefix} cannot read --body-file: {exc}") from exc
+
+
+def _run_board_verb(
+    verb: str,
+    args: argparse.Namespace,
+    body: str,
+    increments: "IncrementBoard",
+    prefix: str,
+) -> dict[str, object]:
+    """Call one verb and shape its result as the contract's stdout document."""
+    if verb == "queue":
+        predecessors: list[int] = args.predecessor
+        item_id: int = increments.queue_increment(
+            args.origin, args.parent, predecessors, args.title, body
+        )
+        return {"item_id": item_id}
+    if verb == "withdraw":
+        withdrawn: int = increments.withdraw_increment(args.origin)
+        return {"item_id": withdrawn, "lifecycle": Lifecycle.WITHDRAWN.value}
+    by_origin, partial_items = increments.increments_and_partial_items()
+    for record in partial_items:
+        print(
+            f"{prefix} item {record.item_id} is partial, carrying origin "
+            f"{json.dumps(record.origin)}: a create that did not finish; it is not "
+            "in the output",
+            file=sys.stderr,
+        )
+    return {
+        origin: {
+            "item_id": increment.item_id,
+            "parent": increment.parent,
+            "lifecycle": increment.lifecycle.value,
+            "in_claim_scope": increment.in_claim_scope,
+        }
+        for origin, increment in by_origin.items()
+    }
+
+
+def _read_body(body_file: str) -> str:
+    """Read the item body from ``body_file``, or stdin for ``-``, exactly as given."""
+    if body_file == "-":
+        return sys.stdin.read()
+    return Path(body_file).read_text(encoding="utf-8")
+
+
+def _one_line(message: str) -> str:
+    """Fold ``message`` onto one line: the contract's errors are one stderr line each."""
+    return " ".join(message.splitlines())
 
 
 if __name__ == "__main__":
