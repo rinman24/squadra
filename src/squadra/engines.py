@@ -15,9 +15,10 @@ deliberate-park / failed-park distinction directly into its fact-derivation
 engine into the live tick (``squadra.supervisor.run_tick``).
 """
 
+from collections.abc import Sequence
 import re
 
-from squadra.config import DEFAULT_BRANCH_TEMPLATE
+from squadra.config import DEFAULT_BRANCH_TEMPLATE, ClaimScope
 from squadra.domain import (
     AwaitAgent,
     EscalateEgressDenied,
@@ -25,10 +26,13 @@ from squadra.domain import (
     FailureEdge,
     FinalizeCleanup,
     HandoffAgentDone,
+    Increment,
+    IncrementRequest,
     Lifecycle,
     LifecycleDecision,
     LifecycleFacts,
     NoAction,
+    OriginRecord,
     ParkNeedsDecision,
     RetryIncrement,
     SignalClaimable,
@@ -69,9 +73,9 @@ def check_transition(current: Lifecycle, target: Lifecycle) -> None:
 
     - QUEUED → WITHDRAWN is allowed: the increment was never started.
     - DONE → WITHDRAWN is refused: a delivered increment cannot be undelivered.
-    - ACTIVE → WITHDRAWN is refused *for now*: whether a claimed, in-flight
-      increment may be withdrawn (and what happens to its attempt) is not yet
-      decided, so the safe answer is no.
+    - ACTIVE → WITHDRAWN is refused: squadra has no cancel path for a claimed,
+      in-flight increment (claude-skills DB-D2). Let the attempt finish, or stop
+      it by hand, then withdraw or re-plan.
     - WITHDRAWN is terminal: no transition leaves it. Withdrawing a withdrawn
       increment again is a no-op, so WITHDRAWN → WITHDRAWN is allowed.
     """
@@ -85,8 +89,96 @@ def check_transition(current: Lifecycle, target: Lifecycle) -> None:
         raise TransitionRefusedError("cannot withdraw a done increment: it was delivered")
     if current is Lifecycle.ACTIVE:
         raise TransitionRefusedError(
-            "cannot withdraw an active increment: withdrawing a claimed, in-flight "
-            "increment is not supported yet"
+            "cannot withdraw an active increment: it is claimed and in flight; let the "
+            "attempt finish (or stop it by hand), then re-plan"
+        )
+
+
+# --- the increment verbs' rules (squadra.increments applies them) -------------
+
+
+class QueueRefusedError(ValueError):
+    """Raised when ``queue_increment`` refuses its arguments; nothing was written."""
+
+
+class ClaimScopeRefusedError(ValueError):
+    """Raised when a verb would write to an item outside the claim scope."""
+
+
+class DuplicateOriginError(ValueError):
+    """Raised when two board items carry one Origin (claude-skills DB-D4, A2)."""
+
+
+def parent_in_claim_scope(
+    parent: int | None, claim_scope: ClaimScope, parent_scope_ids: tuple[int, ...]
+) -> bool:
+    """Whether an item under ``parent`` is inside ``[board].claim_scope``.
+
+    The one definition of claim scope: the tick's claim gate, the increment
+    query and the increment writes all use it, so they cannot disagree.
+    """
+    return claim_scope is ClaimScope.WHOLE_BOARD or parent in parent_scope_ids
+
+
+def index_by_origin(records: Sequence[OriginRecord]) -> dict[str, OriginRecord]:
+    """Key ``records`` by Origin; raise on a duplicate, naming both items.
+
+    A dict cannot hold two items with one Origin, so keying silently would
+    drop one. Only squadra sees the unkeyed records, so the check lives here.
+    """
+    by_origin: dict[str, OriginRecord] = {}
+    for record in records:
+        seen: OriginRecord | None = by_origin.get(record.origin)
+        if seen is not None:
+            raise DuplicateOriginError(
+                f"origin {record.origin!r} is carried by items {seen.item_id} and "
+                f"{record.item_id}; an Origin is unique on the board"
+            )
+        by_origin[record.origin] = record
+    return by_origin
+
+
+def as_increment(
+    record: OriginRecord, claim_scope: ClaimScope, parent_scope_ids: tuple[int, ...]
+) -> Increment:
+    """Project one origin record onto what ``increments_by_origin`` reports."""
+    return Increment(
+        item_id=record.item_id,
+        parent=record.parent,
+        lifecycle=record.lifecycle,
+        in_claim_scope=parent_in_claim_scope(record.parent, claim_scope, parent_scope_ids),
+    )
+
+
+def check_queue_matches(existing: OriginRecord, request: IncrementRequest) -> None:
+    """Refuse a ``queue_increment`` retry whose arguments differ from the item on the board.
+
+    claude-skills DB-D4 (A3): an Origin already on the board returns its item
+    only when every argument matches; any difference names the fields and
+    writes nothing, so squadra never quietly re-parents or re-links. A
+    withdrawn Origin is refused too: an Origin is never reused.
+    Predecessors compare as a set, since a board keeps no order of its links.
+    """
+    if existing.lifecycle is Lifecycle.WITHDRAWN:
+        raise QueueRefusedError(
+            f"origin {request.origin!r} was withdrawn (item {existing.item_id}); "
+            "an Origin is never reused"
+        )
+    differs: list[str] = []
+    if existing.parent != request.parent:
+        differs.append(f"parent {existing.parent} != {request.parent}")
+    if set(existing.predecessors) != set(request.predecessors):
+        differs.append(
+            f"predecessors {sorted(existing.predecessors)} != {sorted(request.predecessors)}"
+        )
+    if existing.title != request.title:
+        differs.append(f"title {existing.title!r} != {request.title!r}")
+    if existing.body != request.body:
+        differs.append("body differs")
+    if differs:
+        raise QueueRefusedError(
+            f"origin {request.origin!r} is already item {existing.item_id} with different "
+            f"arguments: {'; '.join(differs)}"
         )
 
 

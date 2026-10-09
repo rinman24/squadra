@@ -69,7 +69,7 @@ from typing import Final
 
 from squadra.board import BoardAccess, BoardValidationError, TagWriteError, build_board
 from squadra.cleanup import CleanupAccess, DeterministicCleanup
-from squadra.config import ClaimScope, ConfigError, SquadraConfig, load_config
+from squadra.config import ConfigError, SquadraConfig, load_config
 from squadra.constants import FLEET_DRY_RUN, FLEET_MODEL
 from squadra.domain import (
     AwaitAgent,
@@ -82,12 +82,14 @@ from squadra.domain import (
     Finalized,
     HandoffAgentDone,
     IncrementContext,
+    IncrementRequest,
     LaunchSandbox,
     Lifecycle,
     LifecycleAction,
     LifecycleDecision,
     LifecycleFacts,
     NoAction,
+    OriginRecord,
     ParkNeedsDecision,
     Reaped,
     RetryIncrement,
@@ -105,7 +107,7 @@ from squadra.domain import (
     WorkItemLinks,
 )
 from squadra.dry_run import DryRunCleanup, DryRunWorktree
-from squadra.engines import LifecycleEngine, increment_branch
+from squadra.engines import LifecycleEngine, increment_branch, parent_in_claim_scope
 from squadra.git_host import host_git_argv
 from squadra.manifest import ManifestRead, read_manifest, write_increment_context
 from squadra.repo import remote_auth_ok, target_remote_url
@@ -503,7 +505,7 @@ def _queued_gates(
     if lifecycle is not Lifecycle.QUEUED:
         return _UNGATED
     links: WorkItemLinks = seams.ado.item_links(item.item_id)
-    if config.claim_scope is ClaimScope.PARENTS and links.parent_id not in config.parent_scope_ids:
+    if not parent_in_claim_scope(links.parent_id, config.claim_scope, config.parent_scope_ids):
         return replace(_UNGATED, in_claim_scope=False)
     states: list[Lifecycle] = [seams.ado.item_state(pred) for pred in links.predecessor_ids]
     return _QueuedGates(
@@ -952,6 +954,15 @@ class ReadOnlyBoard:
     def add_comment(self, item_id: int, event: CommentEvent) -> None:
         """Absorb the write, logging the would-be discussion event."""
         _log(f"[dry-run] WOULD comment on #{item_id}: {event}")
+
+    def items_with_origin(self) -> tuple[OriginRecord, ...]:
+        """Pass the read through to the wrapped client."""
+        return self._inner.items_with_origin()
+
+    def create_increment(self, request: IncrementRequest) -> int:
+        """Absorb the write, logging it; return 0, which is no board item."""
+        _log(f"[dry-run] WOULD queue origin {request.origin!r} under #{request.parent}")
+        return 0
 
 
 def _dry_run_pat_ok() -> bool:

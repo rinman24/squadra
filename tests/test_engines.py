@@ -8,10 +8,23 @@ here is ``increment_branch``, the branch-naming rule the orchestrator still call
 and ``check_transition``, the four-bucket lifecycle transition rule (ADR-0004).
 """
 
+from dataclasses import replace
+
 import pytest
 
-from squadra.domain import Lifecycle
-from squadra.engines import TransitionRefusedError, check_transition, increment_branch
+from squadra.config import ClaimScope
+from squadra.domain import IncrementRequest, Lifecycle, OriginRecord
+from squadra.engines import (
+    DuplicateOriginError,
+    QueueRefusedError,
+    TransitionRefusedError,
+    as_increment,
+    check_queue_matches,
+    check_transition,
+    increment_branch,
+    index_by_origin,
+    parent_in_claim_scope,
+)
 
 
 def test_increment_branch_kebabs_title_after_colon() -> None:
@@ -67,8 +80,9 @@ def test_withdrawn_is_never_reachable_from_done() -> None:
         check_transition(Lifecycle.DONE, Lifecycle.WITHDRAWN)
 
 
-def test_withdrawing_an_active_increment_is_refused_until_decided() -> None:
-    with pytest.raises(TransitionRefusedError, match="active"):
+def test_withdrawing_an_active_increment_is_refused_with_no_cancel_path() -> None:
+    # claude-skills DB-D2: no cancel path; the attempt finishes before a re-plan.
+    with pytest.raises(TransitionRefusedError, match="in flight; let the attempt finish"):
         check_transition(Lifecycle.ACTIVE, Lifecycle.WITHDRAWN)
 
 
@@ -88,3 +102,75 @@ def test_transitions_among_the_other_buckets_are_unconstrained(
     current: Lifecycle, target: Lifecycle
 ) -> None:
     check_transition(current, target)  # must not raise
+
+
+# --- the increment verbs' rules (board-writes SQ2) ------------------------------
+
+_RECORD: OriginRecord = OriginRecord(
+    item_id=7,
+    origin="A:I1",
+    parent=200,
+    predecessors=(150, 151),
+    title="t",
+    body="b",
+    lifecycle=Lifecycle.QUEUED,
+)
+_REQUEST: IncrementRequest = IncrementRequest(
+    origin="A:I1", parent=200, predecessors=(151, 150), title="t", body="b"
+)
+
+
+@pytest.mark.parametrize(
+    ("parent", "scope", "ids", "expected"),
+    [
+        (200, ClaimScope.PARENTS, (200,), True),
+        (201, ClaimScope.PARENTS, (200,), False),
+        (None, ClaimScope.PARENTS, (200,), False),
+        (201, ClaimScope.WHOLE_BOARD, (), True),
+        (None, ClaimScope.WHOLE_BOARD, (), True),
+    ],
+)
+def test_parent_in_claim_scope(
+    parent: int | None, scope: ClaimScope, ids: tuple[int, ...], expected: bool
+) -> None:
+    assert parent_in_claim_scope(parent, scope, ids) is expected
+
+
+def test_index_by_origin_keys_each_record() -> None:
+    second: OriginRecord = replace(_RECORD, item_id=8, origin="A:I2")
+    assert index_by_origin([_RECORD, second]) == {"A:I1": _RECORD, "A:I2": second}
+
+
+def test_index_by_origin_raises_on_a_duplicate_naming_both_items() -> None:
+    with pytest.raises(DuplicateOriginError, match=r"items 7 and 8"):
+        index_by_origin([_RECORD, replace(_RECORD, item_id=8)])
+
+
+def test_as_increment_reports_scope_without_filtering() -> None:
+    reported = as_increment(replace(_RECORD, parent=999), ClaimScope.PARENTS, (200,))
+    assert (reported.item_id, reported.parent, reported.in_claim_scope) == (7, 999, False)
+
+
+def test_check_queue_matches_accepts_identical_arguments_in_any_link_order() -> None:
+    check_queue_matches(_RECORD, _REQUEST)  # must not raise
+
+
+@pytest.mark.parametrize(
+    ("request_", "named"),
+    [
+        (replace(_REQUEST, parent=201), "parent 200 != 201"),
+        (replace(_REQUEST, predecessors=(150,)), "predecessors"),
+        (replace(_REQUEST, title="u"), "title"),
+        (replace(_REQUEST, body="c"), "body differs"),
+    ],
+)
+def test_check_queue_matches_refuses_any_difference_naming_it(
+    request_: IncrementRequest, named: str
+) -> None:
+    with pytest.raises(QueueRefusedError, match=named):
+        check_queue_matches(_RECORD, request_)
+
+
+def test_check_queue_matches_refuses_a_withdrawn_origin() -> None:
+    with pytest.raises(QueueRefusedError, match="never reused"):
+        check_queue_matches(replace(_RECORD, lifecycle=Lifecycle.WITHDRAWN), _REQUEST)

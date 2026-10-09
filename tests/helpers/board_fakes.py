@@ -17,13 +17,17 @@ provider-blind:
 
 Each fake stores a seedable in-memory board and records its mutations so tests
 can inspect recorded comments / tags / state without asserting native dialect.
-Both honour the adapter's mapping rules: an unmapped native state raises rather
+Both store an Origin their own way: the ADO fake in a field of its own, the
+GitHub fake in a hidden marker appended to the issue body (escaped, so any
+string round-trips). ``items_with_origin`` hands back exactly what
+``create_increment`` was given. Both honour the adapter's mapping rules: an unmapped native state raises rather
 than defaulting to a bucket, and ``validate_config`` fails on a configured name
 the board lacks or a board state the map leaves out.
 """
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+import json
 
 from squadra.board import BoardValidationError, render_ado_html
 from squadra.config import ADO_BASIC_STATES
@@ -32,7 +36,9 @@ from squadra.domain import (
     CommentEvent,
     Escalated,
     Finalized,
+    IncrementRequest,
     Lifecycle,
+    OriginRecord,
     Reaped,
     RolledBack,
     Tags,
@@ -90,6 +96,8 @@ class _AdoItem:
     tags_raw: str = ""  # ``;``-joined System.Tags-style string
     parent_id: int | None = None
     predecessor_ids: tuple[int, ...] = ()
+    origin: str | None = None  # a field of its own (an ADO custom field)
+    body: str = ""  # System.Description
 
 
 class AdoShapedFakeBoard:
@@ -209,6 +217,40 @@ class AdoShapedFakeBoard:
         """Raise if a configured state is absent from the board, or a board state is unmapped."""
         _check_state_map(self._states, self._available)
 
+    def create_increment(self, request: IncrementRequest) -> int:
+        """Create a QUEUED Issue carrying the Origin in a field of its own."""
+        item_id: int = _next_id(self.items.keys())
+        self.items[item_id] = _AdoItem(
+            item_id=item_id,
+            title=request.title,
+            state=_first_native(self._states, Lifecycle.QUEUED),
+            parent_id=request.parent,
+            predecessor_ids=request.predecessors,
+            origin=request.origin,
+            body=request.body,
+        )
+        return item_id
+
+    def items_with_origin(self) -> tuple[OriginRecord, ...]:
+        """Return every Issue whose Origin field is set, duplicates included."""
+        return tuple(
+            OriginRecord(
+                item_id=item.item_id,
+                origin=item.origin,
+                parent=item.parent_id,
+                predecessors=item.predecessor_ids,
+                title=item.title,
+                body=item.body,
+                lifecycle=self.item_state(item.item_id),
+            )
+            for item in self.items.values()
+            if item.origin is not None
+        )
+
+    def seed_origin(self, item_id: int, origin: str) -> None:
+        """Set an Origin on a seeded Issue by hand (e.g. to inject a duplicate)."""
+        self.items[item_id].origin = origin
+
 
 def _first_native(states: Mapping[Lifecycle, tuple[str, ...]], state: Lifecycle) -> str:
     """The native name a write to ``state`` uses; raise if the bucket is unmapped."""
@@ -229,6 +271,11 @@ def _check_state_map(states: Mapping[Lifecycle, tuple[str, ...]], available: set
     unmapped: list[str] = sorted(available - configured)
     if unmapped:
         raise BoardValidationError(f"board state(s) {unmapped} map to no lifecycle bucket")
+
+
+def _next_id(taken: Iterable[int]) -> int:
+    """The next free item id on a fake board (ids above every seeded one)."""
+    return max(taken, default=1000) + 1
 
 
 def _split_ado_tags(raw: str) -> tuple[str, ...]:
@@ -254,6 +301,7 @@ class _GitHubItem:
     labels: list[str] = field(default_factory=list[str])
     parent_id: int | None = None  # "sub-issue" parent
     predecessor_ids: tuple[int, ...] = ()  # "dependency" links
+    body: str = ""  # the issue body; an Origin rides in a hidden marker at its end
 
 
 class GitHubShapedFakeBoard:
@@ -368,3 +416,62 @@ class GitHubShapedFakeBoard:
     def validate_config(self) -> None:
         """Raise if a configured status is absent from the board, or a board status is unmapped."""
         _check_state_map(self._states, self._available)
+
+    def create_increment(self, request: IncrementRequest) -> int:
+        """Create a queued issue with the Origin in a hidden marker at the end of its body."""
+        item_id: int = _next_id(self.items.keys())
+        self.items[item_id] = _GitHubItem(
+            item_id=item_id,
+            title=request.title,
+            status=_first_native(self._states, Lifecycle.QUEUED),
+            parent_id=request.parent,
+            predecessor_ids=request.predecessors,
+            body=_with_origin_marker(request.body, request.origin),
+        )
+        return item_id
+
+    def items_with_origin(self) -> tuple[OriginRecord, ...]:
+        """Return every issue whose body ends in an Origin marker, duplicates included."""
+        records: list[OriginRecord] = []
+        for item in self.items.values():
+            split: tuple[str, str] | None = _split_origin_marker(item.body)
+            if split is None:
+                continue
+            body, origin = split
+            records.append(
+                OriginRecord(
+                    item_id=item.item_id,
+                    origin=origin,
+                    parent=item.parent_id,
+                    predecessors=item.predecessor_ids,
+                    title=item.title,
+                    body=body,
+                    lifecycle=self.item_state(item.item_id),
+                )
+            )
+        return tuple(records)
+
+    def seed_origin(self, item_id: int, origin: str) -> None:
+        """Set an Origin on a seeded issue by hand (e.g. to inject a duplicate)."""
+        item: _GitHubItem = self.items[item_id]
+        item.body = _with_origin_marker(item.body, origin)
+
+
+_ORIGIN_MARKER: str = "\n<!-- squadra-origin: "
+_MARKER_END: str = " -->"
+
+
+def _with_origin_marker(body: str, origin: str) -> str:
+    """Append the Origin as a hidden HTML comment; JSON plus escaped ``-`` keeps it inert."""
+    encoded: str = json.dumps(origin).replace("-", "\\u002d")
+    return f"{body}{_ORIGIN_MARKER}{encoded}{_MARKER_END}"
+
+
+def _split_origin_marker(raw: str) -> tuple[str, str] | None:
+    """Split a body into (body, origin), or ``None`` when it carries no marker."""
+    at: int = raw.rfind(_ORIGIN_MARKER)
+    if at < 0 or not raw.endswith(_MARKER_END):
+        return None
+    encoded: str = raw[at + len(_ORIGIN_MARKER) : -len(_MARKER_END)]
+    decoded: object = json.loads(encoded)
+    return (raw[:at], decoded) if isinstance(decoded, str) else None
