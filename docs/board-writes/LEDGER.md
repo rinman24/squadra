@@ -25,7 +25,7 @@ Under ~100K tokens per session, hard ceiling 120K, one unit per session.
 | SQ2b | Consult Juval on N6–N8, settle them on Rich's delegation, build what the settlement changes (`handoffs/SQ2b-settle-n6-n8.md`) | A (rest) | SQ2 | done (PR #46, merged); N7, N8 ruled by Rich, built in SQ2c |
 | SQ2c | Build Rich's N7 and N8 rulings: `withdraw_increment(origin)`; crash-safe `create_increment` (completeness on `OriginRecord`, the consistency rule, `incomplete_item`, `increments_by_origin` omits incomplete items); Eric names the two new terms (`handoffs/SQ2c-build-n7-n8.md`) | A (rest) | SQ2b | done (PR #48); recorded in claude-skills as DB-D10, amending DB-D1/DB-D4 (claude-skills PR #14) |
 | SQ3 | Fake provider implementing the two primitives (`create_increment`, `items_with_origin`) and the read half, registered in `PROVIDERS`; run the `BoardAccess` and increment contract suites against it | B | SQ2, SQ2b, SQ2c | done (PR #49); N16, N17 |
-| SQ4 | `squadra board {queue,withdraw,origins}` as Clients over `IncrementBoard`, per `verb-contract.md` (the rules already live in `IncrementBoard`) | C | SQ2, SQ3 | todo |
+| SQ4 | `squadra board {queue,withdraw,origins}` as Clients over `IncrementBoard`, per `verb-contract.md` (the rules already live in `IncrementBoard`) | C | SQ2, SQ3 | done (PR pending); N18, N19 |
 | SQ5 | GitHub adapter, reads and writes; `[[boards]]` and `in_claim_scope` (WSQ1) | D | SQ2; after design-to-board F per DB-D1 order | todo |
 
 ## Notes from squadra sessions
@@ -173,6 +173,29 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
   shape of the `board` and `fake_board` contract fixtures; tests record
   state writes through `tests.helpers.board_fakes.RecordingFileBoard`, so
   the production class keeps no recording.
+- N18 (SQ4): `origins` needs the partial items `increments_by_origin` leaves
+  out, and ADR-0005 lets nothing but `IncrementBoard` read
+  `items_with_origin`, so `IncrementBoard` grew one read,
+  `increments_and_partial_items() -> (dict[str, Increment],
+  tuple[OriginRecord, ...])`, and `increments_by_origin` now returns its
+  first half. One board-wide read serves both, so an item a concurrent retry
+  finishes cannot fall between two reads (shown in neither) and a GitHub or
+  ADO read is not paid twice. Additive: the three verbs, their signatures and
+  the CLI surface are unchanged, so no ADR amendment. The stderr line reads
+  `squadra board origins: item 1005 is partial, carrying origin "A:P": a
+  create that did not finish; it is not in the output` (the Origin JSON-quoted,
+  so an Origin with escape characters stays on one line).
+- N19 (SQ4): readings of `verb-contract.md` the CLI makes, none a change to
+  it. Every usage error is one prefixed line: argparse's own (missing or
+  malformed flag, unknown verb), an unrecognized argument (named with the
+  verb, not argparse's top-level prog) and an unreadable `--body-file`, all
+  exit 2 before any board read. A message spanning lines is folded onto one.
+  Exit 1 lines name the exception class (`InjectedCrashError`,
+  `NotImplementedError`) since its message alone may not. The body is passed
+  exactly as read, never stripped, since A3 and the partial-item finish
+  compare it exactly (N14). `--help` keeps argparse's usual output and exit 0.
+  claude-skills DB-D10 (PR #14) matches `verb-contract.md` on every point SQ4
+  builds; no difference to raise.
 
 ## Session log
 
@@ -184,3 +207,4 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
 | SQ2b (ruling) | 2026-10-09 | SQ2b | Rich ruled N7 (withdraw by Origin) and N8 (Juval's crash-safe create), both reopening DB-D1/DB-D4; recorded in the session file's Choice, ADR-0005 and `verb-contract.md`. Build deferred to SQ2c (session budget) | `handoffs/SQ2c-build-n7-n8.md` |
 | SQ2c | 2026-10-09 | SQ2c | Gate checked (PR #47 merged). Eric named `UnknownOriginError` and *partial* (N13). `withdraw_increment(origin)` (N11); crash-safe create contract: `OriginRecord.lifecycle` `None` for a partial item (N12), `create_increment(request, partial_item=None)` with the four obligations, `check_queue_finishes` (N14), `increments_by_origin` omits partial items; both fakes with `seed_partial`; Juval's tests 2–8 plus a subset-finish retry. ADR-0005 decisions 1–2 amended, `verb-contract.md` rewritten. claude-skills DB-D1/DB-D4 still owed. ruff, pyright, tests green | `handoffs/SQ3-fake-provider.md` (gate: SQ2c's PR merged) |
 | SQ3 | 2026-10-09 | SQ3 | Gate checked (PR #48 merged). `provider = "fake"` registered: `JsonFileBoard` over `<FLEET_HOME>/.squadra/fake-board.json`, flock + atomic replace (N16); create as k locked writes with a one-shot, file-carried fault (N17). Third shape in the `board`/`fake_board` contract fixtures; Juval's tests 1–5 for every j < k, test 1 also end to end through `tick --dry-run` under both scopes; test 4 holds for j ≥ 2 only (N14, pinned). README provider row. ruff, pyright, 617 tests green | `handoffs/SQ4-board-cli.md` |
+| SQ4 | 2026-10-09 | SQ4 | Gate checked (PR #49 merged). `squadra board {queue,withdraw,origins}` in `cli.py` as Clients over `IncrementBoard` (config → `build_board` → `validate_config` → verbs); own argparse tree, every error one prefixed stderr line; exits 0/2/3/1 per `verb-contract.md` (N19). `IncrementBoard.increments_and_partial_items()` for `origins`' partial-item lines (N18). `tests/test_cli_board.py` (22 tests): every exit code, every refusal leaves the file byte-identical, crash and retry across two processes, DB-D7 (QUEUED → ACTIVE → DONE and a duplicate Origin written between calls by the test). DB-D10 checked: matches. README row. ruff, pyright, 639 tests green | `handoffs/SQ5-github-adapter.md` (gate: SQ4 merged + claude-skills DB4) |
