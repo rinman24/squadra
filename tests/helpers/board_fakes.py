@@ -12,14 +12,15 @@ provider-blind:
   shipped :func:`squadra.board.render_ado_html`.
 - :class:`GitHubShapedFakeBoard` mimics a GitHub Projects board: arbitrary
   status names (many native names map to one neutral bucket); tags are a
-  ``list[str]`` label model; comments render to Markdown via a local
-  :func:`render_github_markdown`.
+  ``list[str]`` label model; comments render to Markdown via the shipped
+  :func:`squadra.board.render_github_markdown`.
 
 Each fake stores a seedable in-memory board and records its mutations so tests
 can inspect recorded comments / tags / state without asserting native dialect.
 Both store an Origin their own way: the ADO fake in a field of its own, the
-GitHub fake in a hidden marker appended to the issue body (escaped, so any
-string round-trips). ``items_with_origin`` hands back exactly what
+GitHub fake in the GitHub adapter's hidden body marker
+(:func:`squadra.github_board.with_origin_marker`; escaped, so any string
+round-trips). ``items_with_origin`` hands back exactly what
 ``create_increment`` was given. Both honour the adapter's mapping rules: an unmapped native state raises rather
 than defaulting to a bucket, and ``validate_config`` fails on a configured name
 the board lacks or a board state the map leaves out. A partial item (a create
@@ -33,26 +34,21 @@ here as :class:`RecordingFileBoard`.
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-import json
 from pathlib import Path
 
-from squadra.board import BoardValidationError, render_ado_html
+from squadra.board import BoardValidationError, render_ado_html, render_github_markdown
 from squadra.config import ADO_BASIC_STATES
 from squadra.domain import (
-    Claimed,
     CommentEvent,
-    Escalated,
-    Finalized,
     IncrementRequest,
     Lifecycle,
     OriginRecord,
-    Reaped,
-    RolledBack,
     Tags,
     WorkItem,
     WorkItemLinks,
 )
 from squadra.fake_board import JsonFileBoard
+from squadra.github_board import split_origin_marker, with_origin_marker
 
 # A GitHub-shaped status map: MANY native names per neutral bucket on purpose,
 # so the contract exercises the many-native→one-neutral collapse.
@@ -74,28 +70,6 @@ ADO_STATES_WITH_WITHDRAWN: Mapping[Lifecycle, tuple[str, ...]] = {
     **ADO_BASIC_STATES,
     Lifecycle.WITHDRAWN: ("Removed",),
 }
-
-
-def render_github_markdown(event: CommentEvent, tags: Tags) -> str:
-    """Render a structured ``CommentEvent`` to one GitHub Markdown comment.
-
-    Deliberately a distinct dialect from :func:`squadra.board.render_ado_html`
-    (Markdown, not HTML) so the contract suite cannot accidentally depend on
-    one provider's markup.
-    """
-    match event:
-        case Claimed(runner_id=runner_id, branch=branch, when=when):
-            return f"**fleet: claimed** by `{runner_id}` on `{branch}` ({when})."
-        case RolledBack(reason=reason):
-            return f"**fleet:** {reason} — claim rolled back."
-        case Finalized(pr_url=pr_url, branch=branch):
-            return f"**fleet: finalized** — PR [{pr_url}]({pr_url}), `{branch}` cleaned up."
-        case Reaped(evidence=evidence, attempt=attempt):
-            return f"**fleet: reaped** — {evidence} (attempt {attempt}); requeued."
-        case Escalated(attempt=attempt, cap=cap):
-            return (
-                f"**fleet:** retry cap exhausted ({attempt}/{cap}) — escalated to `{tags.failed}`."
-            )
 
 
 # --- ADO-shaped fake ----------------------------------------------------------
@@ -485,7 +459,7 @@ class GitHubShapedFakeBoard:
         """Create a queued issue with the Origin in a hidden body marker, or finish one."""
         if partial_item is not None:
             item: _GitHubItem = self.items[partial_item]
-            split: tuple[str, str] | None = _split_origin_marker(item.body)
+            split: tuple[str, str] | None = split_origin_marker(item.body)
             _check_finishable(
                 partial_item, None if split is None else split[1], item.status, request
             )
@@ -500,7 +474,7 @@ class GitHubShapedFakeBoard:
             status=_first_native(self._states, Lifecycle.QUEUED),
             parent_id=request.parent,
             predecessor_ids=request.predecessors,
-            body=_with_origin_marker(request.body, request.origin),
+            body=with_origin_marker(request.body, request.origin),
         )
         return item_id
 
@@ -508,7 +482,7 @@ class GitHubShapedFakeBoard:
         """Return every issue whose body ends in an Origin marker, duplicates and partial ones included."""
         records: list[OriginRecord] = []
         for item in self.items.values():
-            split: tuple[str, str] | None = _split_origin_marker(item.body)
+            split: tuple[str, str] | None = split_origin_marker(item.body)
             if split is None:
                 continue
             body, origin = split
@@ -528,7 +502,7 @@ class GitHubShapedFakeBoard:
     def seed_origin(self, item_id: int, origin: str) -> None:
         """Set an Origin on a seeded issue by hand (e.g. to inject a duplicate)."""
         item: _GitHubItem = self.items[item_id]
-        item.body = _with_origin_marker(item.body, origin)
+        item.body = with_origin_marker(item.body, origin)
 
     def seed_partial(
         self,
@@ -547,29 +521,9 @@ class GitHubShapedFakeBoard:
             status=None,
             parent_id=parent_id,
             predecessor_ids=predecessor_ids,
-            body=_with_origin_marker(body, origin),
+            body=with_origin_marker(body, origin),
         )
         return item_id
-
-
-_ORIGIN_MARKER: str = "\n<!-- squadra-origin: "
-_MARKER_END: str = " -->"
-
-
-def _with_origin_marker(body: str, origin: str) -> str:
-    """Append the Origin as a hidden HTML comment; JSON plus escaped ``-`` keeps it inert."""
-    encoded: str = json.dumps(origin).replace("-", "\\u002d")
-    return f"{body}{_ORIGIN_MARKER}{encoded}{_MARKER_END}"
-
-
-def _split_origin_marker(raw: str) -> tuple[str, str] | None:
-    """Split a body into (body, origin), or ``None`` when it carries no marker."""
-    at: int = raw.rfind(_ORIGIN_MARKER)
-    if at < 0 or not raw.endswith(_MARKER_END):
-        return None
-    encoded: str = raw[at + len(_ORIGIN_MARKER) : -len(_MARKER_END)]
-    decoded: object = json.loads(encoded)
-    return (raw[:at], decoded) if isinstance(decoded, str) else None
 
 
 # --- the registered fake, recording -------------------------------------------
