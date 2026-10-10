@@ -9,7 +9,8 @@ precedence::
 Only the un-defaultable is required: the ``provider`` (defaulted to ``ado`` for
 minimum adoption friction), ``[board.states]`` *unless* the provider's
 process is inferable (``ado`` defaults to ADO-Basic's ``To Do/Doing/Done``;
-other providers must declare their states), and ``[board].claim_scope``.
+other providers must declare their states), ``[board].claim_scope``, and, for
+``provider = "github"`` only, ``[board.github]`` (repository and project).
 Everything else has a default.
 
 Claim scope is the one deliberate exception to "default everything": it has no
@@ -48,6 +49,7 @@ from squadra.domain import Lifecycle, Tags
 
 CONFIG_FILENAME: Final[str] = "squadra.toml"
 DEFAULT_PROVIDER: Final[str] = "ado"
+GITHUB_PROVIDER: Final[str] = "github"
 DEFAULT_BASE_BRANCH: Final[str] = "main"
 DEFAULT_BRANCH_TEMPLATE: Final[str] = "feat/increment-{id}-{slug}"
 DEFAULT_WORKTREE_DIR: Final[str] = ".claude/worktrees"
@@ -91,6 +93,28 @@ class ClaimScope(Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class GitHubBoardConfig:
+    """``[board.github]``: the one repository and one Projects v2 board a GitHub board is.
+
+    Provider-scoped, so each ``[[boards]]`` entry can carry its own (SQ5c).
+    """
+
+    repository: str  # "owner/name": the issues the board's items are
+    project_owner: str  # the user or organization that owns the project
+    project_number: int  # the project's number under that owner
+
+    @property
+    def repository_owner(self) -> str:
+        """The owner half of :attr:`repository`."""
+        return self.repository.split("/", 1)[0]
+
+    @property
+    def repository_name(self) -> str:
+        """The name half of :attr:`repository`."""
+        return self.repository.split("/", 1)[1]
+
+
+@dataclass(frozen=True, slots=True)
 class SquadraConfig:
     """One tick's effective configuration (defaults < toml < env < flag, frozen)."""
 
@@ -117,6 +141,8 @@ class SquadraConfig:
     effort: str
     heartbeat_interval_seconds: int
     staleness_threshold_seconds: int
+    # [board.github], resolved only when provider = "github"
+    github: GitHubBoardConfig | None = None
 
     @property
     def tags(self) -> Tags:
@@ -172,6 +198,7 @@ def load_config(
         effort=FLEET_EFFORT,
         heartbeat_interval_seconds=HEARTBEAT_INTERVAL_SECONDS,
         staleness_threshold_seconds=STALENESS_THRESHOLD_SECONDS,
+        github=_resolve_github(board, resolved_provider),
     )
 
 
@@ -302,6 +329,49 @@ def _resolve_states(
                 )
             bucket_of[name] = key
     return resolved
+
+
+def _resolve_github(board: Mapping[str, object], provider: str) -> GitHubBoardConfig | None:
+    """Resolve ``[board.github]``, required (every key) only when ``provider = "github"``.
+
+    For any other provider the table is ignored, so a config can carry it
+    while trying another provider without failing to load.
+    """
+    if provider != GITHUB_PROVIDER:
+        return None
+    raw: object = board.get("github")
+    if raw is None:
+        raise ConfigError(
+            '[board.github] is required for provider "github": set repository = "owner/name", '
+            "project_owner and project_number"
+        )
+    if not isinstance(raw, dict):
+        raise ConfigError(f"[board.github] must be a table, got {raw!r}")
+    table: Mapping[str, object] = cast("Mapping[str, object]", raw)
+    repository: str = _required_str(table, "repository")
+    owner, sep, name = repository.partition("/")
+    if not (sep and owner and name) or "/" in name:
+        raise ConfigError(f'[board.github].repository must be "owner/name", got {repository!r}')
+    number: object = table.get("project_number")
+    if number is None:
+        raise ConfigError("[board.github] is missing required key 'project_number'")
+    if not isinstance(number, int) or isinstance(number, bool) or number < 1:
+        raise ConfigError(
+            f"[board.github].project_number must be a positive integer, got {number!r}"
+        )
+    return GitHubBoardConfig(
+        repository=repository,
+        project_owner=_required_str(table, "project_owner"),
+        project_number=number,
+    )
+
+
+def _required_str(table: Mapping[str, object], key: str) -> str:
+    """Return a required, non-empty string from ``[board.github]``."""
+    value: str | None = _str(table, key)
+    if not value:
+        raise ConfigError(f"[board.github] is missing required key {key!r}")
+    return value
 
 
 def _state_names(key: str, names: object) -> tuple[str, ...]:

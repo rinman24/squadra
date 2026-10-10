@@ -1,9 +1,11 @@
 """Fixtures for the ResourceAccess conformance suites.
 
 The ``BoardAccess`` suite runs against a freshly-seeded ADO-shaped fake, a
-GitHub-shaped fake and the registered fake provider (a JSON file under
-``tmp_path``), under one shared logical seed, via the parametrized ``board``
-fixture. The deterministic ``CleanupAccess`` suite runs against BOTH
+GitHub-shaped fake, the registered fake provider (a JSON file under
+``tmp_path``) and the real GitHub adapter over an in-memory GitHub (``gh``),
+under one shared logical seed, via the parametrized ``board`` fixture. The
+``fake_board`` fixture and the increment suites stay on the first three shapes
+until the GitHub adapter can create increments (ledger SQ5b). The deterministic ``CleanupAccess`` suite runs against BOTH
 the real :class:`squadra.cleanup.DeterministicCleanup` (driven by a recording
 runner — no live git/docker) and an in-memory fake, via the parametrized
 ``cleanup`` fixture. The ``WorktreeAccess`` suite runs against the real
@@ -33,6 +35,13 @@ from tests.helpers.board_fakes import (
     SeedableFakeBoard,
 )
 from tests.helpers.cleanup_fakes import FakeCleanup
+from tests.helpers.github_stub import (
+    REPOSITORY,
+    InMemoryGitHub,
+    StubbedGitHubBoard,
+    StubIssue,
+    StubPull,
+)
 from tests.helpers.sandbox_fakes import FakeSandbox
 from tests.helpers.worktree_fakes import FakeWorktree
 
@@ -93,6 +102,47 @@ def _seed_github() -> GitHubShapedFakeBoard:
     return board
 
 
+def seed_stubbed_github() -> StubbedGitHubBoard:
+    """Build the real GitHub adapter over an in-memory GitHub under the shared seed.
+
+    The DONE item is closed as completed with its Status left at "Done" (as the
+    "Item closed" workflow leaves it), so it reads under the secondary done name
+    ``closed:completed``; the WITHDRAWN item is closed as not planned with a
+    queued Status, which closure must win over. Pages of two items exercise
+    the project listing's pagination.
+    """
+    github = InMemoryGitHub(page_size=2)
+    github.add(StubIssue(QUEUED_ID, "queued increment", status="Todo"))
+    github.add(
+        StubIssue(ACTIVE_ID, "active increment", status="In Progress", labels=[TAGS.claimed])
+    )
+    github.add(
+        StubIssue(DONE_ID, "done increment", is_open=False, state_reason="COMPLETED", status="Done")
+    )
+    github.add(
+        StubIssue(
+            LINKED_ID,
+            "linked increment",
+            status="Triage",
+            parent=(REPOSITORY, PARENT_ID),
+            blocked_by=[(REPOSITORY, pred) for pred in PRED_IDS],
+        )
+    )
+    github.add(
+        StubIssue(
+            WITHDRAWN_ID,
+            "withdrawn increment",
+            is_open=False,
+            state_reason="NOT_PLANNED",
+            status="Todo",
+        )
+    )
+    owner: str = REPOSITORY.split("/")[0]
+    github.pulls.append(StubPull(f"{owner}:{PR_BRANCH}", "main", PR_URL, merged=True))
+    github.pulls.append(StubPull(f"{owner}:feat/closed-unmerged", "main", "x", merged=False))
+    return StubbedGitHubBoard(github, tags=TAGS)
+
+
 def seed_file_board(tmp_path: Path) -> RecordingFileBoard:
     """Build the registered fake provider under the shared seed, in a fresh file."""
     board = RecordingFileBoard(tmp_path / ".squadra" / "fake-board.json", tags=TAGS)
@@ -112,7 +162,8 @@ def seed_file_board(tmp_path: Path) -> RecordingFileBoard:
     return board
 
 
-def _seed(shape: str, tmp_path: Path) -> SeedableFakeBoard:
+def seed_fake(shape: str, tmp_path: Path) -> SeedableFakeBoard:
+    """One of the three fakes under the shared seed."""
     if shape == "ado":
         return _seed_ado()
     if shape == "github":
@@ -120,19 +171,24 @@ def _seed(shape: str, tmp_path: Path) -> SeedableFakeBoard:
     return seed_file_board(tmp_path)
 
 
+# The fakes; every suite runs against these.
 SHAPES: tuple[str, ...] = ("ado", "github", "file")
+# Plus the real GitHub adapter over the in-memory GitHub: the BoardAccess suite only.
+BOARD_SHAPES: tuple[str, ...] = (*SHAPES, "gh")
 
 
-@pytest.fixture(params=SHAPES)
+@pytest.fixture(params=BOARD_SHAPES)
 def board(request: pytest.FixtureRequest, tmp_path: Path) -> BoardAccess:
-    """A freshly-seeded conforming board of each shape (parametrized over all three)."""
-    return _seed(request.param, tmp_path)
+    """A freshly-seeded conforming board of each shape (parametrized over all four)."""
+    if request.param == "gh":
+        return seed_stubbed_github()
+    return seed_fake(request.param, tmp_path)
 
 
 @pytest.fixture(params=SHAPES)
 def fake_board(request: pytest.FixtureRequest, tmp_path: Path) -> SeedableFakeBoard:
-    """The ``board`` seed of each shape, typed concretely so tests can seed Origins by hand."""
-    return _seed(request.param, tmp_path)
+    """The ``board`` seed of each fake, typed concretely so tests can seed Origins by hand."""
+    return seed_fake(request.param, tmp_path)
 
 
 def _all_succeed(_args: Sequence[str]) -> int:
