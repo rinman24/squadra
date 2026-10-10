@@ -26,7 +26,10 @@ Under ~100K tokens per session, hard ceiling 120K, one unit per session.
 | SQ2c | Build Rich's N7 and N8 rulings: `withdraw_increment(origin)`; crash-safe `create_increment` (completeness on `OriginRecord`, the consistency rule, `incomplete_item`, `increments_by_origin` omits incomplete items); Eric names the two new terms (`handoffs/SQ2c-build-n7-n8.md`) | A (rest) | SQ2b | done (PR #48); recorded in claude-skills as DB-D10, amending DB-D1/DB-D4 (claude-skills PR #14) |
 | SQ3 | Fake provider implementing the two primitives (`create_increment`, `items_with_origin`) and the read half, registered in `PROVIDERS`; run the `BoardAccess` and increment contract suites against it | B | SQ2, SQ2b, SQ2c | done (PR #49); N16, N17 |
 | SQ4 | `squadra board {queue,withdraw,origins}` as Clients over `IncrementBoard`, per `verb-contract.md` (the rules already live in `IncrementBoard`) | C | SQ2, SQ3 | done (PR #50); N18, N19 |
-| SQ5 | GitHub adapter, reads and writes; `[[boards]]` and `in_claim_scope` (WSQ1) | D | SQ2; after design-to-board F per DB-D1 order | todo |
+| SQ5 | GitHub adapter, reads and writes; `[[boards]]` and `in_claim_scope` (WSQ1). Split by the SQ5 session into SQ5a–SQ5c below | D | SQ2; after design-to-board F per DB-D1 order (claude-skills DB4, PR #16, merged) | in progress (split, PR #51) |
+| SQ5a | `provider = "github"` registered: transport (the unit's choice, a ledger note), `[board.github]` config, the native-state model (N20), the read half (`items_in_state`, `item_state`, `item_links`, `completed_pr_url`), `validate_config` against a real board, and the tick's writes (`set_state` into Status buckets, labels as tags, Markdown comments). The `board` contract suite runs against it offline over a stubbed transport; `create_increment` / `items_with_origin` raise `NotImplementedError` as ADO's do. Cut line if long: the tick's writes to SQ5b | D | SQ5 split; N20 ruled by Rich (after Juval, Eric) | todo |
+| SQ5b | `create_increment` (with `partial_item`) and `items_with_origin` on GitHub, proving obligations 1–4 (N15; N14's title and body on the first call), `set_state` into WITHDRAWN (closed, not planned, DB-D2); the `increment` and crash-safe contract suites against the stubbed transport with a fault after each write j < k. Unblocks claude-skills DB5 (G) | D | SQ5a | todo |
+| SQ5c | WSQ1's deferred parts: `[[boards]]` with `claim_scope` per entry (the check fires wherever a board is added), adapter-owned `in_claim_scope(item_id)` (the supervisor stops reading parent links for scope), rename `seams.ado`; N10's compare-and-set if GitHub offers one, else record that it doesn't. Not needed by DB5 | D | SQ5b | todo |
 
 ## Notes from squadra sessions
 
@@ -196,6 +199,127 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
   compare it exactly (N14). `--help` keeps argparse's usual output and exit 0.
   claude-skills DB-D10 (PR #14) matches `verb-contract.md` on every point SQ4
   builds; no difference to raise.
+- N20 (SQ5 split), **ruled by Rich, 2026-10-09: the proposal with seven
+  changes, below; partial by commit marker (N15's fallback)**. Put to him
+  after `/ask-juval` and `/ask-eric` (board-knowledge
+  `sessions/2026-10-09-juval-github-native-state.md`,
+  `sessions/2026-10-09-eric-github-native-state.md`). The ruling wins over
+  the proposal everywhere SQ5a's handoff cites N20. Proposal as put:
+  GitHub's native state. DB-D2 fixes only WITHDRAWN (closed,
+  reason "not planned"); the rest is open, and the names are user-facing
+  vocabulary in every GitHub `squadra.toml`, costly to change once a real
+  board is configured. Proposal: an item's native state is its Projects v2
+  `Status` option name while the issue is open, and `closed:<state_reason>`
+  (`closed:completed`, `closed:not_planned`, `closed:duplicate`) once it is
+  closed. Closure wins over Status, so a closed issue whose Status still names
+  a queued column is never claimable. An open issue that is not on the
+  project, or has an empty Status, is in no bucket: the structural absence
+  obligation 2 asks for (N15), so no completion marker is needed. The default
+  map then reads `withdrawn = ["closed:not_planned"]`, and `validate_config`
+  checks `[board.states]` against the project's Status options plus the closed
+  names, both ways (N4), so `closed:duplicate` must be mapped too.
+  `set_state` writes a Status name onto an open issue, closes the issue with
+  the reason for a `closed:` name, and refuses (`BoardValidationError`) a
+  Status name on a closed issue rather than silently reopening it; no tick
+  path requeues a closed issue.
+  Ruling (Rich accepted all seven recommendations; both advisors agreed on
+  closure wins in the adapter, the `closed:` prefix guard, raising on an
+  unknown reason, no glossary term, and no silent reopen):
+  1. **Partial by marker, not by structure** (Juval; Eric: "no bucket" was a
+     splinter, history and current state under one word, and empty Status is
+     a native state in disguise). A partial item is an Origin-bearing issue
+     without the adapter's commit marker. The Origin goes on first (with
+     title and body, N14), the marker last: the marker write is obligation
+     4's commit, and nobody else writes either. Add-to-project and Status
+     may land anywhere before it, each idempotent under `partial_item`.
+     The marker gates Origin-bearing items only (an issue with no Origin
+     maps from Status and closure, as on ADO; gating every item would be
+     WSQ1's shelved form (b)); it lives outside `tag_prefix` (finalize
+     clears that namespace by prefix; no exemption is added to finalize);
+     it is an additive write, never a read-modify-write of the body; it is
+     adapter-internal and never appears in `[board.states]`. Off the project
+     or an empty Status is "in no bucket" only for a partial item; on any
+     other item it is unmapped and `item_state` raises (ADR-0004 rule 3), so
+     a committed increment a human takes off the project is loud, never
+     reported partial and requeued. ADR-0005 is unchanged: this is the
+     fallback N15 and its Consequences already name.
+  2. **The closed names are squadra's constants** (Juval, over Eric's
+     byte-for-byte raw reason): `closed:completed`, `closed:not_planned`,
+     `closed:duplicate`, defined in the adapter and translated from the
+     transport's spelling at the boundary. `validate_config` refuses any
+     Status option whose name starts with `closed:`. `item_state` raises on
+     a closed reason outside the set, never defaulting; if a closed issue
+     can carry no reason, its name is the reserved `closed:` (Eric), mapped
+     like the others. The precedence lives in one named function whose
+     docstring states it, pinned by a test: a closed issue whose Status names
+     a queued column is never QUEUED.
+  3. **DONE closes the issue.** `set_state(DONE)` closes it as completed,
+     `set_state(WITHDRAWN)` closes it as not planned (DB-D2), QUEUED and
+     ACTIVE write a Status option: every `set_state` is one write. A Status
+     option mapped to DONE is valid only on a closed issue: open + DONE
+     raises in `item_state` (catches a reopened withdrawn issue whose Status
+     the "Item closed" workflow left at Done, and a hand drag to Done).
+     `set_state` into the bucket the item is already in writes nothing
+     (finalize after a merged PR closed the issue). The default map puts
+     `closed:duplicate` in `withdrawn`, never `done`; the scaffold comment
+     says a hand close as completed counts as delivered.
+  4. **"Item added to project" workflow:** tolerated only if the Status it
+     sets maps to QUEUED, otherwise required off. `validate_config` checks it
+     if the API exposes the workflow's setting; if not, the scaffold
+     documents the requirement, the adapter reads Status back once after the
+     marker write (detection, not a guarantee), and the ADR records that
+     obligation 4 then holds on GitHub only by configuration.
+  5. **"Item closed" workflow:** tolerated, safe under 3. The scaffold
+     advises turning it off and says the project view is not authoritative
+     for closed issues. N21's "harmless" holds only with 3's guard.
+  6. **A closed issue is never reopened, and the tick goes on.** `set_state`
+     still refuses a Status name on a closed issue (a reopen would be two
+     writes). No tick path requeues a closed issue; a requeue that finds one
+     reports it for that item and the tick continues, never ending on it.
+  7. **Where it is written:** SQ5a writes an ADR for GitHub's native state
+     (composition, closure wins, the closed names, the marker, both
+     workflows). "Native state" is not a new term and stays out of
+     `GLOSSARY.md` (Eric): it is defined once in the board-seam docs (the
+     provider-side name `[board.states]` maps from; on GitHub computed, not
+     stored), GitHub's rule in the adapter's docs, and a comment beside the
+     default GitHub map in the scaffold. Eric's optional reason under
+     Withdrawn's _Avoid_ "closed" ("a provider's word; on GitHub a closed
+     issue can be done or withdrawn") is SQ5a's call. In adapter code,
+     `completed` names only GitHub's reason, never delivery (N13).
+  Changes to the SQ5a handoff: the reads recognise partial items, so SQ5a
+  fixes how the Origin and the marker are encoded and reads both
+  (`items_in_state` leaves partial items out, `item_state` raises on one);
+  SQ5b writes them. `validate_config` gains the `closed:` prefix guard and,
+  if the API allows, the workflow check (4). `item_state` raises on an
+  unknown reason, open + DONE, and a non-partial item off the project or
+  with an empty Status. `set_state` follows 3 and 6, and the tick reports a
+  refused requeue per item: a tick change, in SQ5a's scope with the tick's
+  writes (the existing cut line moves both to SQ5b). SQ5a writes the ADR,
+  the scaffold comment and the native-state definition (7). The handoff's
+  N20 unit tests become: closed beats Status; partial vs committed, each
+  off the project and with an empty Status; `closed:duplicate` unmapped and
+  a `closed:`-prefixed Status option each fail `validate_config`; an
+  unknown reason and open + DONE raise; a Status write on a closed issue
+  refuses; a same-bucket `set_state` writes nothing; plus a contract case:
+  an ACTIVE item closed between ticks with each reason is neither reopened
+  nor ends the next tick, and is reported. N21 gains four facts to verify:
+  every `state_reason` value the transport returns and whether one can be
+  null; whether the API exposes the project workflows' settings; whether a
+  merged PR's closing reference closes its issue; whether add-to-project
+  can set Status in one call. SQ5b gains Juval's interloper test (after each
+  write j < k an outside actor adds the item to the project and sets every
+  QUEUED-mapped Status: `items_in_state(QUEUED)` leaves it out,
+  `items_with_origin` returns it with `lifecycle` `None`, `item_state`
+  raises) and Eric's cleared-Status test (a committed ACTIVE item with its
+  Status cleared, or taken off the project, raises and is not requeued).
+- N21 (SQ5 split): GitHub facts each unit verifies before relying on them,
+  none checked by the split session: the sub-issue and issue-dependency
+  ("blocked by") APIs and whether `gh api` reaches both (SQ5a reads them,
+  SQ5b writes them); the project's built-in workflows, "Item added to project"
+  (sets Status on add, which would make the add the commit write: SQ5b orders
+  add-to-project after every link, so either way it comes last, but it must
+  say which write commits) and "Item closed" (sets Status to Done, harmless
+  under N20's closure-wins rule); and any conditional write for N10 (SQ5c).
 
 ## Session log
 
@@ -208,3 +332,4 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
 | SQ2c | 2026-10-09 | SQ2c | Gate checked (PR #47 merged). Eric named `UnknownOriginError` and *partial* (N13). `withdraw_increment(origin)` (N11); crash-safe create contract: `OriginRecord.lifecycle` `None` for a partial item (N12), `create_increment(request, partial_item=None)` with the four obligations, `check_queue_finishes` (N14), `increments_by_origin` omits partial items; both fakes with `seed_partial`; Juval's tests 2–8 plus a subset-finish retry. ADR-0005 decisions 1–2 amended, `verb-contract.md` rewritten. claude-skills DB-D1/DB-D4 still owed. ruff, pyright, tests green | `handoffs/SQ3-fake-provider.md` (gate: SQ2c's PR merged) |
 | SQ3 | 2026-10-09 | SQ3 | Gate checked (PR #48 merged). `provider = "fake"` registered: `JsonFileBoard` over `<FLEET_HOME>/.squadra/fake-board.json`, flock + atomic replace (N16); create as k locked writes with a one-shot, file-carried fault (N17). Third shape in the `board`/`fake_board` contract fixtures; Juval's tests 1–5 for every j < k, test 1 also end to end through `tick --dry-run` under both scopes; test 4 holds for j ≥ 2 only (N14, pinned). README provider row. ruff, pyright, 617 tests green | `handoffs/SQ4-board-cli.md` |
 | SQ4 | 2026-10-09 | SQ4 | Gate checked (PR #49 merged). `squadra board {queue,withdraw,origins}` in `cli.py` as Clients over `IncrementBoard` (config → `build_board` → `validate_config` → verbs); own argparse tree, every error one prefixed stderr line; exits 0/2/3/1 per `verb-contract.md` (N19). `IncrementBoard.increments_and_partial_items()` for `origins`' partial-item lines (N18). `tests/test_cli_board.py` (22 tests): every exit code, every refusal leaves the file byte-identical, crash and retry across two processes, DB-D7 (QUEUED → ACTIVE → DONE and a duplicate Origin written between calls by the test). DB-D10 checked: matches. README row. ruff, pyright, 639 tests green | `handoffs/SQ5-github-adapter.md` (gate: SQ4 merged + claude-skills DB4) |
+| SQ5 (split) | 2026-10-09 | SQ5 | PR #51. Gate checked (squadra PR #50 merged; claude-skills DB4 merged as PR #16). Branch fast-forwarded to `main` (`c36fe8f`). Split SQ5 into SQ5a (read half, `validate_config`, the tick's writes, `[board.github]`), SQ5b (the two primitives, obligations 1–4, WITHDRAWN as closed / not planned; unblocks DB5) and SQ5c (`[[boards]]`, `in_claim_scope`, `seams.ado` rename, N10). Order not a real choice: DB5 needs a and b, not c. N20 (native-state model) put to Rich with a proposal; N21 lists the GitHub facts to verify. No code: the handoff's reading took the session's budget, so SQ5a goes to a fresh session | `handoffs/SQ5a-github-read.md` |
