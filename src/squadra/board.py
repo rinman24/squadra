@@ -48,6 +48,15 @@ class BoardValidationError(RuntimeError):
     """Raised when the configuration does not resolve against the live board."""
 
 
+class StateWriteRefusedError(BoardValidationError):
+    """Raised when the board refuses to move one item out of where it is.
+
+    Provider-neutral: GitHub raises it for a closed issue, which squadra never
+    reopens (ADR-0006 decision 4). The tick catches it per item and goes on
+    (ledger N20, ruling 6); every other ``BoardValidationError`` still ends it.
+    """
+
+
 class TagWriteError(RuntimeError):
     """Raised when a tag write does not survive its post-write read-back."""
 

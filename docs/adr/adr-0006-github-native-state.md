@@ -55,8 +55,9 @@ workflow or a human must not make a half-created item claimable.
 4. **A closed issue is never reopened.** `set_state` refuses a Status write
    onto a closed issue, and refuses a close that would change its reason;
    either would take two writes or a silent reopen. No tick path requeues a
-   closed issue. Reporting a refused requeue per item and going on with the
-   tick is the tick's half, moved to SQ5c by SQ5b's cut (ledger SQ5b).
+   closed issue. Both refusals raise `StateWriteRefusedError`, which the
+   tick catches per item: a requeue, rollback or claim that finds the issue
+   closed is reported for that item and the tick goes on (ledger N25).
 5. **Partial by commit marker, not by structure.** An issue that carries an
    Origin is *partial* until it carries the label `squadra:committed`. The
    Origin is a hidden HTML comment at the end of the body
