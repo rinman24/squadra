@@ -56,7 +56,7 @@ workflow or a human must not make a half-created item claimable.
    onto a closed issue, and refuses a close that would change its reason;
    either would take two writes or a silent reopen. No tick path requeues a
    closed issue. Reporting a refused requeue per item and going on with the
-   tick is the tick's half, built in SQ5b.
+   tick is the tick's half, moved to SQ5c by SQ5b's cut (ledger SQ5b).
 5. **Partial by commit marker, not by structure.** An issue that carries an
    Origin is *partial* until it carries the label `squadra:committed`. The
    Origin is a hidden HTML comment at the end of the body
