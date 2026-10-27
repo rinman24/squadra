@@ -30,7 +30,9 @@ Under ~100K tokens per session, hard ceiling 120K, one unit per session.
 | SQ5a | `provider = "github"` registered: transport (the unit's choice, a ledger note), `[board.github]` config, the native-state model (N20), the read half (`items_in_state`, `item_state`, `item_links`, `completed_pr_url`), `validate_config` against a real board, and the tick's writes (`set_state` into Status buckets, labels as tags, Markdown comments). The `board` contract suite runs against it offline over a stubbed transport; `create_increment` / `items_with_origin` raise `NotImplementedError` as ADO's do. Cut line if long: the tick's writes to SQ5b | D | SQ5 split; N20 ruled by Rich (after Juval, Eric) | done (PR #52); ADR-0006, N21–N23. Cut taken in part: the adapter's writes are in, the tick's half of N20 ruling 6 (report a refused requeue per item, go on) moved to SQ5b |
 | SQ5b | `create_increment` (with `partial_item`) and `items_with_origin` on GitHub, proving obligations 1–4 (N15; N14's title and body on the first call), `set_state` into WITHDRAWN (closed, not planned, DB-D2); the `increment` and crash-safe contract suites against the stubbed transport with a fault after each write j < k. From SQ5a's cut: the tick reports a refused requeue of a closed issue per item and goes on (N20 ruling 6), with the contract case "an ACTIVE item closed between ticks with each reason is neither reopened nor ends the next tick, and is reported"; the first live run of the adapter's writes on the sandbox (N23). Unblocks claude-skills DB5 (G) | D | SQ5a | done (PR #53); N24. Cut taken: the tick's refused-requeue report and the live sandbox run moved to SQ5c |
 | SQ5c | From SQ5b's cut, first: the tick reports a refused requeue of a closed issue per item and goes on (N20 ruling 6; settle N24's open question before building), and the first live run of the adapter's writes on the sandbox (N23, N24's unverified facts). Then WSQ1's deferred parts: `[[boards]]` with `claim_scope` per entry (the check fires wherever a board is added), adapter-owned `in_claim_scope(item_id)` (the supervisor stops reading parent links for scope), rename `seams.ado`; N10's compare-and-set if GitHub offers one, else record that it doesn't. Not needed by DB5 | D | SQ5b | done (PR #54); N25, N26. Cut taken: the release rule (N25), `[[boards]]`, `in_claim_scope`, the rename and N10 to SQ5d |
-| SQ5d | From SQ5c's cut: the release of a fleet-claimed WITHDRAWN item and the hand-DONE sandbox stop (N25, once Rich rules on Juval's answer and Eric names the state and action); then WSQ1's deferred parts: `[[boards]]` with `claim_scope` per entry, adapter-owned `in_claim_scope(item_id)`, rename `seams.ado`; N10 closes by the release rule if ruled, else GitHub's compare-and-set is checked | D | SQ5c; Rich's N25 choice | todo |
+| SQ5d | From SQ5c's cut: relinquishing a fleet-claimed WITHDRAWN item and the hand-DONE sandbox stop (N25, once Rich rules on Juval's answer and Eric names the state and action); then WSQ1's deferred parts: `[[boards]]` with `claim_scope` per entry, adapter-owned `in_claim_scope(item_id)`, rename `seams.ado`; N10 closes by the relinquish rule if ruled, else GitHub's compare-and-set is checked | D | SQ5c; Rich's N25 choice | done; N27. N10 closed. Cut taken: `[[boards]]`, `in_claim_scope` and the rename to SQ5f (after SQ5e) |
+| SQ5e | claude-skills DB-D12 (Rich's Choice in board-knowledge `sessions/2026-10-27-juval-first-run-parent-scope.md`): the read verb `squadra board scope --parent ID` → `{"parent": N, "in_claim_scope": bool}`; exit 0 either way, 2 for config, 1 for provider; `validate_config()` first; never writes. Behind the one predicate `queue_increment`'s `ClaimScopeRefusedError` and `Increment.in_claim_scope` use (today `engines.parent_in_claim_scope`). Agreement test: scope ∈ {whole-board, parents [1]} × parent ∈ {1, 2}: `scope` says in scope exactly when `queue` is not refused for scope, and leaves the board unchanged. Added to `verb-contract.md`. Not wanted: exposing `claim_scope` itself, scope in `origins`, a `queue --check` flag. Requested by Rich mid-SQ5d; ordered before `[[boards]]` because design-to-board's first-run check waits on it | D | SQ5d | todo |
+| SQ5f | From SQ5d's cut, WSQ1's deferred parts: `[[boards]]` with `claim_scope` per entry (the check fires wherever a board is added), adapter-owned `in_claim_scope(item_id)` (the supervisor stops reading parent links for scope), rename `seams.ado`. Keep SQ5e's `scope` verb, `queue_increment`'s scope refusal and `Increment.in_claim_scope` on one predicate through the rework | D | SQ5e | todo |
 
 ## Notes from squadra sessions
 
@@ -45,10 +47,13 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
   `withdraw_increment` must call. WITHDRAWN → WITHDRAWN is a no-op, so a
   repeated withdraw is idempotent. SQ2 kept ACTIVE → WITHDRAWN refused, now as
   the DB-D2 ruling (no cancel path), and updated ADR-0004 decision 2.
-- N3 (SQ1): the tick does not query the WITHDRAWN bucket, so withdrawn items do
-  not appear in `states={…}`; their successors appear as
-  `predecessor-withdrawn`. If design-to-board's acceptance test (DB-D1 step G)
-  needs withdrawn items listed, that is a tick change, not an adapter one.
+- N3 (SQ1; **amended by SQ5d**, N27): the tick does not query the WITHDRAWN
+  bucket, so withdrawn items do not appear in `states={…}`; their successors
+  appear as `predecessor-withdrawn`. If design-to-board's acceptance test
+  (DB-D1 step G) needs withdrawn items listed, that is a tick change, not an
+  adapter one. Since SQ5d the tick queries WITHDRAWN for items still carrying
+  the `claimed` tag only: each shows once as `withdrawn-in-flight`, the tick
+  that relinquishes it; unclaimed withdrawn items still do not appear.
 - N4 (SQ1): one native state name may map to one bucket only (`ConfigError`
   otherwise); `validate_config` fails on any Issue state the map leaves out.
 - N5 (SQ2): the handoff said "`BoardAccess` gains the three verbs". SQ2 split
@@ -95,13 +100,18 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
 - N9 (SQ2): Juval's discriminating cases 2, 4, 5, 6 and 7 are contract tests in
   `tests/contract/test_increment_contract.py` (both fakes). Cases 1 and 3 are
   design-to-board behaviour with no squadra-side assertion.
-- N10 (SQ2b, open; raised by Juval in board-knowledge `sessions/2026-10-09-juval-increment-verb-settlement.md`):
+- N10 (SQ2b; **closed by SQ5d** without a compare-and-set: the relinquish rule, N27; raised by Juval in board-knowledge `sessions/2026-10-09-juval-increment-verb-settlement.md`):
   `withdraw_increment` reads the state, then writes it, and the ticker claims
   in its own process, so a claim can land in between: WITHDRAWN on an item a
   runner is working, the ACTIVE withdrawal DB-D2 refuses. SQ2 had the same
   window. Closing it needs a compare-and-set write from the provider (an SQ5
   fact) or a tick rule for a live sandbox on a WITHDRAWN item. Does not block
-  SQ3.
+  SQ3. Closed by the tick-rule route (Rich's N25 Choice, option A): the race
+  leaves the same facts as a human withdrawing a claimed item, so the next
+  tick relinquishes it. Contract test: a claim injected between
+  `withdraw_increment`'s re-read and its write
+  (`test_a_claim_racing_a_withdrawal_is_relinquished_next_tick`). GitHub's
+  compare-and-set was not checked: not needed.
 - N11 (SQ2c): `withdraw_increment(origin)` follows Juval's steps 1–5 and
   returns the item id (the CLI's `{"item_id": …}`). An Origin carried only by
   a partial item counts as absent: `UnknownOriginError`, nothing written, the
@@ -503,6 +513,49 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
   adapter's own writes: the create writes the queued Status itself, #8 has one
   project item, and parent #1 is off the project. #8 is left closed.
 
+- N27 (SQ5d): **relinquishing a claim on an increment withdrawn in flight**,
+  built per Rich's N25 Choice (board-knowledge
+  `sessions/2026-10-27-juval-withdrawn-in-flight-release.md`). Eric named it
+  (`sessions/2026-10-27-eric-withdrawn-in-flight-names.md`, Choice blank for
+  Rich): "release" clashes with shipping, so the state is
+  `withdrawn-in-flight` (`State.WITHDRAWN_IN_FLIGHT`), the action
+  `RelinquishClaim`, the orchestrator `_relinquish`, the comment event
+  `Relinquished(attempt, branch)`, the park `withdrawn`; GLOSSARY gains
+  Relinquish (_Avoid_: Release) and a sentence under Attempt. ADR-0004
+  decision 1 and its Consequences are amended, with N3 and N10.
+  - Engine: guard step 0 above the tag guards; `_classify_done` stops a
+    running sandbox on a fleet-claimed DONE item with no completed PR
+    (`awaiting-pr` + `StopContainer`; `_build_facts` now inspects the sandbox
+    for DONE + claimed, and reads the egress log, manifest and commits for
+    in-flight items only).
+  - `_relinquish` archives the worktree only if its directory exists, so a
+    tick that ends after the archive does not raise on the redo.
+  - Q3 (the memo): ticks run every 180 s and a real project's size is
+    unknown, so per the Choice the memo is in. `GhApiGitHub` memoizes the
+    project listing until its own next write; a gather lists the project
+    once, not four times. The whole suite passed with it, so no test relied
+    on a fresh listing from one instance without a write (Juval's check).
+  - Eric found `MANIFEST_PARKED_STATES` aliased `status.PARKED_STATES`, so
+    adding `withdrawn` would have let an agent's `outcome.json` declare it and
+    get a PR. The manifest now has its own tuple with the four values it had.
+    **For Rich:** Eric also says `failed` is a fleet-only park an agent can
+    declare today (it then gets the clean handoff); removing it from the
+    manifest's list narrows agent behaviour, so it was not done unruled.
+  - Contract tests (`tests/contract/test_withdrawn_in_flight_contract.py`):
+    `closed_between_ticks` on `gh` for not planned, duplicate and no reason,
+    and on the ADO-shaped fake with `Removed` mapped (two ticks: no lifecycle
+    write, sandbox torn down, worktree archived, fleet tags gone but a
+    non-fleet label kept, one comment, status kept with its attempt, logged
+    `withdrawn-in-flight`, then absent with no writes); the completed variant
+    (`awaiting-pr`, sandbox stopped, then finalized once the PR merges); the
+    N10 variant. Engine: the guard-order test over `failed`,
+    `needs-decision` and parked facts. These replace N20's contract-case
+    wording ("closed between ticks … is reported").
+  - Seen while testing: a fleet-claimed DONE item that also carries
+    `needs-decision` is `parked-decision` (guard 1 outranks the done bucket),
+    so its sandbox is not stopped by the new rule. `_park_needs_decision`
+    already tore it down; not changed.
+
 ## Session log
 
 | Session | Date | Unit | Outcome | Handoff written |
@@ -518,3 +571,4 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
 | SQ5a | 2026-10-09 | SQ5a | PR #52. Gate checked (PR #51 merged, N20 ruled). Branch fast-forwarded to `main` (`2b70508`). `provider = "github"` registered: `squadra.github_board.GhApiGitHub` over `gh api` (N22), `[board.github]` (`GitHubBoardConfig`, required only for github), the native-state model per Rich's N20 ruling (ADR-0006, N23), reads, `validate_config`, the adapter's writes (Status, close with reason, labels, Markdown comments; `render_github_markdown` moved into `squadra.board`). `board` contract suite four-shaped over an in-memory GitHub; `tests/test_github_board.py` for N20's edges and the config. N21 verified (above). Real board: Rich named none this session; ran read-only against the only project on his account, `rinman24/squadra-sandbox` + user project #1 "squadra sandbox" (Todo/In Progress/Done), with the scaffold's default map: `validate_config` passed, all four buckets empty, `item_links(1)` empty, `item_state(1)` raised "not on the project" as designed. Cut: the tick's per-item report of a refused requeue to SQ5b. Scaffold default map and comment, README rows, glossary note under Withdrawn. ruff, pyright, tests green | `handoffs/SQ5b-github-writes.md` |
 | SQ5b | 2026-10-27 | SQ5b | PR #53. Gate checked (PR #52 merged). Branch fast-forwarded to `main` (`9a324ed`). GitHub's `create_increment` (k = 5 + n ordered `gh` writes, idempotent under `partial_item`, commit marker last, Status read back) and `items_with_origin` (every Origin-bearing issue of the repository by GraphQL listing, not search); write endpoints verified by introspection (N24). `increment` suite four-shaped, crash-safe suite on `file` + `gh` with a fault after each j < k, Juval's interloper and Eric's cleared-Status tests, `\r\n` bodies (N23). README provider row. Cut: the tick's refused-requeue report and the live sandbox run to SQ5c, with an open question on the tick case (N24). ruff, pyright, 827 tests green | `handoffs/SQ5c-boards-scope.md` |
 | SQ5c | 2026-10-27 | SQ5c | PR #54. Gate checked (PR #53 merged). Branch fast-forwarded to `main` (`34a2234`). In-tick refused state write reported per item and the tick goes on (`StateWriteRefusedError`, N25), contract-tested for every close reason. N24's between-ticks case put to Juval: option A (release), awaiting Rich's Choice. Live sandbox run (N26): every write, N24's three facts verified. Cut: the release rule, `[[boards]]`, `in_claim_scope`, the rename and N10 to SQ5d. ruff, pyright, tests green | `handoffs/SQ5d-release-and-boards.md` (gate: SQ5c merged + Rich's N25 choice) |
+| SQ5d | 2026-10-27 | SQ5d | Gate checked (PR #54 merged; Rich's N25 Choice filled in). Branch fast-forwarded to `main` (`5fbba34`). Eric named the rule (relinquish / `withdrawn-in-flight`, N27). Built: engine step 0 + hand-DONE sandbox stop, the claimed-WITHDRAWN gather, `_relinquish`, the `Relinquished` comment on both renderers, the `withdrawn` park (manifest vocabulary split from status), the GitHub listing memo; ADR-0004, GLOSSARY, README, N3, N10 (closed). Contract tests on `gh` + ADO-shaped fake, completed and N10 variants. Cut: `[[boards]]`, `in_claim_scope`, the rename to SQ5f. Rich's mid-session add-on (DB-D12's `squadra board scope` verb) recorded as SQ5e, not built (session budget). ruff, pyright, tests green | `handoffs/SQ5e-board-scope-verb.md`, then `handoffs/SQ5f-boards-scope.md` |
