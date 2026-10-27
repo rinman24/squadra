@@ -67,7 +67,13 @@ import subprocess
 import sys
 from typing import Final
 
-from squadra.board import BoardAccess, BoardValidationError, TagWriteError, build_board
+from squadra.board import (
+    BoardAccess,
+    BoardValidationError,
+    StateWriteRefusedError,
+    TagWriteError,
+    build_board,
+)
 from squadra.cleanup import CleanupAccess, DeterministicCleanup
 from squadra.config import ConfigError, SquadraConfig, load_config
 from squadra.constants import FLEET_DRY_RUN, FLEET_MODEL
@@ -691,7 +697,9 @@ def _retry(seams: TickSeams, config: SquadraConfig, view: IncrementView, attempt
     archived for inspection and pruned, the sandbox is torn down, the status
     records the failure, the fleet ``claimed`` tag is dropped, and the item is
     moved back to QUEUED with a ``Reaped`` comment — so the next claim derives
-    ``attempt + 1`` from the status and runs from a fresh worktree.
+    ``attempt + 1`` from the status and runs from a fresh worktree. A board that
+    refuses the requeue (a GitHub issue closed since the gather) gets no
+    comment: the refusal is reported for this item and the tick goes on.
     """
     spec: SandboxSpec = _spec(view, config)
     if view.status is not None:
@@ -709,7 +717,8 @@ def _retry(seams: TickSeams, config: SquadraConfig, view: IncrementView, attempt
         )
     seams.sandbox.teardown(spec)
     seams.ado.remove_tag(view.item.item_id, config.tags.claimed)
-    seams.ado.set_state(view.item.item_id, Lifecycle.QUEUED)
+    if not _set_state_or_report(seams, view.item.item_id, Lifecycle.QUEUED, "requeue"):
+        return
     seams.ado.add_comment(
         view.item.item_id, Reaped(evidence="agent failed and container exited", attempt=attempt)
     )
@@ -815,7 +824,9 @@ def _claim_and_launch(
     injects the read-only increment context *before* the launch (ADR-0002 §§1–2), then
     moves the board (state→active, claimed tag, ``Claimed`` comment, claimed-at
     marker) and launches the sandbox. A failed worktree-create or launch rolls the
-    claim back to QUEUED.
+    claim back to QUEUED. A board that refuses the claim's or the rollback's state
+    write (the issue closed since the gather) is reported for this item, and the
+    tick goes on; a refused claim leaves its fresh worktree in place.
     """
     item: WorkItem = view.item
     branch: str = increment_branch(item.item_id, item.title, attempt, config.branch_template)
@@ -830,16 +841,32 @@ def _claim_and_launch(
         return False
     seams.write_context(spec.worktree, _increment_context(seams, item))
 
-    seams.ado.set_state(item.item_id, Lifecycle.ACTIVE)
+    if not _set_state_or_report(seams, item.item_id, Lifecycle.ACTIVE, "claim"):
+        return False
     seams.ado.add_tag(item.item_id, config.tags.claimed)
     seams.ado.add_comment(item.item_id, Claimed(runner_id=runner_id, branch=branch, when=now))
     seams.write_claimed_at(item.item_id, config.fleet_root, now)
     if seams.sandbox.launch(spec):
         return True
     seams.ado.remove_tag(item.item_id, config.tags.claimed)
-    seams.ado.set_state(item.item_id, Lifecycle.QUEUED)
-    seams.ado.add_comment(item.item_id, RolledBack(reason="sandbox launch failed"))
+    if _set_state_or_report(seams, item.item_id, Lifecycle.QUEUED, "rollback"):
+        seams.ado.add_comment(item.item_id, RolledBack(reason="sandbox launch failed"))
     return False
+
+
+def _set_state_or_report(seams: TickSeams, item_id: int, state: Lifecycle, what: str) -> bool:
+    """Move one item into ``state``; report the board's refusal and return ``False``.
+
+    Only ``StateWriteRefusedError`` is caught: the board refusing to move this
+    item (ledger N20, ruling 6: a closed GitHub issue is never reopened). The
+    tick reports it for the item and goes on; every other board error ends it.
+    """
+    try:
+        seams.ado.set_state(item_id, state)
+    except StateWriteRefusedError as exc:
+        _log(f"{what} refused for #{item_id}: {exc}; left as the board has it")
+        return False
+    return True
 
 
 def _increment_context(seams: TickSeams, item: WorkItem) -> IncrementContext:

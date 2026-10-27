@@ -36,7 +36,7 @@ import subprocess
 from typing import Final, cast
 from urllib.parse import quote
 
-from squadra.board import BoardValidationError, render_github_markdown
+from squadra.board import BoardValidationError, StateWriteRefusedError, render_github_markdown
 from squadra.config import GitHubBoardConfig
 from squadra.domain import (
     CommentEvent,
@@ -411,8 +411,9 @@ class GhApiGitHub:
         and ACTIVE write the bucket's first Status option. An issue already in
         ``state`` is left alone (finalize after a merged PR closed it). A closed
         issue is never reopened: a Status write onto one, or a close that would
-        change its reason, raises ``BoardValidationError``. So does any write
-        onto a partial item, whose create commits it.
+        change its reason, raises ``StateWriteRefusedError``, which the tick
+        reports per item. Any write onto a partial item, whose create commits
+        it, raises ``BoardValidationError``.
         """
         issue: _Issue = self._issue(self._fetch_issue(item_id))
         if issue.partial:
@@ -425,7 +426,7 @@ class GhApiGitHub:
                 f"no native state maps to {state.value!r}; fix squadra.toml [board.states]"
             )
         if not issue.is_open:
-            raise BoardValidationError(
+            raise StateWriteRefusedError(
                 f"issue #{item_id} is closed (reason {issue.state_reason}); moving it to {state.value} "
                 "would reopen it or change its close reason, which squadra never does"
             )
