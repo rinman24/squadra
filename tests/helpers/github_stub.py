@@ -5,11 +5,16 @@
 argv the adapter hands ``gh`` (REST paths and the named GraphQL operations) and
 answers with GitHub-shaped JSON from one repository and one project held in
 memory. It knows only the calls the adapter makes; anything else fails loudly.
-Project items come back in pages of ``page_size`` so pagination is exercised.
+Project items and repository issues come back in pages of ``page_size`` so
+pagination is exercised. ``arm_fault(j)`` makes the stub raise
+:class:`~squadra.fake_board.InjectedCrashError` right after its j-th next write
+lands, the way a crash mid-create leaves GitHub.
 
 :class:`StubbedGitHubBoard` is the adapter over such a stub, the fourth shape of
 the ``board`` contract fixture, with the stub's per-issue comment log exposed as
-``comments`` the way the fakes expose theirs.
+``comments`` the way the fakes expose theirs, ``state_writes`` the way
+:class:`~tests.helpers.board_fakes.RecordingFileBoard` records them, and the
+fakes' seeding surface (``seed_origin``, ``seed_partial``).
 """
 
 from collections.abc import Mapping, Sequence
@@ -21,12 +26,15 @@ from urllib.parse import unquote
 
 from squadra.config import GitHubBoardConfig
 from squadra.domain import Lifecycle, Tags
+from squadra.fake_board import InjectedCrashError
 from squadra.github_board import (
     CLOSED_COMPLETED,
     CLOSED_DUPLICATE,
     CLOSED_NO_REASON,
     CLOSED_NOT_PLANNED,
+    COMMITTED_LABEL,
     GhApiGitHub,
+    with_origin_marker,
 )
 
 REPOSITORY: str = "acme/widgets"
@@ -93,6 +101,11 @@ class InMemoryGitHub:
         self.pulls: list[StubPull] = []
         self.writes: list[tuple[str, int]] = []  # (operation, issue number), in order
         self.calls: list[list[str]] = []
+        self._fault_at: int | None = None  # crash once len(writes) reaches this
+
+    def arm_fault(self, after_writes: int) -> None:
+        """Raise ``InjectedCrashError`` right after the ``after_writes``-th next write lands."""
+        self._fault_at = len(self.writes) + after_writes
 
     def add(self, issue: StubIssue) -> StubIssue:
         """Seed one issue."""
@@ -104,6 +117,13 @@ class InMemoryGitHub:
     def __call__(self, args: Sequence[str]) -> str:
         """Answer one ``gh`` invocation (``args`` without ``gh``)."""
         self.calls.append(list(args))
+        answer: str = self._answer(args)
+        if self._fault_at is not None and len(self.writes) >= self._fault_at:
+            self._fault_at = None
+            raise InjectedCrashError(f"stub GitHub: injected crash after {self.writes[-1]}")
+        return answer
+
+    def _answer(self, args: Sequence[str]) -> str:
         if list(args[:2]) == ["api", "graphql"]:
             fields: dict[str, str] = _fields(args[2:])
             match_: re.Match[str] | None = _OPERATION.search(fields["query"])
@@ -119,10 +139,37 @@ class InMemoryGitHub:
             return self._owner(v, self._project())
         if operation == "SquadraProjectItems":
             return self._owner(v, {"items": self._items_page(v.get("after"))})
-        if operation == "SquadraIssue":
+        if operation in ("SquadraIssue", "SquadraRepositoryIssues"):
             if f"{v['owner']}/{v['name']}" != REPOSITORY:
                 return {"repository": None}
-            return {"repository": {"issue": self._issue_json(self._get(int(v["number"])))}}
+            if operation == "SquadraIssue":
+                return {"repository": {"issue": self._issue_json(self._get(int(v["number"])))}}
+            return {"repository": {"issues": self._issues_page(v.get("after"))}}
+        return self._graphql_write(operation, v)
+
+    def _graphql_write(self, operation: str, v: dict[str, str]) -> object:
+        if operation == "SquadraAddSubIssue":
+            parent: StubIssue = self._by_node_id(v["parent"])
+            child: StubIssue = self._by_node_id(v["child"])
+            if child.parent is not None:  # GitHub refuses without replaceParent
+                raise subprocess.CalledProcessError(1, ["gh"], "Issue may not contain duplicate")
+            child.parent = (parent.repository, parent.number)
+            self.writes.append(("parent", child.number))
+            return {"addSubIssue": {"subIssue": {"number": child.number}}}
+        if operation == "SquadraAddBlockedBy":
+            blocked: StubIssue = self._by_node_id(v["issue"])
+            blocking: StubIssue = self._by_node_id(v["blocking"])
+            link: tuple[str, int] = (blocking.repository, blocking.number)
+            if link not in blocked.blocked_by:
+                blocked.blocked_by.append(link)
+            self.writes.append(("blocked_by", blocked.number))
+            return {"addBlockedBy": {"issue": {"number": blocked.number}}}
+        if operation == "SquadraAddToProject":
+            assert v["project"] == "PVT_stub"
+            added: StubIssue = self._by_node_id(v["content"])
+            added.on_project, added.archived = True, False  # GitHub returns an existing item
+            self.writes.append(("project", added.number))
+            return {"addProjectV2ItemById": {"item": {"id": _item_id(added.number)}}}
         if operation == "SquadraCloseIssue":
             issue: StubIssue = self._by_node_id(v["id"])
             issue.is_open = False
@@ -170,6 +217,16 @@ class InMemoryGitHub:
             ],
         }
 
+    def _issues_page(self, after: str | None) -> dict[str, object]:
+        issues: list[StubIssue] = [i for i in self.issues.values() if i.repository == REPOSITORY]
+        start: int = int(after) if after else 0
+        page: list[StubIssue] = issues[start : start + self.page_size]
+        end: int = start + len(page)
+        return {
+            "pageInfo": {"hasNextPage": end < len(issues), "endCursor": str(end)},
+            "nodes": [self._issue_json(issue) for issue in page],
+        }
+
     def _issue_fields(self, issue: StubIssue) -> dict[str, object]:
         return {
             "id": _node_id(issue.number),
@@ -209,6 +266,11 @@ class InMemoryGitHub:
         prefix: str = f"repos/{REPOSITORY}/"
         assert path.startswith(prefix), f"unexpected REST path {path!r}"
         parts: list[str] = path.removeprefix(prefix).split("/")
+        if parts == ["issues"] and method == "POST":
+            number: int = max(self.issues, default=0) + 1
+            self.add(StubIssue(number, v["title"], body=v["body"], on_project=False))
+            self.writes.append(("create", number))
+            return {"number": number, "node_id": _node_id(number), "id": 900000 + number}
         if parts == ["pulls"] and method == "GET":
             return [
                 {
@@ -296,6 +358,45 @@ class StubbedGitHubBoard(GhApiGitHub):
         """Wire the adapter to ``github`` (a fresh, empty stub when omitted)."""
         self.github: InMemoryGitHub = github if github is not None else InMemoryGitHub()
         super().__init__(GITHUB_CONFIG, run=self.github, states=states, tags=tags)
+        self.state_writes: list[tuple[int, Lifecycle]] = []
+
+    def set_state(self, item_id: int, state: Lifecycle) -> None:
+        """Write the state and record the write."""
+        super().set_state(item_id, state)
+        self.state_writes.append((item_id, state))
+
+    def arm_create_fault(self, after_step: int) -> None:
+        """Make the next create stop after its ``after_step``-th write (a stub-wide fault)."""
+        self.github.arm_fault(after_step)
+
+    def seed_origin(self, item_id: int, origin: str) -> None:
+        """Give a seeded issue an Origin by hand, committed (e.g. to inject a duplicate)."""
+        issue: StubIssue = self.github.issues[item_id]
+        issue.body = with_origin_marker(issue.body, origin)
+        issue.labels.append(COMMITTED_LABEL)
+
+    def seed_partial(
+        self,
+        origin: str,
+        title: str,
+        body: str,
+        *,
+        parent_id: int | None = None,
+        predecessor_ids: tuple[int, ...] = (),
+    ) -> int:
+        """Place an issue a crash mid-create left behind: Origin set, off the project, no marker."""
+        number: int = max(self.github.issues, default=0) + 1
+        self.github.add(
+            StubIssue(
+                number,
+                title,
+                body=with_origin_marker(body, origin),
+                on_project=False,
+                parent=(REPOSITORY, parent_id) if parent_id is not None else None,
+                blocked_by=[(REPOSITORY, link) for link in predecessor_ids],
+            )
+        )
+        return number
 
     @property
     def comments(self) -> dict[int, list[str]]:
