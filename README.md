@@ -47,7 +47,7 @@ runtime boundary is unchanged.
 squadra is built with [uv](https://docs.astral.sh/uv/) + Hatchling (PEP 621,
 src layout). It has **no third-party runtime dependencies** (pure standard
 library); `tmux`, `git`, the board provider's CLI (the `az` CLI for the ADO
-adapter that ships today), and the `claude` CLI must be available on the host that
+adapter, the `gh` CLI for the GitHub adapter), and the `claude` CLI must be available on the host that
 runs the fleet.
 
 ```bash
@@ -88,12 +88,13 @@ built-in defaults  <  squadra.toml  <  FLEET_* env  <  CLI flag
 
 | Section / key | Default | Meaning |
 |---|---|---|
-| `[board].provider` | `ado` | `ado` \| `fake` \| `github` \| `gitlab`. Selects the `BoardAccess` adapter (registry in `squadra.board.PROVIDERS`). ADO ships today; GitHub/GitLab are tracked backlog adapters. `fake` is a local board in `<FLEET_HOME>/.squadra/fake-board.json` (a missing file is an empty board) for tests and end-to-end runs without a live board; it needs `[board.states]`, and its file format is documented in `squadra.fake_board`. |
+| `[board].provider` | `ado` | `ado` \| `fake` \| `github` \| `gitlab`. Selects the `BoardAccess` adapter (registry in `squadra.board.PROVIDERS`). ADO ships today. `github` ships its reads and the tick's writes over the `gh` CLI (one repository's issues on one Projects v2 board, `[board.github]`); `squadra board queue` / `withdraw` / `origins` on GitHub arrive in board-writes SQ5b. GitLab is a tracked backlog adapter. `fake` is a local board in `<FLEET_HOME>/.squadra/fake-board.json` (a missing file is an empty board) for tests and end-to-end runs without a live board; it needs `[board.states]`, and its file format is documented in `squadra.fake_board`. |
 | `[board].base_branch` | `main` | The branch an increment PR must complete against for finalize-eligibility. |
 | `[board].tag_prefix` | `fleet:` | Configurable namespace for the fleet's tags; detection is prefix-based (`startswith`). The five suffixes are fixed (see [Tag vocabulary](#tag-vocabulary)). |
 | `[board].claim_scope` | — | **REQUIRED, no default, no env override.** `"parents"` (claim only increments under `parent_scope_ids`) or `"whole-board"` (claim every queued increment). Loading fails until it is declared; see [Scoping](#scoping). |
 | `[board].parent_scope_ids` | `[]` | The parent work-item ids `"parents"` claims under. Must be non-empty for `"parents"` and empty for `"whole-board"`. |
-| `[board.states].queued` / `.active` / `.done` / `.withdrawn` | — | Lists of the board's *native* state names mapped onto the neutral `Lifecycle` buckets (many-native→one-neutral allowed; a native name in two buckets is refused). **REQUIRED** unless the provider is ADO-Basic, which defaults to `["To Do"]` / `["Doing"]` / `["Done"]`. GitHub/GitLab statuses are user-defined, so they must be declared. `withdrawn` is optional (ADO-Basic has no such state). Every state on the board must be mapped: an unmapped state fails `validate_config`, it is never defaulted to a bucket. |
+| `[board.github].repository` / `.project_owner` / `.project_number` | — | **REQUIRED for `github`**, ignored otherwise: the `owner/name` repository whose issues are the board's items, and the owner and number of the Projects v2 board holding their `Status`. Auth is `gh`'s own. A missing key fails loading, naming it. |
+| `[board.states].queued` / `.active` / `.done` / `.withdrawn` | — | Lists of the board's *native* state names mapped onto the neutral `Lifecycle` buckets (many-native→one-neutral allowed; a native name in two buckets is refused). **REQUIRED** unless the provider is ADO-Basic, which defaults to `["To Do"]` / `["Doing"]` / `["Done"]`. GitHub/GitLab statuses are user-defined, so they must be declared. On GitHub a native state is computed: `closed:completed` / `closed:not_planned` / `closed:duplicate` / `closed:` once the issue is closed (closure wins over Status), else the project Status option name; `squadra init --provider github` scaffolds the default map and [ADR-0006](docs/adr/adr-0006-github-native-state.md) gives the rules. `withdrawn` is optional (ADO-Basic has no such state). Every state on the board must be mapped: an unmapped state fails `validate_config`, it is never defaulted to a bucket. |
 | `[pipeline].branch_template` | `feat/increment-{id}-{slug}` | Increment branch naming. squadra owns the `-a{attempt}` retry suffix (fixed rule, not templated). |
 | `[pipeline].worktree_dir` | `.claude/worktrees` | Where increment worktrees are created. |
 | `[pipeline].runner_skill` | `/afk-increment-runner` | Skill the runner wrapper invokes per increment. |

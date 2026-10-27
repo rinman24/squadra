@@ -39,6 +39,7 @@ from squadra.config import (
     DEFAULT_RUNNER_SKILL,
     DEFAULT_TDD_SKILL,
     DEFAULT_WORKTREE_DIR,
+    GITHUB_PROVIDER,
 )
 from squadra.constants import DEFAULT_TAG_PREFIX
 
@@ -145,6 +146,8 @@ active = ["Doing"]
 done = ["Done"]
 # withdrawn = ["Removed"]  # optional: a state for increments that will never be delivered
 """
+    if provider == GITHUB_PROVIDER:
+        return _GITHUB_BOARD_BLOCK
     return f"""\
 # [board.states] is REQUIRED for provider "{provider}": its statuses are
 # user-defined and cannot be inferred. EDIT the values below to your board's
@@ -156,6 +159,39 @@ queued = ["TODO"]        # <-- EDIT: your "not started" state name(s)
 active = ["In Progress"] # <-- EDIT: your "in flight" state name(s)
 done = ["Done"]          # <-- EDIT: your "finished" state name(s)
 # withdrawn = ["Withdrawn"]  # optional: your "will never be delivered" state name(s)
+"""
+
+
+# The github provider's [board.github] table and its default state map.
+_GITHUB_BOARD_BLOCK: str = """\
+# [board.github] is REQUIRED for provider "github": the one repository whose
+# issues are the board's items, and the one Projects v2 board that holds their
+# Status. EDIT all three. Auth is the gh CLI's own (`gh auth login`).
+[board.github]
+repository = "OWNER/REPO"  # <-- EDIT: "owner/name"
+project_owner = "OWNER"    # <-- EDIT: the user or organization owning the project
+project_number = 1         # <-- EDIT: the number in the project's URL
+
+# [board.states] is REQUIRED for provider "github". On GitHub an issue's native
+# state is computed, not stored: once the issue is closed it is
+# "closed:<reason>" ("closed:completed", "closed:not_planned",
+# "closed:duplicate", or "closed:" when it carries no reason), whatever its
+# Status says; while it is open it is the name of its project Status option.
+# Every Status option and every closed name must be mapped (an unmapped one
+# fails validation); closed names go in done or withdrawn only, and no Status
+# option may start with "closed:".
+#   - A hand close as completed counts as delivered (done).
+#   - A "Done"-mapped Status on an open issue is an error: done means closed.
+#   - squadra never reopens a closed issue.
+# Project workflows: turn "Item added to project" OFF unless the Status it sets
+# maps to queued (squadra cannot read which Status it sets). "Item closed" is
+# safe but advised off: for a closed issue the project's Status is not
+# authoritative, the closure is. EDIT the Status names to your project's.
+[board.states]
+queued = ["Todo"]                             # <-- EDIT: your "not started" Status option(s)
+active = ["In Progress"]                      # <-- EDIT: your "in flight" Status option(s)
+done = ["closed:completed", "Done"]           # "Done" here: a Status left on closed issues
+withdrawn = ["closed:not_planned", "closed:duplicate", "closed:"]
 """
 
 

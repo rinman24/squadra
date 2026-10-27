@@ -1,7 +1,8 @@
 """The provider-agnostic ``BoardAccess`` conformance suite.
 
-Every test here runs against all three shapes (the ADO- and GitHub-shaped fakes
-and the registered fake provider, via the parametrized ``board`` fixture)
+Every test here runs against all four shapes (the ADO- and GitHub-shaped fakes,
+the registered fake provider and the GitHub adapter over an in-memory GitHub,
+via the parametrized ``board`` fixture)
 and asserts only neutral behavior — never a native state string or markup
 dialect. Any implementation that passes this suite satisfies the seam contract.
 """
@@ -39,6 +40,7 @@ from tests.helpers.board_fakes import (
     RecordingFileBoard,
     SeedableFakeBoard,
 )
+from tests.helpers.github_stub import StubbedGitHubBoard, StubIssue
 
 TAGS: Tags = Tags()
 
@@ -101,12 +103,15 @@ def test_board_without_a_withdrawn_state_has_an_empty_withdrawn_bucket() -> None
         board.set_state(QUEUED_ID, Lifecycle.WITHDRAWN)
 
 
-@pytest.mark.parametrize("shape", ["ado", "github", "file"])
+@pytest.mark.parametrize("shape", ["ado", "github", "file", "gh"])
 def test_unmapped_native_state_raises_instead_of_defaulting(shape: str, tmp_path: Path) -> None:
     # Never QUEUED by default: an unmapped withdrawn column read as queued
     # would make every withdrawn item claimable.
-    board: SeedableFakeBoard
-    if shape == "ado":
+    board: SeedableFakeBoard | StubbedGitHubBoard
+    if shape == "gh":
+        board = StubbedGitHubBoard()
+        board.github.add(StubIssue(QUEUED_ID, "x", status="Cancelled"))
+    elif shape == "ado":
         board = AdoShapedFakeBoard()
         board.add(QUEUED_ID, "x", Lifecycle.QUEUED, native_state="Removed")
     elif shape == "file":
@@ -178,7 +183,7 @@ def test_add_comment_records_one_comment_per_call(board: BoardAccess) -> None:
     for event in _ALL_EVENTS:
         board.add_comment(ACTIVE_ID, event)
     # every fake exposes a per-item comment log (assert count, not dialect)
-    assert isinstance(board, SeedableFakeBoard)
+    assert isinstance(board, SeedableFakeBoard | StubbedGitHubBoard)
     assert len(board.comments[ACTIVE_ID]) == len(_ALL_EVENTS)
 
 

@@ -7,7 +7,13 @@ structured ``CommentEvent`` values, never board-native state strings or markup.
 from ``Lifecycle`` via the configured state map, renders comment events to ADO
 HTML, and validates the configured names against the live board. ``build_board``
 is the hardcoded provider registry (the composition-root seam) — name maps to an
-adapter factory.
+adapter factory: ``ado`` here, ``github`` in :mod:`squadra.github_board`, ``fake``
+in :mod:`squadra.fake_board`.
+
+A *native state* is the provider-side name ``[board.states]`` maps from to a
+``Lifecycle`` bucket. On ADO it is stored (``System.State``); on GitHub it is
+computed from the issue's closure and its project Status (see
+:func:`squadra.github_board.native_state`).
 """
 
 import base64
@@ -167,6 +173,28 @@ def render_ado_html(event: CommentEvent, tags: Tags) -> str:
                 f"<p>fleet: retry cap exhausted (next attempt would be {attempt}, cap {cap}) "
                 f"— escalated to <code>{tags.failed}</code>. Triage via the status file, then "
                 f"remove the tag (and the fleet status dir for a clean restart) to requeue.</p>"
+            )
+
+
+def render_github_markdown(event: CommentEvent, tags: Tags) -> str:
+    """Render a structured ``CommentEvent`` to one GitHub Markdown comment.
+
+    Deliberately a distinct dialect from :func:`render_ado_html` (Markdown, not
+    HTML) so the contract suite cannot accidentally depend on one provider's
+    markup.
+    """
+    match event:
+        case Claimed(runner_id=runner_id, branch=branch, when=when):
+            return f"**fleet: claimed** by `{runner_id}` on `{branch}` ({when})."
+        case RolledBack(reason=reason):
+            return f"**fleet:** {reason} — claim rolled back."
+        case Finalized(pr_url=pr_url, branch=branch):
+            return f"**fleet: finalized** — PR [{pr_url}]({pr_url}), `{branch}` cleaned up."
+        case Reaped(evidence=evidence, attempt=attempt):
+            return f"**fleet: reaped** — {evidence} (attempt {attempt}); requeued."
+        case Escalated(attempt=attempt, cap=cap):
+            return (
+                f"**fleet:** retry cap exhausted ({attempt}/{cap}) — escalated to `{tags.failed}`."
             )
 
 
@@ -583,6 +611,17 @@ def _build_ado(config: SquadraConfig) -> BoardAccess:
     return AzCliAdo(states=config.states, base_branch=config.base_branch, tags=config.tags)
 
 
+def _build_github(config: SquadraConfig) -> BoardAccess:
+    """Construct the GitHub adapter over ``[board.github]``'s repository and project."""
+    from squadra.github_board import GhApiGitHub  # noqa: PLC0415 - import cycle
+
+    if config.github is None:
+        raise ConfigError('[board.github] is required for provider "github"')
+    return GhApiGitHub(
+        config.github, states=config.states, base_branch=config.base_branch, tags=config.tags
+    )
+
+
 def _build_fake(config: SquadraConfig) -> BoardAccess:
     """Construct the fake provider over ``<FLEET_HOME>/.squadra/fake-board.json``."""
     from squadra.fake_board import JsonFileBoard, fake_board_path  # noqa: PLC0415 - import cycle
@@ -593,7 +632,11 @@ def _build_fake(config: SquadraConfig) -> BoardAccess:
 # Hardcoded name → adapter factory. New providers register here; out-of-tree
 # entry-point plugins are a deferred future volatility, not built now. ``fake``
 # is a local JSON-file board for tests and end-to-end runs without a live board.
-PROVIDERS: Final[dict[str, ProviderFactory]] = {"ado": _build_ado, "fake": _build_fake}
+PROVIDERS: Final[dict[str, ProviderFactory]] = {
+    "ado": _build_ado,
+    "github": _build_github,
+    "fake": _build_fake,
+}
 
 
 def build_board(config: SquadraConfig) -> BoardAccess:

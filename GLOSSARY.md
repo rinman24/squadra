@@ -20,7 +20,7 @@ _Avoid_: Run (a run is the Runner's session), retry as a noun (Retry stays a ver
 
 **Withdrawn**:
 The terminal state of an Increment that will never be delivered: not claimable, not counted as done, reachable only before delivery. See ADR-0004.
-_Avoid_: Cancelled, dropped, closed
+_Avoid_: Cancelled, dropped, closed (a provider's word: on GitHub a closed issue can be done or withdrawn)
 
 **Origin**:
 The opaque reference an outside caller attaches when it queues an Increment. It is unique on the board, never reused, and never parsed by squadra. It is not the Increment's identity.
