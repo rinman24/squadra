@@ -1,7 +1,7 @@
 """The increment verb contract (board-writes SQ2; claude-skills DB-D2–DB-D5).
 
-Two layers, both run against all three shapes (the ADO- and GitHub-shaped fakes
-and the registered fake provider):
+Two layers, both run against all four shapes (the ADO- and GitHub-shaped fakes,
+the registered fake provider and the GitHub adapter over an in-memory GitHub):
 
 - the ``BoardAccess`` primitives every adapter owes (``create_increment``,
   ``items_with_origin``): an item lands QUEUED, its Origin and arguments read
@@ -22,8 +22,6 @@ by hand with ``seed_partial`` (ledger N8). Tests 1–5 against a create that
 really crashes part-way are in ``test_crash_safe_create_contract.py``.
 """
 
-from pathlib import Path
-
 import pytest
 
 from squadra.board import BoardAccess, BoardValidationError
@@ -43,9 +41,7 @@ from tests.contract.conftest import (
     LINKED_ID,
     PARENT_ID,
     QUEUED_ID,
-    SHAPES,
     WITHDRAWN_ID,
-    seed_fake,
 )
 from tests.helpers.board_fakes import AdoShapedFakeBoard, SeedableFakeBoard
 
@@ -56,12 +52,6 @@ OUT: int = 999  # a parent outside the claim scope
 # An Origin with every character a provider encoding could trip on: squadra
 # stores it as given and never parses it.
 AWKWARD_ORIGIN: str = 'A:I1 --> "quoted" \\ <b>π</b>\n-->'
-
-
-@pytest.fixture(params=SHAPES)
-def board(request: pytest.FixtureRequest, tmp_path: Path) -> BoardAccess:
-    """The three fakes only: the GitHub adapter creates increments from SQ5b."""
-    return seed_fake(request.param, tmp_path)
 
 
 def _verbs(board: BoardAccess, *parents: int) -> IncrementBoard:

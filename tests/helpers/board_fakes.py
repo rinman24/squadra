@@ -49,6 +49,7 @@ from squadra.domain import (
 )
 from squadra.fake_board import JsonFileBoard
 from squadra.github_board import split_origin_marker, with_origin_marker
+from tests.helpers.github_stub import StubbedGitHubBoard
 
 # A GitHub-shaped status map: MANY native names per neutral bucket on purpose,
 # so the contract exercises the many-native→one-neutral collapse.
@@ -549,5 +550,7 @@ class RecordingFileBoard(JsonFileBoard):
         self.state_writes.append((item_id, state))
 
 
-# Every fake a contract test can seed Origins and partial items on by hand.
-SeedableFakeBoard = AdoShapedFakeBoard | GitHubShapedFakeBoard | RecordingFileBoard
+# Every board a contract test can seed Origins and partial items on by hand.
+SeedableFakeBoard = (
+    AdoShapedFakeBoard | GitHubShapedFakeBoard | RecordingFileBoard | StubbedGitHubBoard
+)

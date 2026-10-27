@@ -28,8 +28,8 @@ Under ~100K tokens per session, hard ceiling 120K, one unit per session.
 | SQ4 | `squadra board {queue,withdraw,origins}` as Clients over `IncrementBoard`, per `verb-contract.md` (the rules already live in `IncrementBoard`) | C | SQ2, SQ3 | done (PR #50); N18, N19 |
 | SQ5 | GitHub adapter, reads and writes; `[[boards]]` and `in_claim_scope` (WSQ1). Split by the SQ5 session into SQ5a–SQ5c below | D | SQ2; after design-to-board F per DB-D1 order (claude-skills DB4, PR #16, merged) | split (PR #51, merged); see SQ5a–SQ5c |
 | SQ5a | `provider = "github"` registered: transport (the unit's choice, a ledger note), `[board.github]` config, the native-state model (N20), the read half (`items_in_state`, `item_state`, `item_links`, `completed_pr_url`), `validate_config` against a real board, and the tick's writes (`set_state` into Status buckets, labels as tags, Markdown comments). The `board` contract suite runs against it offline over a stubbed transport; `create_increment` / `items_with_origin` raise `NotImplementedError` as ADO's do. Cut line if long: the tick's writes to SQ5b | D | SQ5 split; N20 ruled by Rich (after Juval, Eric) | done (PR #52); ADR-0006, N21–N23. Cut taken in part: the adapter's writes are in, the tick's half of N20 ruling 6 (report a refused requeue per item, go on) moved to SQ5b |
-| SQ5b | `create_increment` (with `partial_item`) and `items_with_origin` on GitHub, proving obligations 1–4 (N15; N14's title and body on the first call), `set_state` into WITHDRAWN (closed, not planned, DB-D2); the `increment` and crash-safe contract suites against the stubbed transport with a fault after each write j < k. From SQ5a's cut: the tick reports a refused requeue of a closed issue per item and goes on (N20 ruling 6), with the contract case "an ACTIVE item closed between ticks with each reason is neither reopened nor ends the next tick, and is reported"; the first live run of the adapter's writes on the sandbox (N23). Unblocks claude-skills DB5 (G) | D | SQ5a | todo |
-| SQ5c | WSQ1's deferred parts: `[[boards]]` with `claim_scope` per entry (the check fires wherever a board is added), adapter-owned `in_claim_scope(item_id)` (the supervisor stops reading parent links for scope), rename `seams.ado`; N10's compare-and-set if GitHub offers one, else record that it doesn't. Not needed by DB5 | D | SQ5b | todo |
+| SQ5b | `create_increment` (with `partial_item`) and `items_with_origin` on GitHub, proving obligations 1–4 (N15; N14's title and body on the first call), `set_state` into WITHDRAWN (closed, not planned, DB-D2); the `increment` and crash-safe contract suites against the stubbed transport with a fault after each write j < k. From SQ5a's cut: the tick reports a refused requeue of a closed issue per item and goes on (N20 ruling 6), with the contract case "an ACTIVE item closed between ticks with each reason is neither reopened nor ends the next tick, and is reported"; the first live run of the adapter's writes on the sandbox (N23). Unblocks claude-skills DB5 (G) | D | SQ5a | done (PR #53); N24. Cut taken: the tick's refused-requeue report and the live sandbox run moved to SQ5c |
+| SQ5c | From SQ5b's cut, first: the tick reports a refused requeue of a closed issue per item and goes on (N20 ruling 6; settle N24's open question before building), and the first live run of the adapter's writes on the sandbox (N23, N24's unverified facts). Then WSQ1's deferred parts: `[[boards]]` with `claim_scope` per entry (the check fires wherever a board is added), adapter-owned `in_claim_scope(item_id)` (the supervisor stops reading parent links for scope), rename `seams.ado`; N10's compare-and-set if GitHub offers one, else record that it doesn't. Not needed by DB5 | D | SQ5b | todo |
 
 ## Notes from squadra sessions
 
@@ -392,6 +392,70 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
     checks a partial item agrees with its request. The writes (close, Status,
     labels, comments) ran only against the stub in SQ5a; SQ5b runs them once
     on the sandbox.
+- N24 (SQ5b): GitHub's create and Origin listing, inside ADR-0005 and ADR-0006.
+  - **Write endpoints, verified 2026-10-27 by GraphQL introspection** (`gh api
+    graphql`, read-only): `addSubIssue(issueId: <parent>, subIssueId: <child>)`
+    (payload `subIssue`), `addBlockedBy(issueId: <blocked>, blockingIssueId)`
+    (payload `issue`), `addProjectV2ItemById(projectId, contentId)` (payload
+    `item { id }`). The issue itself is created by REST `POST
+    repos/{repo}/issues` (title, body; returns `number`, `node_id`). The links
+    take node ids, so each linked issue is fetched once for its id. **Not yet
+    verified live** (they need writes; SQ5c's sandbox run): that the labels POST
+    creates a missing `squadra:committed` label, that re-adding an issue to the
+    project returns its existing item, and that `addSubIssue` refuses a child
+    that already has a parent (the adapter never asks it to).
+  - **k = 5 + n** (`squadra.github_board.create_step_count`): create (Origin,
+    title, body), parent, one "blocked by" per predecessor, add to project,
+    first queued Status, `squadra:committed` (the commit). Finishing a partial
+    item makes only the missing writes: no parent write if one is set, only
+    the absent predecessors, no project add if on the project, no Status write
+    if its Status already maps to QUEUED; the commit always. A closed partial
+    item is refused (`BoardValidationError`) before any write, since finishing
+    it would need a reopen. A `partial_item` that is not a partial item
+    carrying the request's Origin raises `ValueError` (N14's guard).
+  - **Read-back** (ADR-0006 decision 7): after the commit, `item_state` once.
+    Anything but QUEUED, or a refusal, raises `BoardValidationError` naming the
+    "Item added to project" workflow. The issue stays committed; detection, not
+    a guarantee.
+  - **`items_with_origin` enumerates by GraphQL `repository.issues`** (open and
+    closed, oldest first, pages of 100) and keeps the issues whose body carries
+    the marker. Not search: the search index lags, so a just-created partial
+    item could be missed and its retry would create a duplicate (obligation 3).
+    Cost is one page per 100 issues of the repository per call. A committed
+    Origin-bearing issue with no bucket (Status cleared, off the project, open
+    with a done Status) makes the whole listing raise rather than read as
+    partial, so a retry never "finishes" (requeues) it (Eric's cleared-Status
+    test).
+  - **`\r\n`** (N23): `split_origin_marker` turns `\r\n` into `\n` and
+    drops whitespace after the marker before it reads the body. A web-edited
+    body still carries its marker and still equals the body it was queued
+    with. Consequence: a request body that itself contains `\r\n` reads back
+    with `\n`, so its retry is refused as "body differs" (loud, not wrong).
+  - **Tests.** The `increment` suite runs on four shapes (`gh` is now a
+    `fake_board` shape, with `seed_origin` / `seed_partial` on
+    `StubbedGitHubBoard`; the stub holds the suites' parents 200, 300, 999 off
+    the project, since a parent must exist). The crash-safe suite runs on
+    `file` and `gh`, each for every j < its own k, through a stub-wide one-shot
+    fault (`InMemoryGitHub.arm_fault`, raising the fake's
+    `InjectedCrashError`); "a fault past the last write is refused" stays
+    file-only, being the fake's arming API (N17). GitHub only: Juval's
+    interloper test (after each j < k, an outsider puts the issue on the
+    project in each queued column: no bucket, `lifecycle` `None`, `item_state`
+    raises, the retry still finishes it), finishing rewrites nothing already
+    there, Eric's cleared-Status test, the read-back, a web-edited body.
+    `withdraw_increment` runs end to end through `IncrementBoard` on `gh` in
+    the increment suite (closes as not planned).
+  - **Cut** (the handoff's cut line): the tick's refused-requeue report and the
+    live sandbox run, to SQ5c. **Open question for SQ5c**, found while
+    scoping the tick change: under closure wins an ACTIVE issue closed between
+    ticks reads DONE (`closed:completed`) or WITHDRAWN at the next gather, so
+    the next tick never requeues it. `_retry` and the launch rollback meet a
+    closed issue only when it closes within a tick, between the gather and the
+    write. The contract case as N20 words it ("closed between ticks ... is
+    reported") therefore needs a reporter for a fleet-claimed item that left
+    ACTIVE by closure: a WITHDRAWN one is not gathered at all, and a DONE one
+    goes to finalize. Settle what "reported" means there (and whether its
+    sandbox is torn down) before building.
 
 ## Session log
 
@@ -406,3 +470,4 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
 | SQ4 | 2026-10-09 | SQ4 | Gate checked (PR #49 merged). `squadra board {queue,withdraw,origins}` in `cli.py` as Clients over `IncrementBoard` (config → `build_board` → `validate_config` → verbs); own argparse tree, every error one prefixed stderr line; exits 0/2/3/1 per `verb-contract.md` (N19). `IncrementBoard.increments_and_partial_items()` for `origins`' partial-item lines (N18). `tests/test_cli_board.py` (22 tests): every exit code, every refusal leaves the file byte-identical, crash and retry across two processes, DB-D7 (QUEUED → ACTIVE → DONE and a duplicate Origin written between calls by the test). DB-D10 checked: matches. README row. ruff, pyright, 639 tests green | `handoffs/SQ5-github-adapter.md` (gate: SQ4 merged + claude-skills DB4) |
 | SQ5 (split) | 2026-10-09 | SQ5 | PR #51. Gate checked (squadra PR #50 merged; claude-skills DB4 merged as PR #16). Branch fast-forwarded to `main` (`c36fe8f`). Split SQ5 into SQ5a (read half, `validate_config`, the tick's writes, `[board.github]`), SQ5b (the two primitives, obligations 1–4, WITHDRAWN as closed / not planned; unblocks DB5) and SQ5c (`[[boards]]`, `in_claim_scope`, `seams.ado` rename, N10). Order not a real choice: DB5 needs a and b, not c. N20 (native-state model) put to Rich with a proposal; N21 lists the GitHub facts to verify. No code: the handoff's reading took the session's budget, so SQ5a goes to a fresh session | `handoffs/SQ5a-github-read.md` |
 | SQ5a | 2026-10-09 | SQ5a | PR #52. Gate checked (PR #51 merged, N20 ruled). Branch fast-forwarded to `main` (`2b70508`). `provider = "github"` registered: `squadra.github_board.GhApiGitHub` over `gh api` (N22), `[board.github]` (`GitHubBoardConfig`, required only for github), the native-state model per Rich's N20 ruling (ADR-0006, N23), reads, `validate_config`, the adapter's writes (Status, close with reason, labels, Markdown comments; `render_github_markdown` moved into `squadra.board`). `board` contract suite four-shaped over an in-memory GitHub; `tests/test_github_board.py` for N20's edges and the config. N21 verified (above). Real board: Rich named none this session; ran read-only against the only project on his account, `rinman24/squadra-sandbox` + user project #1 "squadra sandbox" (Todo/In Progress/Done), with the scaffold's default map: `validate_config` passed, all four buckets empty, `item_links(1)` empty, `item_state(1)` raised "not on the project" as designed. Cut: the tick's per-item report of a refused requeue to SQ5b. Scaffold default map and comment, README rows, glossary note under Withdrawn. ruff, pyright, tests green | `handoffs/SQ5b-github-writes.md` |
+| SQ5b | 2026-10-27 | SQ5b | PR #53. Gate checked (PR #52 merged). Branch fast-forwarded to `main` (`9a324ed`). GitHub's `create_increment` (k = 5 + n ordered `gh` writes, idempotent under `partial_item`, commit marker last, Status read back) and `items_with_origin` (every Origin-bearing issue of the repository by GraphQL listing, not search); write endpoints verified by introspection (N24). `increment` suite four-shaped, crash-safe suite on `file` + `gh` with a fault after each j < k, Juval's interloper and Eric's cleared-Status tests, `\r\n` bodies (N23). README provider row. Cut: the tick's refused-requeue report and the live sandbox run to SQ5c, with an open question on the tick case (N24). ruff, pyright, 827 tests green | `handoffs/SQ5c-boards-scope.md` |

@@ -7,14 +7,20 @@ committed item off the project or with an empty Status is loud, the closed names
 are squadra's and must all be mapped, and a closed issue is never reopened.
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pytest
 
 from squadra.board import BoardValidationError, build_board
-from squadra.config import ConfigError, GitHubBoardConfig, SquadraConfig, load_config
-from squadra.domain import Lifecycle, Tags
+from squadra.config import (
+    ClaimScope,
+    ConfigError,
+    GitHubBoardConfig,
+    SquadraConfig,
+    load_config,
+)
+from squadra.domain import IncrementRequest, Lifecycle, Tags
 from squadra.github_board import (
     CLOSED_COMPLETED,
     CLOSED_DUPLICATE,
@@ -26,9 +32,11 @@ from squadra.github_board import (
     split_origin_marker,
     with_origin_marker,
 )
+from squadra.increments import IncrementBoard
 from squadra.scaffold import render_squadra_toml
 from tests.helpers.github_stub import (
     GH_STATES,
+    GITHUB_CONFIG,
     REPOSITORY,
     InMemoryGitHub,
     StubbedGitHubBoard,
@@ -344,10 +352,108 @@ def test_remove_tag_of_an_absent_label_writes_nothing() -> None:
     assert board.github.writes == []
 
 
-def test_board_writes_are_not_built_yet() -> None:
-    board = _board()
-    with pytest.raises(NotImplementedError, match="SQ5b"):
+# --- create_increment / items_with_origin (SQ5b) ------------------------------------------
+
+EPIC: int = 200
+
+
+def _verbs(board: StubbedGitHubBoard) -> IncrementBoard:
+    return IncrementBoard(board, ClaimScope.WHOLE_BOARD, ())
+
+
+def test_create_writes_in_order_and_commits_last() -> None:
+    board = _board(StubIssue(EPIC, "epic", on_project=False), StubIssue(N, "pred", status="Todo"))
+    item_id: int = board.create_increment(IncrementRequest("A:I1", EPIC, (N,), "I1", "b"))
+    assert [op for op, number in board.github.writes if number == item_id] == [
+        "create",
+        "parent",
+        "blocked_by",
+        "project",
+        "status",
+        "label",
+    ]
+    issue: StubIssue = board.github.issues[item_id]
+    assert (issue.status, issue.labels) == ("Todo", [COMMITTED_LABEL])
+
+
+@pytest.mark.parametrize("on_project", [True, False], ids=["status-cleared", "off-project"])
+def test_a_committed_active_increment_losing_its_status_is_loud_and_never_requeued(
+    on_project: bool,
+) -> None:
+    """Eric's cleared-Status test (N20): never read as partial, so never "finished"."""
+    body: str = with_origin_marker("b", "A:I1")
+    board = _board(
+        StubIssue(EPIC, "epic", on_project=False),
+        StubIssue(
+            N,
+            "I1",
+            body=body,
+            labels=[COMMITTED_LABEL],
+            status=None,
+            on_project=on_project,
+            parent=(REPOSITORY, EPIC),
+        ),
+    )
+    with pytest.raises(BoardValidationError, match=f"#{N}"):
+        board.item_state(N)
+    with pytest.raises(BoardValidationError, match=f"#{N}"):
         board.items_with_origin()
+    with pytest.raises(BoardValidationError, match=f"#{N}"):
+        _verbs(board).queue_increment("A:I1", EPIC, (), "I1", "b")
+    assert N not in _all_ids(board)
+    assert board.github.writes == []
+
+
+def test_a_workflow_moving_the_status_before_the_read_back_raises_after_the_commit() -> None:
+    """ADR-0006 decision 7: detection, not a guarantee."""
+    github = InMemoryGitHub()
+    github.add(StubIssue(EPIC, "epic", on_project=False))
+
+    def item_added_workflow(args: Sequence[str]) -> str:
+        """The stub, plus a workflow whose Status write lands just after squadra's."""
+        out: str = github(args)
+        if "SquadraSetStatus" in " ".join(args):
+            github.issues[max(github.issues)].status = "In Progress"
+        return out
+
+    board = GhApiGitHub(GITHUB_CONFIG, run=item_added_workflow, states=GH_STATES)
+    with pytest.raises(BoardValidationError, match="did not land queued.*Item added to project"):
+        board.create_increment(IncrementRequest("A:I1", EPIC, (), "I1", ""))
+    assert github.writes[-1][0] == "label"
+
+
+def test_a_web_edited_body_still_reads_back_as_queued() -> None:
+    """N23: the web editor saves CRLF line ends and may leave trailing whitespace."""
+    raw: str = with_origin_marker("line one\nline two", "A:I1").replace("\n", "\r\n") + "\r\n"
+    board = _board(
+        StubIssue(EPIC, "epic", on_project=False),
+        StubIssue(N, "I1", body=raw, on_project=False, parent=(REPOSITORY, EPIC)),
+    )
+    (record,) = board.items_with_origin()
+    assert (record.origin, record.body, record.partial) == ("A:I1", "line one\nline two", True)
+    assert _verbs(board).queue_increment("A:I1", EPIC, (), "I1", "line one\nline two") == N
+    assert board.item_state(N) is Lifecycle.QUEUED
+
+
+def test_finishing_refuses_a_closed_partial_issue_and_writes_nothing() -> None:
+    board = _board(
+        StubIssue(EPIC, "epic", on_project=False),
+        StubIssue(N, "I1", body=_partial_body(), is_open=False, state_reason="NOT_PLANNED"),
+    )
+    request: IncrementRequest = IncrementRequest("A:I1", EPIC, (), "I1", "the body")
+    with pytest.raises(BoardValidationError, match="reopen"):
+        board.create_increment(request, partial_item=N)
+    assert board.github.writes == []
+
+
+@pytest.mark.parametrize("labels", [[COMMITTED_LABEL], []], ids=["committed", "other-origin"])
+def test_finishing_refuses_anything_but_the_requests_partial_item(labels: list[str]) -> None:
+    """N14's guard against a caller bug, as both fakes have it."""
+    origin: str = "A:I1" if labels else "A:I9"
+    board = _board(StubIssue(N, "I1", body=with_origin_marker("b", origin), labels=labels))
+    with pytest.raises(ValueError, match=f"#{N} is not a partial item"):
+        board.create_increment(IncrementRequest("A:I1", EPIC, (), "I1", "b"), partial_item=N)
+    assert board.github.writes == []
 
 
 # --- [board.github] config ------------------------------------------------------------------

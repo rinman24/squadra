@@ -19,6 +19,14 @@ create writes last (ADR-0005 obligation 4, by marker per N20). A partial item is
 in no bucket whatever its Status or closure. Any other open issue that is off
 the project, or has an empty Status, is unmapped: :meth:`GhApiGitHub.item_state`
 raises, so a committed increment taken off the project is loud, never requeued.
+
+:meth:`GhApiGitHub.create_increment` is k = 5 + len(predecessors) ordered
+writes (:func:`create_step_count`): create the issue with title, body and the
+Origin marker; link the sub-issue parent; one "blocked by" link per
+predecessor; add the issue to the project; set a queued Status; add
+:data:`COMMITTED_LABEL`, the commit. :meth:`GhApiGitHub.items_with_origin`
+lists every issue of the repository, not a search: the search index lags, and
+a just-created partial item it missed would make the retry create a duplicate.
 """
 
 from collections.abc import Callable, Mapping, Sequence
@@ -66,7 +74,7 @@ _CLOSE_INTO: Final[Mapping[Lifecycle, tuple[str, str]]] = {
     Lifecycle.WITHDRAWN: (CLOSED_NOT_PLANNED, "NOT_PLANNED"),
 }
 
-# The commit marker: the label a create adds last (SQ5b). Outside any fleet tag
+# The commit marker: the label a create adds last. Outside any fleet tag
 # namespace (``validate_config`` checks), so finalize's clear-by-prefix never
 # touches it, and never reported as a tag.
 COMMITTED_LABEL: Final[str] = "squadra:committed"
@@ -107,23 +115,36 @@ def with_origin_marker(body: str, origin: str) -> str:
 
 
 def split_origin_marker(raw: str) -> tuple[str, str] | None:
-    """Split an issue body into ``(body, origin)``, or ``None`` when it carries no marker.
+    r"""Split an issue body into ``(body, origin)``, or ``None`` when it carries no marker.
 
     A marker that is present but does not decode to a string raises: an
     Origin-bearing issue misread as Origin-free would map from its Status, and a
-    partial one would become claimable.
+    partial one would become claimable. GitHub's web editor saves a body with
+    ``\r\n`` line ends, and may leave whitespace after the marker, so both are
+    normalised away: an edited body still carries its marker, and still equals
+    the ``\n`` body it was queued with (ledger N23).
     """
-    at: int = raw.rfind(ORIGIN_MARKER_START)
-    if at < 0 or not raw.endswith(ORIGIN_MARKER_END):
+    text: str = raw.replace("\r\n", "\n").rstrip()
+    at: int = text.rfind(ORIGIN_MARKER_START)
+    if at < 0 or not text.endswith(ORIGIN_MARKER_END):
         return None
-    encoded: str = raw[at + len(ORIGIN_MARKER_START) : -len(ORIGIN_MARKER_END)]
+    encoded: str = text[at + len(ORIGIN_MARKER_START) : -len(ORIGIN_MARKER_END)]
     try:
         decoded: object = json.loads(encoded)
     except json.JSONDecodeError:
         decoded = None
     if not isinstance(decoded, str):
         raise BoardValidationError(f"malformed squadra Origin marker {encoded!r} in an issue body")
-    return raw[:at], decoded
+    return text[:at], decoded
+
+
+def create_step_count(request: IncrementRequest) -> int:
+    """How many writes a fresh :meth:`GhApiGitHub.create_increment` makes (k).
+
+    Create the issue, link the parent, one "blocked by" link per predecessor,
+    add it to the project, set its Status, add the commit marker.
+    """
+    return 5 + len(request.predecessors)
 
 
 def _run_gh(args: Sequence[str]) -> str:
@@ -196,15 +217,47 @@ _PROJECT_ITEMS_QUERY: Final[str] = (
     " repository { nameWithOwner } } } } } } } } }"
 )
 
-_ISSUE_QUERY: Final[str] = (
-    "query SquadraIssue($owner: String!, $name: String!, $number: Int!) {"
-    f" repository(owner: $owner, name: $name) {{ issue(number: $number) {{ {_ISSUE_FIELDS}"
+# One issue with its project items and links: what places it in a bucket and
+# what an OriginRecord reads.
+_ISSUE_DETAIL: Final[str] = (
+    f"{_ISSUE_FIELDS}"
     " projectItems(first: 100, includeArchived: false) { nodes { id project { id }"
     f' status: fieldValueByName(name: "{STATUS_FIELD}")'
     " { ... on ProjectV2ItemFieldSingleSelectValue { name } } } }"
     " parent { number repository { nameWithOwner } }"
     " blockedBy(first: 100) { pageInfo { hasNextPage }"
-    " nodes { number repository { nameWithOwner } } } } } }"
+    " nodes { number repository { nameWithOwner } } }"
+)
+
+_ISSUE_QUERY: Final[str] = (
+    "query SquadraIssue($owner: String!, $name: String!, $number: Int!) {"
+    f" repository(owner: $owner, name: $name) {{ issue(number: $number) {{ {_ISSUE_DETAIL}"
+    " } } }"
+)
+
+_REPOSITORY_ISSUES_QUERY: Final[str] = (
+    "query SquadraRepositoryIssues($owner: String!, $name: String!, $first: Int!,"
+    " $after: String) { repository(owner: $owner, name: $name) {"
+    " issues(first: $first, after: $after, states: [OPEN, CLOSED],"
+    " orderBy: {field: CREATED_AT, direction: ASC}) { pageInfo { hasNextPage endCursor }"
+    f" nodes {{ {_ISSUE_DETAIL} }} }} }} }}"
+)
+
+_ADD_SUB_ISSUE_MUTATION: Final[str] = (
+    "mutation SquadraAddSubIssue($parent: ID!, $child: ID!) {"
+    " addSubIssue(input: {issueId: $parent, subIssueId: $child}) { subIssue { number } } }"
+)
+
+_ADD_BLOCKED_BY_MUTATION: Final[str] = (
+    "mutation SquadraAddBlockedBy($issue: ID!, $blocking: ID!) {"
+    " addBlockedBy(input: {issueId: $issue, blockingIssueId: $blocking})"
+    " { issue { number } } }"
+)
+
+_ADD_TO_PROJECT_MUTATION: Final[str] = (
+    "mutation SquadraAddToProject($project: ID!, $content: ID!) {"
+    " addProjectV2ItemById(input: {projectId: $project, contentId: $content})"
+    " { item { id } } }"
 )
 
 _CLOSE_MUTATION: Final[str] = (
@@ -271,21 +324,7 @@ class GhApiGitHub:
         only within this board's repository, and dropping a predecessor would
         make its successor claimable early.
         """
-        raw: Mapping[str, object] = self._fetch_issue(item_id)
-        parent: int | None = None
-        if isinstance(raw.get("parent"), dict):
-            parent = self._local_number(_obj(raw.get("parent")), item_id, "parent")
-        blocked_by: Mapping[str, object] = _obj(raw.get("blockedBy"))
-        if _obj(blocked_by.get("pageInfo")).get("hasNextPage") is True:
-            raise BoardValidationError(
-                f"issue #{item_id} is blocked by more than {_PAGE_SIZE} issues; squadra "
-                "reads at most that many predecessors"
-            )
-        predecessors: tuple[int, ...] = tuple(
-            self._local_number(_obj(node), item_id, "blocked-by")
-            for node in _list(blocked_by.get("nodes"))
-        )
-        return WorkItemLinks(parent_id=parent, predecessor_ids=predecessors)
+        return self._links_of(self._fetch_issue(item_id), item_id)
 
     def completed_pr_url(self, branch: str) -> str | None:
         """Return the URL of a merged PR from ``branch`` into the base branch, if any."""
@@ -398,34 +437,11 @@ class GhApiGitHub:
             raise BoardValidationError(
                 f"issue #{item_id} is not on the project, so it has no Status to set"
             )
-        status: str = next((n for n in names if not n.startswith(CLOSED_PREFIX)), "")
-        project: _Project = self._project()
-        option: str | None = project.options.get(status)
-        if option is None:
-            raise BoardValidationError(
-                f"{state.value} maps to no Status option of the project; "
-                "fix squadra.toml [board.states]"
-            )
-        self._graphql(
-            _SET_STATUS_MUTATION,
-            project=project.project_id,
-            item=issue.project_item_id,
-            field=project.status_field_id,
-            option=option,
-        )
+        self._set_status(issue.project_item_id, state)
 
     def add_tag(self, item_id: int, tag: str) -> None:
         """Add ``tag`` as a label (GitHub's add is idempotent, and creates the label)."""
-        self._run(
-            [
-                "api",
-                "--method",
-                "POST",
-                f"repos/{self._board.repository}/issues/{item_id}/labels",
-                "-f",
-                f"labels[]={tag}",
-            ]
-        )
+        self._add_label(item_id, tag)
 
     def remove_tag(self, item_id: int, tag: str) -> None:
         """Remove the ``tag`` label; a no-op when the issue does not carry it."""
@@ -464,20 +480,137 @@ class GhApiGitHub:
             ]
         )
 
-    # --- board writes (SQ5b) ---------------------------------------------------
+    # --- board writes -----------------------------------------------------------
 
     def create_increment(self, request: IncrementRequest, partial_item: int | None = None) -> int:
-        """Not yet supported: SQ5b builds GitHub's create."""
-        raise NotImplementedError(
-            f"the github provider cannot queue increments yet (origin {request.origin!r}); "
-            "board writes ship in SQ5b"
-        )
+        """Land a QUEUED issue in k ordered writes (:func:`create_step_count`), or finish one.
+
+        1. Create the issue with title and body, the Origin marker already in
+           the body (obligation 1).
+        2. Link the sub-issue parent.
+        3. Add each "blocked by" link.
+        4. Add the issue to the project.
+        5. Set the first queued Status.
+        6. Add :data:`COMMITTED_LABEL`: the commit (obligation 4). Until it
+           lands the issue is partial, in no bucket whatever a workflow or a
+           human does to its Status (obligations 2 and 3).
+
+        With ``partial_item``, the issue must be an open partial item carrying
+        ``request``'s Origin (a closed one would need a reopen); writes 2–5 are
+        made only where missing, then the commit. Status is read back once after
+        the commit (ADR-0006 decision 7): an "Item added to project" workflow
+        that sets a non-queued Status raises here. Detection, not a guarantee.
+        """
+        links: WorkItemLinks
+        if partial_item is None:
+            issue: _Issue = self._create_issue(request)
+            links = WorkItemLinks(parent_id=None, predecessor_ids=())
+        else:
+            raw: Mapping[str, object] = self._fetch_issue(partial_item)
+            issue = self._issue(raw)
+            marker: tuple[str, str] | None = split_origin_marker(issue.body)
+            if not issue.partial or marker is None or marker[1] != request.origin:
+                raise ValueError(
+                    f"issue #{partial_item} is not a partial item carrying origin "
+                    f"{request.origin!r}"
+                )
+            if not issue.is_open:
+                raise BoardValidationError(
+                    f"partial issue #{partial_item} is closed; finishing it would reopen it, "
+                    "which squadra never does"
+                )
+            links = self._links_of(raw, partial_item)
+        if links.parent_id is None:
+            self._graphql(
+                _ADD_SUB_ISSUE_MUTATION, parent=self._node_id(request.parent), child=issue.node_id
+            )
+        for predecessor in request.predecessors:
+            if predecessor not in links.predecessor_ids:
+                self._graphql(
+                    _ADD_BLOCKED_BY_MUTATION,
+                    issue=issue.node_id,
+                    blocking=self._node_id(predecessor),
+                )
+        project_item: str = issue.project_item_id or self._add_to_project(issue.node_id)
+        if issue.status not in self._states.get(Lifecycle.QUEUED, ()):
+            self._set_status(project_item, Lifecycle.QUEUED)
+        self._add_label(issue.number, COMMITTED_LABEL)
+        try:
+            landed: Lifecycle = self.item_state(issue.number)
+        except BoardValidationError as exc:
+            raise _not_queued(issue.number, str(exc)) from exc
+        if landed is not Lifecycle.QUEUED:
+            raise _not_queued(issue.number, f"it reads {landed.value}")
+        return issue.number
 
     def items_with_origin(self) -> tuple[OriginRecord, ...]:
-        """Not yet supported: SQ5b builds GitHub's Origin listing."""
-        raise NotImplementedError(
-            "the github provider cannot list increments by origin yet; board writes ship in SQ5b"
+        r"""Return every Origin-bearing issue of the repository, on the project or not.
+
+        Every bucket; partial issues with ``lifecycle`` ``None``. A committed
+        issue whose bucket :meth:`item_state` would refuse raises rather than
+        read as partial, so a retry never "finishes" (requeues) it. The body
+        comes back without the marker and with ``\n`` line ends.
+        """
+        records: list[OriginRecord] = []
+        for raw in self._repository_issues():
+            issue: _Issue = self._issue(raw)
+            marker: tuple[str, str] | None = split_origin_marker(issue.body)
+            if marker is None:
+                continue
+            links: WorkItemLinks = self._links_of(raw, issue.number)
+            records.append(
+                OriginRecord(
+                    item_id=issue.number,
+                    origin=marker[1],
+                    parent=links.parent_id,
+                    predecessors=links.predecessor_ids,
+                    title=issue.title,
+                    body=marker[0],
+                    lifecycle=None if issue.partial else self._bucket_of(issue),
+                )
+            )
+        return tuple(records)
+
+    def _create_issue(self, request: IncrementRequest) -> _Issue:
+        """Write 1: the issue with its title and body, the Origin marker in the body."""
+        out: str = self._run(
+            [
+                "api",
+                "--method",
+                "POST",
+                f"repos/{self._board.repository}/issues",
+                "-f",
+                f"title={request.title}",
+                "-f",
+                f"body={with_origin_marker(request.body, request.origin)}",
+            ]
         )
+        created: Mapping[str, object] = _obj(json.loads(out or "{}"))
+        number: object = created.get("number")
+        node_id: object = created.get("node_id")
+        if not isinstance(number, int) or not isinstance(node_id, str):
+            raise RuntimeError(f"unexpected create-issue response from GitHub: {out!r}")
+        return _Issue(
+            node_id=node_id,
+            number=number,
+            title=request.title,
+            is_open=True,
+            state_reason=None,
+            body=with_origin_marker(request.body, request.origin),
+            labels=(),
+            project_item_id=None,
+            status=None,
+        )
+
+    def _add_to_project(self, node_id: str) -> str:
+        """Add an issue to the project and return its item id (GitHub returns an existing one)."""
+        data: Mapping[str, object] = self._graphql(
+            _ADD_TO_PROJECT_MUTATION, project=self._project().project_id, content=node_id
+        )
+        item_id: object = _obj(_obj(data.get("addProjectV2ItemById")).get("item")).get("id")
+        if not isinstance(item_id, str):
+            raise RuntimeError(f"unexpected add-to-project response from GitHub: {dict(data)!r}")
+        return item_id
 
     # --- bucket rules ------------------------------------------------------------
 
@@ -538,6 +671,44 @@ class GhApiGitHub:
         if payload.get("errors"):
             raise RuntimeError(f"GitHub GraphQL error: {payload['errors']!r}")
         return _obj(payload.get("data"))
+
+    def _set_status(self, project_item: str, state: Lifecycle) -> None:
+        """Write the first Status option ``state`` maps onto a project item."""
+        names: tuple[str, ...] = self._states.get(state, ())
+        status: str = next((n for n in names if not n.startswith(CLOSED_PREFIX)), "")
+        project: _Project = self._project()
+        option: str | None = project.options.get(status)
+        if option is None:
+            raise BoardValidationError(
+                f"{state.value} maps to no Status option of the project; "
+                "fix squadra.toml [board.states]"
+            )
+        self._graphql(
+            _SET_STATUS_MUTATION,
+            project=project.project_id,
+            item=project_item,
+            field=project.status_field_id,
+            option=option,
+        )
+
+    def _add_label(self, item_id: int, label: str) -> None:
+        self._run(
+            [
+                "api",
+                "--method",
+                "POST",
+                f"repos/{self._board.repository}/issues/{item_id}/labels",
+                "-f",
+                f"labels[]={label}",
+            ]
+        )
+
+    def _node_id(self, item_id: int) -> str:
+        """Return the GraphQL id of an issue of this repository (links are written by id)."""
+        node_id: object = self._fetch_issue(item_id).get("id")
+        if not isinstance(node_id, str):
+            raise BoardValidationError(f"GitHub returned no id for issue #{item_id}")
+        return node_id
 
     def _project(self) -> _Project:
         """Resolve the project's id, its Status field and options, once."""
@@ -607,6 +778,26 @@ class GhApiGitHub:
                 return issues
             after = cursor
 
+    def _repository_issues(self) -> list[Mapping[str, object]]:
+        """Every issue of this board's repository, open and closed, with its detail."""
+        issues: list[Mapping[str, object]] = []
+        after: str | None = None
+        while True:
+            data: Mapping[str, object] = self._graphql(
+                _REPOSITORY_ISSUES_QUERY,
+                owner=self._board.repository_owner,
+                name=self._board.repository_name,
+                first=_PAGE_SIZE,
+                after=after,
+            )
+            page_of: Mapping[str, object] = _obj(_obj(data.get("repository")).get("issues"))
+            issues.extend(_obj(node) for node in _list(page_of.get("nodes")))
+            page: Mapping[str, object] = _obj(page_of.get("pageInfo"))
+            cursor: object = page.get("endCursor")
+            if page.get("hasNextPage") is not True or not isinstance(cursor, str):
+                return issues
+            after = cursor
+
     def _fetch_issue(self, item_id: int) -> Mapping[str, object]:
         """Fetch one issue of this repository with its project items and links."""
         data: Mapping[str, object] = self._graphql(
@@ -639,6 +830,23 @@ class GhApiGitHub:
         name: object = repository.get("nameWithOwner")
         return isinstance(name, str) and name.casefold() == self._board.repository.casefold()
 
+    def _links_of(self, raw: Mapping[str, object], item_id: int) -> WorkItemLinks:
+        """Read a fetched issue's sub-issue parent and "blocked by" issues."""
+        parent: int | None = None
+        if isinstance(raw.get("parent"), dict):
+            parent = self._local_number(_obj(raw.get("parent")), item_id, "parent")
+        blocked_by: Mapping[str, object] = _obj(raw.get("blockedBy"))
+        if _obj(blocked_by.get("pageInfo")).get("hasNextPage") is True:
+            raise BoardValidationError(
+                f"issue #{item_id} is blocked by more than {_PAGE_SIZE} issues; squadra "
+                "reads at most that many predecessors"
+            )
+        predecessors: tuple[int, ...] = tuple(
+            self._local_number(_obj(node), item_id, "blocked-by")
+            for node in _list(blocked_by.get("nodes"))
+        )
+        return WorkItemLinks(parent_id=parent, predecessor_ids=predecessors)
+
     def _local_number(self, linked: Mapping[str, object], item_id: int, kind: str) -> int:
         """Return the number of a linked issue, which must be in this board's repository."""
         number: object = linked.get("number")
@@ -659,6 +867,14 @@ def _partial_message(item_id: int) -> str:
     return (
         f"issue #{item_id} is partial: it carries an Origin but not the commit marker "
         f"{COMMITTED_LABEL!r}, so its create has not committed it and it is in no bucket"
+    )
+
+
+def _not_queued(item_id: int, why: str) -> BoardValidationError:
+    return BoardValidationError(
+        f'issue #{item_id} is committed but did not land queued ({why}); an "Item added to '
+        'project" workflow or a human set its Status. Turn that workflow off, or make it '
+        "set a queued Status (ADR-0006 decision 7), then fix the issue's Status by hand"
     )
 
 

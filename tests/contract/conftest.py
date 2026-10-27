@@ -3,9 +3,8 @@
 The ``BoardAccess`` suite runs against a freshly-seeded ADO-shaped fake, a
 GitHub-shaped fake, the registered fake provider (a JSON file under
 ``tmp_path``) and the real GitHub adapter over an in-memory GitHub (``gh``),
-under one shared logical seed, via the parametrized ``board`` fixture. The
-``fake_board`` fixture and the increment suites stay on the first three shapes
-until the GitHub adapter can create increments (ledger SQ5b). The deterministic ``CleanupAccess`` suite runs against BOTH
+under one shared logical seed, via the parametrized ``board`` fixture, and the
+``fake_board`` fixture over the same four (ledger SQ5b). The deterministic ``CleanupAccess`` suite runs against BOTH
 the real :class:`squadra.cleanup.DeterministicCleanup` (driven by a recording
 runner — no live git/docker) and an in-memory fake, via the parametrized
 ``cleanup`` fixture. The ``WorktreeAccess`` suite runs against the real
@@ -137,6 +136,10 @@ def seed_stubbed_github() -> StubbedGitHubBoard:
             status="Todo",
         )
     )
+    # The parents the increment suites queue under, off the project: GitHub links
+    # a sub-issue by its parent's id, so a parent must exist.
+    for epic in (PARENT_ID, 300, 999):
+        github.add(StubIssue(epic, f"epic {epic}", on_project=False))
     owner: str = REPOSITORY.split("/")[0]
     github.pulls.append(StubPull(f"{owner}:{PR_BRANCH}", "main", PR_URL, merged=True))
     github.pulls.append(StubPull(f"{owner}:feat/closed-unmerged", "main", "x", merged=False))
@@ -163,7 +166,9 @@ def seed_file_board(tmp_path: Path) -> RecordingFileBoard:
 
 
 def seed_fake(shape: str, tmp_path: Path) -> SeedableFakeBoard:
-    """One of the three fakes under the shared seed."""
+    """One of the four seedable shapes under the shared seed."""
+    if shape == "gh":
+        return seed_stubbed_github()
     if shape == "ado":
         return _seed_ado()
     if shape == "github":
@@ -171,23 +176,19 @@ def seed_fake(shape: str, tmp_path: Path) -> SeedableFakeBoard:
     return seed_file_board(tmp_path)
 
 
-# The fakes; every suite runs against these.
-SHAPES: tuple[str, ...] = ("ado", "github", "file")
-# Plus the real GitHub adapter over the in-memory GitHub: the BoardAccess suite only.
-BOARD_SHAPES: tuple[str, ...] = (*SHAPES, "gh")
+# The three fakes and the real GitHub adapter over the in-memory GitHub.
+SHAPES: tuple[str, ...] = ("ado", "github", "file", "gh")
 
 
-@pytest.fixture(params=BOARD_SHAPES)
+@pytest.fixture(params=SHAPES)
 def board(request: pytest.FixtureRequest, tmp_path: Path) -> BoardAccess:
     """A freshly-seeded conforming board of each shape (parametrized over all four)."""
-    if request.param == "gh":
-        return seed_stubbed_github()
     return seed_fake(request.param, tmp_path)
 
 
 @pytest.fixture(params=SHAPES)
 def fake_board(request: pytest.FixtureRequest, tmp_path: Path) -> SeedableFakeBoard:
-    """The ``board`` seed of each fake, typed concretely so tests can seed Origins by hand."""
+    """The ``board`` seed of each shape, typed concretely so tests can seed Origins by hand."""
     return seed_fake(request.param, tmp_path)
 
 
