@@ -34,6 +34,7 @@ from squadra.domain import (
     NoAction,
     OriginRecord,
     ParkNeedsDecision,
+    RelinquishClaim,
     RetryIncrement,
     SignalClaimable,
     State,
@@ -239,9 +240,12 @@ class LifecycleEngine:
     source of truth; ADR-0002 decision 3).
 
     ``decide`` is **total**: every combination of facts yields a decision and
-    none raises. Guards are evaluated in a fixed priority order — already-decided
-    board tags first (escalated / decision parks are terminal), then the
-    withdrawn bucket (terminal), then the done bucket (finalize vs. await PR),
+    none raises. Guards are evaluated in a fixed priority order — a fleet-claimed
+    withdrawn item first (withdrawn in flight: closure wins over the fleet's own
+    parks, and the claim is relinquished),
+    then already-decided board tags (escalated / decision parks are terminal),
+    then the withdrawn bucket (terminal), then the done bucket (finalize vs.
+    await PR, stopping a sandbox still running on a hand-closed item),
     then the in-flight classification (the completion triple, the failure edges,
     liveness), then the queued bucket (out of scope, then a withdrawn
     predecessor, then claimable vs. blocked). An orthogonal failed-teardown leak is appended to
@@ -274,6 +278,14 @@ class LifecycleEngine:
 
     def _classify(self, facts: LifecycleFacts) -> LifecycleDecision:  # noqa: PLR0911 - guard ladder
         """Derive the primary state + actions, ignoring the orthogonal leak sweep."""
+        # 0. Closure wins over the fleet's own parks: a fleet-claimed item someone
+        #    else withdrew (a human, or withdraw_increment racing a claim, N10) is
+        #    relinquished. Above the tag guards, so a decision park the human
+        #    closes is relinquished too: the close is the decision (ADR-0004
+        #    decision 1).
+        if facts.lifecycle is Lifecycle.WITHDRAWN and facts.is_fleet_claimed:
+            return LifecycleDecision(state=State.WITHDRAWN_IN_FLIGHT, actions=(RelinquishClaim(),))
+
         # 1. Already-escalated / already-decided board tags are terminal. A
         #    tagged failed item is escalated and never auto-retried; a tagged
         #    needs-decision item is parked for a human. These dominate every
@@ -283,8 +295,8 @@ class LifecycleEngine:
         if facts.needs_decision_tagged:
             return _terminal(State.PARKED_DECISION)
 
-        # 2. The withdrawn bucket is terminal: never claimed, never finalized,
-        #    whatever else is true of it.
+        # 2. The withdrawn bucket, unclaimed, is terminal: never claimed, never
+        #    finalized, whatever else is true of it.
         if facts.lifecycle is Lifecycle.WITHDRAWN:
             return _terminal(State.WITHDRAWN)
 
@@ -320,7 +332,12 @@ class LifecycleEngine:
         return _terminal(State.BLOCKED)
 
     def _classify_done(self, facts: LifecycleFacts) -> LifecycleDecision:
-        """Classify an increment in the done bucket (finalize vs. await PR vs. terminal)."""
+        """Classify an increment in the done bucket (finalize vs. await PR vs. terminal).
+
+        A fleet-claimed done item whose PR has not completed awaits it. If its
+        sandbox is still running (a human moved it to done by hand), the sandbox
+        is stopped; the tag, worktree and status stay, since finalize needs them.
+        """
         if not facts.is_fleet_claimed:
             return _terminal(State.DONE)
         if facts.completed_pr_url is not None:
@@ -328,6 +345,8 @@ class LifecycleEngine:
                 state=State.FINALIZING,
                 actions=(FinalizeCleanup(pr_url=facts.completed_pr_url),),
             )
+        if facts.container_running:
+            return LifecycleDecision(state=State.AWAITING_PR, actions=(StopContainer(),))
         return _terminal(State.AWAITING_PR)
 
     def _classify_inflight(  # noqa: PLR0911 - the in-flight guard ladder

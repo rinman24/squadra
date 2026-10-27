@@ -15,12 +15,16 @@ An increment with neither attribute is still an increment; the kind of change it
 _Avoid_: Slice, vertical slice, infrastructure increment
 
 **Attempt**:
-One claim of an Increment and all the work done under it: its branch, worktree, sandbox and, if any, PR. Its identity is the Increment plus its attempt number, counted from 1 and bounded by the attempt budget. A failed Attempt requeues the Increment, and the next claim starts the next Attempt from a fresh worktree.
+One claim of an Increment and all the work done under it: its branch, worktree, sandbox and, if any, PR. Its identity is the Increment plus its attempt number, counted from 1 and bounded by the attempt budget. A failed Attempt requeues the Increment, and the next claim starts the next Attempt from a fresh worktree. An Attempt also ends when its Increment is withdrawn in flight. The fleet relinquishes the claim, and nothing is requeued.
 _Avoid_: Run (a run is the Runner's session), retry as a noun (Retry stays a verb, as in RetryIncrement)
 
 **Withdrawn**:
 The terminal state of an Increment that will never be delivered: not claimable, not counted as done, reachable only before delivery. See ADR-0004.
 _Avoid_: Cancelled, dropped, closed (a provider's word: on GitHub a closed issue can be done or withdrawn)
+
+**Relinquish**:
+What the fleet does when an Increment it holds in flight (carries the fleet's claim) is withdrawn by someone else: it stops the sandbox, archives the worktree, parks `status.json` as `withdrawn`, removes its tags and drops the claim last. It writes no lifecycle state, and it leaves the branch and any PR for a human. The Increment stays Withdrawn and is not requeued. The Attempt's number is kept. See ADR-0004.
+_Avoid_: Release (squadra and its target repos release software), roll back and reap (both requeue), abandon, drop
 
 **Origin**:
 The opaque reference an outside caller attaches when it queues an Increment. It is unique on the board, never reused, and never parsed by squadra. It is not the Increment's identity.

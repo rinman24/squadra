@@ -5,6 +5,10 @@
 - Amends [ADR-0001](adr-0001-board-provider-seam.md) decision 1, which called
   QUEUED/ACTIVE/DONE "a genuine 3-bucket domain invariant". ADR-0001 is left as
   written; read its bucket list as superseded here.
+- Amended 2026-10-27 (squadra board-writes SQ5d, ledger N25): decision 1 and
+  its Consequences line, for an increment withdrawn in flight. Ruled by Rich in
+  board-knowledge `sessions/2026-10-27-juval-withdrawn-in-flight-release.md`;
+  named in `sessions/2026-10-27-eric-withdrawn-in-flight-names.md`.
 - Context origin: claude-skills `docs/design-to-board/LEDGER.md` decision DB-D1
   (board writes live in squadra), with the reasoning in board-knowledge
   `sessions/2026-10-09-eric-design-to-board-vocabulary.md` ("`Lifecycle.WITHDRAWN`").
@@ -32,7 +36,35 @@ tick; the second never does.
 
 1. `Lifecycle` has four buckets: QUEUED, ACTIVE, DONE and **WITHDRAWN**.
    WITHDRAWN is terminal: never claimed, never counted as done, never finalized
-   or reaped.
+   or reaped. *(Amended 2026-10-27.)* An item can still reach WITHDRAWN while
+   the fleet holds it in flight: a human withdraws it (on GitHub, closes the
+   issue as not planned, as a duplicate or with no reason), or
+   `withdraw_increment` re-reads it QUEUED and a claim lands before its write
+   (ledger N10). Such an item is neither finalized nor reaped: the fleet
+   **relinquishes** the claim, a third thing.
+   - The tick gathers WITHDRAWN items that still carry the fleet's `claimed`
+     tag, alongside QUEUED, ACTIVE and DONE. An unclaimed withdrawn item is
+     not the fleet's and is not gathered.
+   - The engine's first guard (step 0, above the tag guards) derives
+     `withdrawn-in-flight` with `RelinquishClaim` for a fleet-claimed WITHDRAWN
+     item, whatever its `failed`, `needs-decision` and parked facts: closure
+     wins over the fleet's own parks, and a decision park the human closes is
+     relinquished too. An unclaimed WITHDRAWN item stays `withdrawn`.
+   - Relinquishing writes **no lifecycle state**, so squadra still never moves
+     an item into WITHDRAWN from ACTIVE nor out of it (decision 2 holds). In
+     order, each step idempotent: tear the sandbox down; archive the worktree
+     and prune; park `status.json` as `withdrawn`; remove the other fleet tags;
+     post one `Relinquished` comment; remove `claimed` last. `claimed` is the
+     commit: a tick that ends partway leaves the item claimed and the next tick
+     relinquishes it again (at worst a second comment); once it is gone the
+     item is not gathered, so it is reported once.
+   - It does not delete the branch (finalize's job, gated on a merged PR),
+     close any PR, or delete `status.json` (losing it would reset the attempt
+     count on a reopen and bypass the retry cap).
+   - A fleet-claimed item moved to DONE by hand (on GitHub, closed as
+     completed) is delivery, not withdrawal: it stays `awaiting-pr` as before,
+     and a sandbox still running on it is stopped (`StopContainer`); the tag,
+     worktree and status stay for finalize.
 2. Transitions touching WITHDRAWN are a rule of the model, in
    `squadra.engines.check_transition`, not a property of a board:
    - QUEUED → WITHDRAWN is allowed.
@@ -71,8 +103,15 @@ The writer for WITHDRAWN is `withdraw_increment`
 - `validate_config` checks the Issue work-item type's states only. A predecessor
   of another type in a state the map does not cover raises at `item_state`.
 - `State` gains `WITHDRAWN` and `PREDECESSOR_WITHDRAWN`; `LifecycleFacts` gains
-  `predecessor_withdrawn`. The tick does not query the WITHDRAWN bucket: withdrawn
-  items are not fleet candidates and do not appear in `states={…}`.
+  `predecessor_withdrawn`. *(Amended 2026-10-27.)* The tick queries the
+  WITHDRAWN bucket for fleet-claimed items only: one appears in `states={…}` as
+  `withdrawn-in-flight` for the tick that relinquishes it, and never after.
+  Unclaimed withdrawn items are not fleet candidates and do not appear. On
+  GitHub the extra bucket costs no extra listing: the adapter memoizes the
+  project listing until its next write, so a gather lists the project once.
+- *(2026-10-27.)* `status.json`'s `parked_state` gains `withdrawn`, set by the
+  fleet only. An agent's `outcome.json` has its own list of parked states and
+  cannot declare it.
 - Every `BoardAccess` adapter, including the GitHub adapter to come, must honour
   rule 3. The contract suite's fakes do.
 

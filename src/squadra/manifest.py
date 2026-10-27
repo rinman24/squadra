@@ -25,16 +25,21 @@ from pathlib import Path
 from typing import Final, cast
 
 from squadra.domain import IncrementContext, OutcomeManifest
-from squadra.status import PARKED_STATES
 
 MANIFEST_FILENAME: Final[str] = "outcome.json"
 INCREMENT_CONTEXT_FILENAME: Final[str] = "increment.json"
 _SQUADRA_DIR: Final[str] = ".squadra"
 
-# The parked states a valid manifest may declare — the same canonical vocabulary
-# the status convention uses (``status.PARKED_STATES``); ``needs-decision`` is the
-# one that routes to the no-PR decision park.
-MANIFEST_PARKED_STATES: Final[tuple[str, ...]] = PARKED_STATES
+# The parked states a valid manifest may declare; ``needs-decision`` is the one
+# that routes to the no-PR decision park. Its own tuple, not an alias of
+# ``status.PARKED_STATES``: ``withdrawn`` is a park only the fleet sets (when it
+# relinquishes a claim), so it is not an outcome an agent can declare.
+MANIFEST_PARKED_STATES: Final[tuple[str, ...]] = (
+    "needs-decision",
+    "qa-ready",
+    "awaiting-pr-approval",
+    "failed",
+)
 _NEEDS_DECISION: Final[str] = "needs-decision"
 
 

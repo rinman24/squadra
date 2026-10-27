@@ -50,7 +50,7 @@ class Lifecycle(Enum):
     QUEUED = "queued"  # claimable / not started
     ACTIVE = "active"  # claimed / in-flight
     DONE = "done"  # finalize-eligible
-    WITHDRAWN = "withdrawn"  # terminal: never delivered, never claimed, never done
+    WITHDRAWN = "withdrawn"  # terminal: never delivered, not claimable, never done
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +169,14 @@ class Reaped:
 
 
 @dataclass(frozen=True, slots=True)
+class Relinquished:
+    """The fleet relinquished an increment withdrawn in flight; its branch and any PR stay."""
+
+    attempt: int
+    branch: str
+
+
+@dataclass(frozen=True, slots=True)
 class Escalated:
     """An increment exhausted its retry budget and was escalated to the failed tag."""
 
@@ -178,7 +186,7 @@ class Escalated:
 
 # The closed set of discussion events core emits. The adapter pattern-matches
 # this union to render native markup — a cleaner surface than inline f-strings.
-CommentEvent = Claimed | RolledBack | Finalized | Reaped | Escalated
+CommentEvent = Claimed | RolledBack | Finalized | Reaped | Relinquished | Escalated
 
 
 @dataclass(frozen=True, slots=True)
@@ -308,8 +316,14 @@ class State(Enum):
     - :attr:`FINALIZING` — the increment's PR has completed; deterministic cleanup
       (branch delete + worktree prune + ``compose down -v``) runs.
     - :attr:`DONE` — terminal: finalized and retired.
-    - :attr:`WITHDRAWN` — terminal: the increment itself was withdrawn; never
-      claimed, never finalized.
+    - :attr:`WITHDRAWN` — terminal: the increment itself was withdrawn and is
+      not held by the fleet: never claimed, or its claim relinquished; never
+      finalized.
+    - :attr:`WITHDRAWN_IN_FLIGHT` — someone else (a human, or a withdrawal
+      racing a claim) withdrew an increment the fleet holds in flight; the fleet
+      relinquishes the claim and writes no lifecycle state. Reported for one
+      tick: once the claim is dropped the item is not gathered, and reads
+      :attr:`WITHDRAWN` (ADR-0004 decision 1).
     - :attr:`ESCALATED` — terminal: retries exhausted, or an immediate-escalation
       edge (egress-denied) fired; tagged failed for a human.
     - :attr:`PARKED_DECISION` — terminal-for-the-fleet: parked awaiting a human
@@ -330,6 +344,7 @@ class State(Enum):
     FINALIZING = "finalizing"
     DONE = "done"
     WITHDRAWN = "withdrawn"
+    WITHDRAWN_IN_FLIGHT = "withdrawn-in-flight"
     ESCALATED = "escalated"
     PARKED_DECISION = "parked-decision"
 
@@ -532,6 +547,16 @@ class FinalizeCleanup:
 
 
 @dataclass(frozen=True, slots=True)
+class RelinquishClaim:
+    """Give back what the fleet holds on an increment withdrawn in flight; write no state.
+
+    Tears the sandbox down, archives the worktree, parks the status, drops the
+    fleet tags and posts one comment, dropping ``claimed`` last. Keeps the
+    branch, any PR and the status file (ADR-0004 decision 1).
+    """
+
+
+@dataclass(frozen=True, slots=True)
 class NoAction:
     """A terminal or wait state with nothing for the orchestrator to do."""
 
@@ -551,6 +576,7 @@ LifecycleAction = (
     | EscalateEgressDenied
     | SweepLeak
     | FinalizeCleanup
+    | RelinquishClaim
     | NoAction
 )
 

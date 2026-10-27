@@ -33,7 +33,7 @@ from typing import Final, Literal, cast
 from squadra.constants import FLEET_ROOT, STATUS_FILENAME
 
 Phase = Literal["claiming", "seams", "tdd", "qa", "parked", "done"]
-ParkedState = Literal["needs-decision", "qa-ready", "awaiting-pr-approval", "failed"]
+ParkedState = Literal["needs-decision", "qa-ready", "awaiting-pr-approval", "failed", "withdrawn"]
 
 PHASES: Final[tuple[Phase, ...]] = ("claiming", "seams", "tdd", "qa", "parked", "done")
 PARKED_STATES: Final[tuple[ParkedState, ...]] = (
@@ -41,6 +41,7 @@ PARKED_STATES: Final[tuple[ParkedState, ...]] = (
     "qa-ready",
     "awaiting-pr-approval",
     "failed",
+    "withdrawn",
 )
 
 _LOCK_FILENAME: Final[str] = ".status.lock"

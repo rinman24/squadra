@@ -184,7 +184,7 @@ repo's git (`**/.claude/fleet/`).
 | `worktree` | str | Absolute path of the increment's git worktree |
 | `pr_url` | str \| null | The increment's PR once opened |
 | `phase` | enum | `claiming` → `seams` → `tdd` → `qa` → `parked` → `done` |
-| `parked_state` | enum \| null | `needs-decision`, `qa-ready`, `awaiting-pr-approval`, `failed` — non-null iff `phase` is `parked` |
+| `parked_state` | enum \| null | `needs-decision`, `qa-ready`, `awaiting-pr-approval`, `failed`, `withdrawn` (set by the fleet only, when it relinquishes a claim; an agent's `outcome.json` cannot declare it) — non-null iff `phase` is `parked` |
 | `worker_roster` | list[str] | Worker sub-agents the runner fanned out |
 | `started_at` | str | ISO 8601 UTC, set at init |
 | `last_heartbeat` | str | ISO 8601 UTC, stamped every heartbeat interval while the runner process is alive |
@@ -428,9 +428,19 @@ withdrawn item is never claimed and never counts as done, so an in-scope `queued
 item behind a withdrawn predecessor can never become claimable: the tick reports
 it `predecessor-withdrawn`, distinct from `blocked` (a predecessor still in
 flight). Only re-planning on the board clears it. Withdrawal is reachable from
-`queued` only: a `done` increment is never withdrawn, and an `active` one is
-refused for now. squadra has no withdraw operation yet; a board state mapped to
-`withdrawn` is read, never written.
+`queued` only: a `done` increment is never withdrawn, and `squadra board
+withdraw` refuses an `active` one.
+
+Someone else can still withdraw an increment the fleet holds in flight: a human
+closes the GitHub issue as not planned, or a withdrawal races a claim. The next
+tick reports it `withdrawn-in-flight` and **relinquishes** the claim: it tears
+the sandbox down, archives the worktree, parks `status.json` as `withdrawn`,
+removes the fleet's tags, posts one comment and drops `claimed` last. It writes
+no lifecycle state, and keeps the branch, any PR and the status file (whose
+attempt count holds the retry cap if the item is reopened). From then on the
+item is unclaimed and the tick leaves it out. An in-flight item a human moves to
+`done` by hand (on GitHub, closed as completed) instead stays `awaiting-pr` with
+its sandbox stopped, and finalizes when its PR merges.
 
 ### Host-side git hardening (sandbox-escape control)
 

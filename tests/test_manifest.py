@@ -125,6 +125,15 @@ def test_read_manifest_unknown_parked_state_is_invalid(worktree: Path) -> None:
     assert read.valid is False
 
 
+def test_read_manifest_refuses_the_fleet_only_withdrawn_park(worktree: Path) -> None:
+    # The fleet parks a relinquished claim's status as withdrawn; an agent that
+    # declares it must not get the clean handoff (a PR) for it.
+    _write_manifest(worktree, {"parked_state": "withdrawn", "pr_title": "feat: x"})
+    read: ManifestRead = read_manifest(worktree)
+    assert read.present is True
+    assert read.valid is False
+
+
 def test_read_manifest_non_object_payload_is_invalid(worktree: Path) -> None:
     _write_manifest(worktree, ["not", "an", "object"])
     read: ManifestRead = read_manifest(worktree)
