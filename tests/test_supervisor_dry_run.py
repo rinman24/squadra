@@ -23,6 +23,7 @@ from squadra.cleanup import DeterministicCleanup
 from squadra.config import SquadraConfig
 from squadra.domain import IncrementRequest, Lifecycle, SandboxExited
 from squadra.dry_run import DryRunCleanup, DryRunWorktree
+from squadra.remote_auth import RemoteAuthProbe
 from squadra.sandbox import ComposeSandbox, DryRunSandbox
 from squadra.status import FleetStatus, load, write
 from squadra.supervisor import (
@@ -143,17 +144,17 @@ def test_dry_run_skips_the_pat_probe_but_still_plans_the_claim(
     make_config: Callable[..., SquadraConfig],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # Claimable work normally triggers the PAT preflight; in dry-run even the probe
+    # Claimable work normally triggers the remote preflight; in dry-run even the probe
     # is a side effect (a spawned `git ls-remote`), so it must be skipped-and-logged.
     make_issue(50, title="feat: fresh increment")
 
-    def _probe_must_not_run() -> bool:
-        raise AssertionError("dry-run must never invoke the real PAT probe")
+    def _probe_must_not_run() -> RemoteAuthProbe:
+        raise AssertionError("dry-run must never invoke the real remote probe")
 
-    seams: TickSeams = dry_run_seams(make_seams(pat_ok=_probe_must_not_run))
+    seams: TickSeams = dry_run_seams(make_seams(remote_auth=_probe_must_not_run))
     assert run_tick(seams, make_config()) == 0
     out: str = capsys.readouterr().out
-    assert "WOULD run the ADO PAT auth preflight" in out
+    assert "WOULD run the git remote auth preflight" in out
     assert "WOULD launch sandbox squadra-test-fleet-increment-50" in out
     assert fake_sandbox.launches == []
 
@@ -175,7 +176,7 @@ def test_build_seams_wraps_every_mutating_seam_in_dry_run(
     assert isinstance(dry.cleanup, DryRunCleanup)
     assert isinstance(dry.worktree, DryRunWorktree)
     # The callable mutating seams differ from the production defaults...
-    assert dry.pat_ok is not real.pat_ok
+    assert dry.remote_auth is not real.remote_auth
     assert dry.auth_ok is not real.auth_ok
     assert dry.write_context is not real.write_context
     assert dry.update_status is not real.update_status

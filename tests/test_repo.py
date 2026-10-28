@@ -4,8 +4,9 @@ Drives :func:`ensure_app_repo` against a canned git runner (no live git) and a
 temp ``fleet_home`` to cover the clone-if-absent / fetch-(reset)-if-present
 branches, the dry-run no-clobber path, and the load-bearing security properties:
 the PAT never appears in argv, and every host-side op pins ``core.hooksPath``.
-Also covers the PAT auth probe (:func:`target_remote_url` / :func:`remote_auth_ok`)
-the supervisor's claim-only preflight depends on.
+Also covers the remote auth probe (:func:`target_remote_url` / :func:`remote_auth_ok`)
+the supervisor's claim-only preflight depends on. The per-host credential
+boundary itself is covered in ``tests/test_remote_auth.py``.
 """
 
 from collections.abc import Sequence
@@ -40,7 +41,9 @@ class _CannedGit:
 
     @property
     def verbs(self) -> list[str]:
-        return [next((a for a in c if a in {"clone", "fetch", "reset"}), "") for c in self.calls]
+        # The remote ops only; ``remote get-url`` (resolving origin's credential) is a read.
+        ops: set[str] = {"clone", "fetch", "reset"}
+        return [verb for c in self.calls for verb in c if verb in ops]
 
 
 def test_clones_when_absent(tmp_path: Path) -> None:
@@ -99,6 +102,8 @@ def test_pat_never_in_argv_and_hooks_pinned(tmp_path: Path) -> None:
 
     for call in git.calls:
         joined: str = " ".join(call)
+        if "get-url" in call:
+            continue  # a local read, not a remote op
         # The credential helper carries only the *variable reference*, never a value.
         assert "$AZURE_DEVOPS_EXT_PAT" in joined
         assert "credential.helper=" in joined
@@ -123,7 +128,22 @@ def test_from_env_resolves_url_and_home(tmp_path: Path) -> None:
     assert git.verbs == ["clone"]
 
 
-# --- PAT auth probe (target_remote_url / remote_auth_ok) ----------------------
+def test_unknown_host_clone_fails_closed(tmp_path: Path) -> None:
+    git = _CannedGit()
+    url: str = "https://gitlab.example.com/owner/app.git"
+    assert ensure_app_repo(repo_url=url, fleet_home=tmp_path / "app", run=git) is False
+    assert git.calls == []  # no credential, so no remote op at all
+
+
+def test_unknown_host_fetch_fails_closed(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir()
+    git = _CannedGit()
+    url: str = "https://gitlab.example.com/owner/app.git"
+    assert ensure_app_repo(repo_url=url, fleet_home=tmp_path, run=git) is False
+    assert git.verbs == []  # resolved origin (a read), then no fetch
+
+
+# --- remote auth probe (target_remote_url / remote_auth_ok) -------------------
 
 
 class _StubGit:
@@ -196,3 +216,9 @@ def test_remote_auth_ok_false_on_timeout() -> None:
 def test_remote_auth_ok_false_when_git_missing() -> None:
     git = _StubGit(raises=FileNotFoundError("git"))
     assert remote_auth_ok(_REPO_URL, run=git) is False
+
+
+def test_remote_auth_ok_unknown_host_fails_closed_without_git() -> None:
+    git = _StubGit(returncode=0)
+    assert remote_auth_ok("https://gitlab.example.com/owner/app.git", run=git) is False
+    assert git.calls == []

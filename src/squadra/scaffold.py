@@ -79,8 +79,9 @@ def render_squadra_toml(provider: str = DEFAULT_PROVIDER) -> str:
 # Operational/secret knobs are ENV-ONLY (not in this file): FLEET_MAX_RUNNERS,
 # FLEET_HEARTBEAT_INTERVAL_SECONDS, FLEET_STALENESS_THRESHOLD_SECONDS,
 # FLEET_MAX_ATTEMPTS, FLEET_MODEL, FLEET_EFFORT, FLEET_HOME, FLEET_ROOT,
-# FLEET_PYTHON, and the provider PAT (e.g. AZURE_DEVOPS_EXT_PAT). Set those in
-# the environment, not here.
+# FLEET_PYTHON, and the credentials (the ADO PAT in AZURE_DEVOPS_EXT_PAT, gh's
+# GH_TOKEN). Host-side git picks its credential by the target remote's host, not
+# by [board].provider. Set those in the environment, not here.
 
 [fleet]
 # REQUIRED, no default: this fleet's name, its identity. Lowercase letters,

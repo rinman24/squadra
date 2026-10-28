@@ -7,11 +7,12 @@ removes that manual step: ``squadra fleet-tick`` calls :func:`ensure_app_repo`
 before each tick, so the host self-heals to a fresh checkout — clone if absent,
 fetch (+ reset to the remote base) if present.
 
-Auth is HTTPS + PAT via an *env-var* credential helper: the PAT is read from the
-process environment (``AZURE_DEVOPS_EXT_PAT``, applied by the fleet-tick secret
-bootstrap) at git time and is **never** written to ``.git/config`` or any file —
-the helper string carries only the variable *reference*, not its value (the
-repo-local env-var helper pattern). Every
+Auth is whatever :mod:`squadra.remote_auth` resolves for the remote's host
+(an Azure DevOps PAT from ``$AZURE_DEVOPS_EXT_PAT``, the gh CLI's github.com
+credential, or the host's ssh key); no secret is ever written to ``.git/config``
+or argv. :class:`TargetRemote` resolves ``FLEET_HOME``'s remote and its
+credential once, for both the supervisor's preflight and the claim's worktree
+fetch, so the two cannot authenticate differently. Every
 host-side git argv here is built through :mod:`squadra.git_host`, so it pins
 ``core.hooksPath=/dev/null`` (and, on a checkout op, a narrowly-scoped
 ``safe.directory``) — the centralized #193 hardening that keeps a planted hook
@@ -26,11 +27,18 @@ import subprocess
 from typing import Final
 from urllib.parse import unquote
 
-from squadra.git_host import host_git_argv, with_hooks_guard
+from squadra.git_host import host_git_argv
+from squadra.remote_auth import (
+    RemoteAuthProbe,
+    RemoteCredential,
+    credential_for,
+    remote_git_argv,
+    remote_host,
+)
 
 DEFAULT_BASE_BRANCH: Final[str] = "main"
 
-# A PAT auth probe (`git ls-remote`) must fail fast, never hang: bound it so a
+# A remote auth probe (`git ls-remote`) must fail fast, never hang: bound it so a
 # stalled connection cannot stall the whole tick.
 LS_REMOTE_TIMEOUT_SECONDS: Final[float] = 30.0
 
@@ -43,15 +51,6 @@ BASE_BRANCH_ENV: Final[str] = "FLEET_BASE_BRANCH"
 # carries the host-side hooks guard (and, on a checkout op, a narrow
 # ``safe.directory``) — see that module for the #193 threat model.
 GitRun = Callable[[Sequence[str]], "subprocess.CompletedProcess[str]"]
-
-# An env-var credential helper: reset any inherited helper, then one that reads
-# the PAT from the environment. No secret is persisted — only the var reference.
-_CREDENTIAL_HELPER: Final[tuple[str, ...]] = (
-    "-c",
-    "credential.helper=",
-    "-c",
-    'credential.helper=!f() { echo username=pat; echo "password=$AZURE_DEVOPS_EXT_PAT"; }; f',
-)
 
 # Azure DevOps remotes, each capturing (org, project, repo): HTTPS on dev.azure.com
 # (the project segment is absent when the repo is named after its project), HTTPS on
@@ -90,8 +89,8 @@ def _run_git_probe(args: Sequence[str]) -> "subprocess.CompletedProcess[str]":
     ``GIT_TERMINAL_PROMPT=0`` turns a rejected/expired credential into a fast
     non-zero exit instead of an interactive username/password prompt that would
     hang an unattended tick, and the timeout bounds a stalled network probe. The
-    PAT still reaches git through the env-var credential helper (see
-    :data:`_CREDENTIAL_HELPER`); only the *interactive fallback* is disabled.
+    credential still reaches git through the remote's credential helper (see
+    :mod:`squadra.remote_auth`); only the *interactive fallback* is disabled.
     """
     return subprocess.run(
         list(args),
@@ -114,24 +113,34 @@ def ensure_app_repo(
     """Ensure ``fleet_home`` is a current checkout of ``repo_url``; return success.
 
     - **Absent** (no ``.git``): ``git clone`` ``repo_url`` into ``fleet_home``
-      over HTTPS+PAT (always — a tick cannot run without a checkout, even a
-      dry-run one).
+      with ``repo_url``'s credential (always — a tick cannot run without a
+      checkout, even a dry-run one).
     - **Present**: ``git fetch origin``, and when ``mutate`` is true,
       ``git reset --hard origin/<base_branch>`` so the host tracks the remote
       exactly. ``mutate=False`` (a dry-run tick) fetches only — it proves remote
       connectivity without clobbering the working tree.
 
-    The PAT is supplied to git via the env-var credential helper (read from
-    ``AZURE_DEVOPS_EXT_PAT`` in the process env); it never reaches argv or disk.
+    The fetch authenticates as ``origin``'s host requires (``repo_url`` when the
+    checkout has no ``origin``). A remote with no credential
+    (:func:`squadra.remote_auth.credential_for` is ``None``) fails closed: no
+    git remote op runs and the result is ``False``.
     """
     git_dir: Path = fleet_home / ".git"
     if not git_dir.is_dir():
+        clone_credential: RemoteCredential | None = credential_for(repo_url)
+        if clone_credential is None:
+            return False
         # clone targets a fresh dir (no existing checkout to exempt): hooks guard
         # + credential helper, no ``safe.directory``/``-C``.
-        cloned = run(with_hooks_guard(_CREDENTIAL_HELPER, "clone", repo_url, str(fleet_home)))
+        cloned = run(remote_git_argv(clone_credential, "clone", repo_url, str(fleet_home)))
         return cloned.returncode == 0
 
-    fetched = run(host_git_argv(*_CREDENTIAL_HELPER, "fetch", "origin", work_dir=fleet_home))
+    credential: RemoteCredential | None = TargetRemote(
+        fleet_home, run=run, environ={APP_REPO_URL_ENV: repo_url}
+    ).credential()
+    if credential is None:
+        return False
+    fetched = run(remote_git_argv(credential, "fetch", "origin", work_dir=fleet_home))
     if fetched.returncode != 0:
         return False
     if not mutate:
@@ -236,20 +245,79 @@ def fleet_repository(fleet_home: Path, app_repo_url: str, *, run: GitRun = _run_
     return repository_identity(url) if url is not None else None
 
 
-def remote_auth_ok(remote_url: str, *, run: GitRun = _run_git_probe) -> bool:
-    """Whether the ambient PAT authenticates against ``remote_url`` over HTTPS.
-
-    Probes the *exact* auth path every host-side git op uses: ``git ls-remote``
-    with the env-var PAT credential helper and the hooks guard, so the probe
-    cannot pass while a real clone/fetch/push would fail. Any failure mode — a
-    rejected or expired PAT, a wrong-scope PAT, an unreachable/missing remote, a
-    timeout, or no ``git`` binary — reads as not-OK. The PAT is supplied via the
-    credential helper from the environment and never appears in argv.
-    """
+def _ls_remote_ok(remote_url: str, credential: RemoteCredential, run: GitRun) -> bool:
+    """Whether ``git ls-remote`` with ``credential`` succeeds against ``remote_url``."""
     try:
         completed: subprocess.CompletedProcess[str] = run(
-            with_hooks_guard(_CREDENTIAL_HELPER, "ls-remote", remote_url)
+            remote_git_argv(credential, "ls-remote", remote_url)
         )
     except (subprocess.TimeoutExpired, OSError):
         return False
     return completed.returncode == 0
+
+
+def remote_auth_ok(remote_url: str, *, run: GitRun = _run_git_probe) -> bool:
+    """Whether host-side git authenticates against ``remote_url`` with its credential.
+
+    Runs ``git ls-remote`` with :func:`squadra.remote_auth.credential_for`'s
+    credential and the hooks guard. A remote with no credential is ``False``
+    without running git; so is any git failure — a rejected or expired
+    credential, an unreachable remote, a timeout, or no ``git`` binary.
+    """
+    credential: RemoteCredential | None = credential_for(remote_url)
+    if credential is None:
+        return False
+    return _ls_remote_ok(remote_url, credential, run)
+
+
+class TargetRemote:
+    """The remote ``FLEET_HOME`` talks to, and the credential host-side git uses for it.
+
+    One instance backs both the supervisor's preflight (:meth:`probe`) and the
+    claim's worktree fetch (:meth:`credential`), each resolving the remote with
+    :func:`target_remote_url` and its credential with
+    :func:`squadra.remote_auth.credential_for`. So the probe runs the claim's
+    exact auth path and cannot pass while the claim's fetch would authenticate
+    some other way. Resolution happens on each call, never cached: a tick sees
+    the remote as it is when it claims.
+    """
+
+    def __init__(
+        self,
+        fleet_home: Path,
+        *,
+        run: GitRun | None = None,
+        probe_run: GitRun | None = None,
+        environ: Mapping[str, str] | None = None,
+    ) -> None:
+        """Bind to ``fleet_home``, its git runners (the test seams) and an env."""
+        self._fleet_home = fleet_home
+        self._run: GitRun = run if run is not None else _run_git
+        self._probe_run: GitRun = probe_run if probe_run is not None else _run_git_probe
+        self._environ = environ
+
+    def _url(self) -> str | None:
+        """Resolve the target remote's URL (``origin``, else ``FLEET_APP_REPO_URL``)."""
+        return target_remote_url(self._fleet_home, run=self._run, environ=self._environ)
+
+    def credential(self) -> RemoteCredential | None:
+        """Resolve the target remote's credential, or ``None`` (no remote, or no credential)."""
+        url: str | None = self._url()
+        return credential_for(url) if url is not None else None
+
+    def probe(self) -> RemoteAuthProbe:
+        """Run the preflight: ``git ls-remote`` against the target remote with its credential.
+
+        Fails closed: no remote, or a host with no credential, is not-OK without
+        any network op. The result names the credential tried, for the log.
+        """
+        url: str | None = self._url()
+        if url is None:
+            return RemoteAuthProbe(ok=False)
+        parsed: tuple[str, str] | None = remote_host(url)
+        host: str | None = parsed[1] if parsed is not None else None
+        credential: RemoteCredential | None = credential_for(url)
+        if credential is None:
+            return RemoteAuthProbe(ok=False, host=host)
+        ok: bool = _ls_remote_ok(url, credential, self._probe_run)
+        return RemoteAuthProbe(ok=ok, host=host, credential=credential)

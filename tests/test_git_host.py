@@ -24,6 +24,7 @@ import subprocess
 
 from squadra.cleanup import DeterministicCleanup
 from squadra.git_host import HOOKS_GUARD, host_git_argv, with_hooks_guard
+from squadra.remote_auth import CredentialKind, RemoteCredential
 from squadra.worktree import GitWorktreeAccess
 
 # --- unit: argv construction -------------------------------------------------
@@ -123,7 +124,10 @@ def test_worktree_create_does_not_fire_a_planted_hook(tmp_path: Path) -> None:
     _init_repo(repo)
     marker: Path = _plant_reference_transaction_hook(repo)
 
-    wt = GitWorktreeAccess(fleet_home=repo, run=_run_quiet)
+    # The origin is a local bare repo, which has no remote credential: stand in an
+    # SSH-shaped one (no ``-c`` overrides) so the real fetch runs against it.
+    local = RemoteCredential(CredentialKind.SSH, "localhost", ())
+    wt = GitWorktreeAccess(fleet_home=repo, run=_run_quiet, credential=lambda: local)
     # worktree add -b creates a branch ref -> would fire reference-transaction.
     result = wt.create(
         branch="feat/increment-x",

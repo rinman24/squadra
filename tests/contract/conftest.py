@@ -26,6 +26,7 @@ from squadra.board import BoardAccess
 from squadra.cleanup import CleanupAccess, DeterministicCleanup
 from squadra.config import ClaimScope
 from squadra.domain import Lifecycle, SandboxSpec, Tags
+from squadra.remote_auth import credential_for
 from squadra.worktree import GitWorktreeAccess, WorktreeAccess
 from tests.helpers.board_fakes import (
     ADO_STATES_WITH_WITHDRAWN,
@@ -245,7 +246,12 @@ def worktree(request: pytest.FixtureRequest) -> WorktreeAccess:
     """A conforming ``WorktreeAccess`` of each shape (real adapter + in-memory fake)."""
     shape: str = request.param
     if shape == "real":
-        return GitWorktreeAccess(fleet_home="/repo", run=_all_succeed, move=_noop_move)
+        return GitWorktreeAccess(
+            fleet_home="/repo",
+            run=_all_succeed,
+            credential=lambda: credential_for("git@github.com:owner/app.git"),
+            move=_noop_move,
+        )
     return FakeWorktree()
 
 

@@ -133,7 +133,8 @@ Operational and secret knobs stay **env-only** with the defaults in
 [Constants](#constants): `FLEET_MAX_RUNNERS`, the intervals
 (`FLEET_TICK_INTERVAL_SECONDS`, `FLEET_HEARTBEAT_INTERVAL_SECONDS`,
 `FLEET_STALENESS_THRESHOLD_SECONDS`), `FLEET_MAX_ATTEMPTS`,
-`FLEET_MODEL`/`FLEET_EFFORT`, `FLEET_HOME`/`FLEET_ROOT`/`FLEET_PYTHON`, and the PAT.
+`FLEET_MODEL`/`FLEET_EFFORT`, `FLEET_HOME`/`FLEET_ROOT`/`FLEET_PYTHON`, and the
+credentials (the ADO PAT in `AZURE_DEVOPS_EXT_PAT`, gh's `GH_TOKEN`).
 These are not in `squadra.toml`.
 
 Safety is **validate-against-board, not mandatory typing**, with one deliberate
@@ -347,19 +348,35 @@ another provider the adapter substitutes that board's configured names.
    launch rolls the claim back (tag removed, `Doing → To Do`, comment), so no
    increment is stranded.
 
-Only **claim/launch** depends on credentials beyond the board reads: a working
-ADO PAT (claiming an increment does host-side git remote ops — worktree create off
-`origin/main`, then push — over HTTPS+PAT, no SSH key) and a working `claude`
-(the contained runner is the fleet's single LLM call — finalize and reap are
-deterministic). A tick with claim work pending runs **two preflights** first, in
+Only **claim/launch** depends on credentials beyond the board reads: working git
+auth to the target remote (claiming an increment does host-side git remote ops —
+worktree create off `origin/main`, then push) and a working `claude` (the
+contained runner is the fleet's single LLM call — finalize and reap are
+deterministic).
+
+The git credential follows the **target remote's host**, never `[board].provider`
+(an ADO board over a GitHub repository is a valid fleet). `squadra.remote_auth`
+is the one boundary every host-side clone, fetch and ls-remote (and, when wired,
+push) goes through:
+
+| Target remote | Credential |
+|---|---|
+| `https://dev.azure.com/…`, `https://<org>.visualstudio.com/…` | the ADO PAT in `AZURE_DEVOPS_EXT_PAT`, via an env-var credential helper (never in argv or `.git/config`) |
+| `https://github.com/…` | the gh CLI's own (`gh auth git-credential`: `GH_TOKEN`/`GITHUB_TOKEN`, else the `gh auth login` session), the auth the GitHub board adapter already uses |
+| SSH to `github.com`, `ssh.dev.azure.com`, `vs-ssh.visualstudio.com` | the host's ssh key (ssh-agent / `~/.ssh`); credential helpers do not apply to SSH |
+| anything else (another host, plain `http`, a local path) | none: fail closed |
+
+Both HTTPS credentials reset inherited helpers first, so a keychain cannot answer
+in their place. A tick with claim work pending runs **two preflights** first, in
 order, and short-circuits on the first failure:
 
-1. **PAT preflight** — `git ls-remote` against the target remote (the live
-   checkout's `origin`, else `FLEET_APP_REPO_URL`) using the env-var PAT
-   credential helper, non-interactively (`GIT_TERMINAL_PROMPT=0`) with a 30s
-   timeout. This exercises the exact auth path every host-side git op uses, so it
-   cannot pass while a real claim's git op fails. A rejected/expired/wrong-scope
-   PAT, an unreachable remote, a timeout, or no `git` all read as a failure.
+1. **Remote preflight** — `git ls-remote` against the target remote (the live
+   checkout's `origin`, else `FLEET_APP_REPO_URL`) with that remote's credential,
+   non-interactively (`GIT_TERMINAL_PROMPT=0`) with a 30s timeout. The claim's
+   worktree fetch resolves the same remote and credential through the same
+   `TargetRemote`, so the probe cannot pass while the claim's fetch authenticates
+   another way. A rejected/expired/wrong-scope credential, a remote with no
+   credential, an unreachable remote, a timeout, or no `git` all read as a failure.
 2. **claude preflight** — a throwaway
    `claude -p 'reply READY' --dangerously-skip-permissions --model "$FLEET_MODEL"`
    probe with a 120s hard timeout, passing only on exit 0 plus `READY` in stdout
@@ -368,11 +385,14 @@ order, and short-circuits on the first failure:
 On either failed probe the tick **degrades to the reap pass only** — every
 claim/launch decision is dropped (no increment is claimed, no `To Do → Doing`, no
 `fleet:claimed`), while in-flight finalize and reap still proceed — and retries
-next tick. The PAT failure logs one actionable line naming the `fleet-ado-pat`
-Key Vault secret and the rotation runbook (the consuming repo's
-`docs/contributing/afk-fleet.md` → *Key Vault secrets & PAT rotation*). The PAT
-probe runs first, so a dead PAT never pays to spawn `claude`. Idle, saturated,
-and finalize-only ticks never pay for either probe.
+next tick. The remote failure logs one actionable line naming the credential it
+tried: for an ADO remote, the `fleet-ado-pat` Key Vault secret and the rotation
+runbook (the consuming repo's `docs/contributing/afk-fleet.md` → *Key Vault
+secrets & PAT rotation*); for github.com over HTTPS, `gh auth status` and
+`GH_TOKEN`/`gh auth login`; for SSH, the host's ssh key; for any other remote,
+that it has no credential. The remote probe runs first, so a dead credential
+never pays to spawn `claude`. Idle, saturated, and finalize-only ticks never pay
+for either probe.
 
 **Finalize** retires increments that are truly done: Issue `Done` *and* a completed
 PR for the increment branch. For each, it runs the consuming repo's
@@ -396,7 +416,7 @@ attempt+1, and exhausted retries escalate to `fleet:failed` instead.
 and reports the would-be actions, with every side effect suppressed at the
 `TickSeams` boundary (`dry_run_seams`): board writes become logged
 `[dry-run] WOULD …` no-ops, no runner pane launches, neither preflight probe runs
-(no `git ls-remote` for the PAT, no `claude` spawn for auth), no worktree is
+(no `git ls-remote` for the remote, no `claude` spawn for auth), no worktree is
 archived, no local status/marker file is written. Safety is the wrapped boundary,
 not a flag inside the passes, so a future pass cannot forget to honor it. Only the
 tick lock and the supervisor log are still written — coordination artifacts,
@@ -521,8 +541,8 @@ The increment agent runs in a sandbox with the increment worktree bind-mounted a
 `/work`, and it commits there — so a prompt-injected or misbehaving agent can
 plant a git hook (`pre-push`, `post-checkout`, …) or set `core.hooksPath` to an
 agent-controlled directory inside the worktree. Host-side git ops later run
-against that same worktree in the **supervisor** context, which holds the ADO PAT
-and the VM managed identity. A hook firing there would be a sandbox escape into
+against that same worktree in the **supervisor** context, which holds the git
+credential (the ADO PAT, or gh's token) and the VM managed identity. A hook firing there would be a sandbox escape into
 the credential-holding host.
 
 squadra closes this by routing **every** host-side git invocation through
@@ -561,7 +581,7 @@ Nothing starts the fleet automatically, and nothing loads until
 - **A dry run first** (the safest first step): `squadra tick --dry-run` (or
   `FLEET_DRY_RUN=1`) runs the full finalize/reap/claim read+plan logic and logs
   every action a real tick WOULD take, but cannot mutate — board writes, runner
-  launches, the preflight probes (the PAT `git ls-remote` and the `claude` auth
+  launches, the preflight probes (the remote `git ls-remote` and the `claude` auth
   spawn), and local fleet-state writes are all suppressed at the seams. Ticks log to
   `$FLEET_ROOT/supervisor.log`, so review the plan with `squadra log`.
 - **One tick by hand**: `squadra tick` — logs to `$FLEET_ROOT/supervisor.log`.
