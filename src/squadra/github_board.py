@@ -32,6 +32,7 @@ a just-created partial item it missed would make the retry create a duplicate.
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 import json
+import re
 import subprocess
 from typing import Final, cast
 from urllib.parse import quote
@@ -145,6 +146,25 @@ def create_step_count(request: IncrementRequest) -> int:
     add it to the project, set its Status, add the commit marker.
     """
     return 5 + len(request.predecessors)
+
+
+# A GitHub remote URL: ``https://host/owner/name(.git)``, ``ssh://git@host/owner/name(.git)``
+# or scp-like ``git@host:owner/name(.git)``. The host is not compared: the
+# adapter reaches whichever host ``gh`` is logged into.
+_REMOTE_PATH: Final[re.Pattern[str]] = re.compile(
+    r"^(?:[a-z+]+://(?:[^@/]+@)?[^/]+/|[^@:/]+@[^:/]+:)([^/]+)/([^/]+?)(?:\.git)?/?$"
+)
+
+
+def github_repository_of(url: str) -> str | None:
+    """Return the ``owner/name`` a GitHub remote URL points at, lowercased, or ``None``.
+
+    Lowercased because GitHub owner and repository names are case-insensitive.
+    """
+    match: re.Match[str] | None = _REMOTE_PATH.match(url.strip())
+    if match is None:
+        return None
+    return f"{match.group(1)}/{match.group(2)}".lower()
 
 
 def _run_gh(args: Sequence[str]) -> str:
@@ -285,6 +305,7 @@ class GhApiGitHub:
         tags: Tags = Tags(),
         claim_scope: ClaimScope,
         parent_scope_ids: tuple[int, ...],
+        read_origin: Callable[[], str | None],
     ) -> None:
         """Wire the adapter to ``[board.github]``, its ``gh`` runner and the state map.
 
@@ -294,7 +315,9 @@ class GhApiGitHub:
         tick's gather of every bucket costs one listing (the supervisor builds
         its seams once per tick); a write by anyone else is not seen until then.
         ``claim_scope`` and ``parent_scope_ids`` are ``[board]``'s, with no
-        default (WSQ1).
+        default (WSQ1). ``read_origin`` returns ``FLEET_HOME``'s ``origin`` URL
+        (``repo.target_remote_url``), which :meth:`validate_config` checks is
+        the board's repository; no default, so the check cannot be skipped.
         """
         self._board = board
         self._run = run
@@ -303,6 +326,7 @@ class GhApiGitHub:
         self._tags = tags
         self._claim_scope = claim_scope
         self._parent_scope_ids = parent_scope_ids
+        self._read_origin = read_origin
         self._project_cache: _Project | None = None
         self._listing: list[_Issue] | None = None
 
@@ -367,6 +391,19 @@ class GhApiGitHub:
                 return url
         return None
 
+    def _validate_origin(self) -> None:
+        """Fail closed unless ``origin`` is ``[board.github].repository``."""
+        url: str | None = self._read_origin()
+        origin: str | None = github_repository_of(url) if url is not None else None
+        if origin is None or origin != self._board.repository.lower():
+            # Only the parsed owner/name is shown: an HTTPS URL may carry a token.
+            found: str = origin or ("no GitHub owner/name" if url else "no origin remote")
+            raise BoardValidationError(
+                f"[board.github].repository {self._board.repository!r} is not FLEET_HOME's "
+                f"origin ({found}): a fleet is one repository, so the board's issues and "
+                "the pushed branches must be the same repository"
+            )
+
     def validate_config(self) -> None:
         """Check ``[board.states]`` against the project's Status options and the closed names.
 
@@ -375,8 +412,12 @@ class GhApiGitHub:
         top, no Status option may look like a closed name; closure is never
         QUEUED or ACTIVE; ``closed:completed`` is DONE and ``closed:not_planned``
         WITHDRAWN, the two closes :meth:`set_state` makes; and the commit marker
-        lies outside the fleet's tag namespace.
+        lies outside the fleet's tag namespace. First of all, the board's
+        repository must be ``FLEET_HOME``'s ``origin`` (N34): branches are pushed
+        to ``origin`` and :meth:`completed_pr_url` looks in the repository, so
+        a mismatch never finalizes.
         """
+        self._validate_origin()
         options: set[str] = set(self._project().options)
         clashing: list[str] = sorted(name for name in options if name.startswith(CLOSED_PREFIX))
         if clashing:

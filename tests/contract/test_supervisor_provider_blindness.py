@@ -105,7 +105,7 @@ def test_tick_escalates_a_github_native_item_at_the_cap(
         fleet_root,
     )
     sandbox = FakeSandbox()
-    sandbox.seed("squadra-increment-7", SandboxExited(exit_code=1))
+    sandbox.seed("squadra-test-fleet-increment-7", SandboxExited(exit_code=1))
     config: SquadraConfig = make_config(fleet_root=fleet_root, max_attempts=1)
 
     assert run_tick(_seams(board, sandbox), config) == 0

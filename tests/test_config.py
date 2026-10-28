@@ -26,7 +26,9 @@ from squadra.domain import Lifecycle
 
 def _load(tmp_path: Path, board_lines: str) -> SquadraConfig:
     path: Path = tmp_path / CONFIG_FILENAME
-    path.write_text(f'[board]\nprovider = "ado"\n{board_lines}', encoding="utf-8")
+    path.write_text(
+        f'[fleet]\nname = "test-fleet"\n[board]\nprovider = "ado"\n{board_lines}', encoding="utf-8"
+    )
     return load_config(config_path=path, fleet_home=tmp_path)
 
 

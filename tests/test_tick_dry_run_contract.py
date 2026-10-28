@@ -76,8 +76,10 @@ def test_tick_dry_run_claims_exactly_the_in_scope_unblocked_items(
     fleet_root: Path = tmp_path / "fleet"
     fleet_home.mkdir()
     (fleet_home / "squadra.toml").write_text(
-        "[board]\n"
+        '[fleet]\nname = "test-fleet"\n[board]\n'
         'provider = "ado"\n'
+        # The seeded claims carry the pre-name default prefix (an upgrade, N34).
+        'tag_prefix = "fleet:"\n'
         'claim_scope = "parents"\n'
         f"parent_scope_ids = [{_IN_SCOPE_PARENT}]\n",
         encoding="utf-8",
@@ -113,7 +115,7 @@ def test_tick_dry_run_claims_exactly_the_in_scope_unblocked_items(
         parent_id=_OTHER_PARENT,
     )
     write(make_status(phase="tdd", last_heartbeat=_ANCIENT), fleet_root)
-    fake_sandbox.seed("squadra-increment-41", SandboxExited(exit_code=1))
+    fake_sandbox.seed("squadra-test-fleet-increment-41", SandboxExited(exit_code=1))
 
     def _build_board(config: SquadraConfig) -> FakeBoard:
         # As the registry does: the adapter answers scope from squadra.toml's [board].
@@ -135,7 +137,7 @@ def test_tick_dry_run_claims_exactly_the_in_scope_unblocked_items(
     out: str = capsys.readouterr().out
     # The would-claim set is exactly the in-scope, unblocked items.
     assert _would(r"WOULD move #(\d+) to active", out) == {5}
-    assert _would(r"WOULD launch sandbox squadra-increment-(\d+)", out) == {5}
+    assert _would(r"WOULD launch sandbox squadra-test-fleet-increment-(\d+)", out) == {5}
     assert _would(r"WOULD add tag 'fleet:claimed' to #(\d+)", out) == {5}
     # Out of scope is reported as such, never as blocked; in-scope blocked stays blocked.
     states: dict[int, str] = _reported_states(out)
@@ -192,7 +194,7 @@ def test_tick_dry_run_claims_nothing_new_after_a_crashed_create(
         f"parent_scope_ids = [{_IN_SCOPE_PARENT}]\n" if scope is ClaimScope.PARENTS else ""
     )
     (fleet_home / "squadra.toml").write_text(
-        f'[board]\nprovider = "fake"\nclaim_scope = "{scope.value}"\n{scope_ids}{_FAKE_STATES_TOML}',
+        f'[fleet]\nname = "test-fleet"\n[board]\nprovider = "fake"\nclaim_scope = "{scope.value}"\n{scope_ids}{_FAKE_STATES_TOML}',
         encoding="utf-8",
     )
     for var in ("FLEET_PROVIDER", "FLEET_TAG_PREFIX", "FLEET_BASE_BRANCH", "FLEET_DRY_RUN"):

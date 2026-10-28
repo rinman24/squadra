@@ -34,8 +34,8 @@ Under ~100K tokens per session, hard ceiling 120K, one unit per session.
 | SQ5e | claude-skills DB-D12 (Rich's Choice in board-knowledge `sessions/2026-10-27-juval-first-run-parent-scope.md`): the read verb `squadra board scope --parent ID` → `{"parent": N, "in_claim_scope": bool}`; exit 0 either way, 2 for config, 1 for provider; `validate_config()` first; never writes. Behind the one predicate `queue_increment`'s `ClaimScopeRefusedError` and `Increment.in_claim_scope` use (today `engines.parent_in_claim_scope`). Agreement test: scope ∈ {whole-board, parents [1]} × parent ∈ {1, 2}: `scope` says in scope exactly when `queue` is not refused for scope, and leaves the board unchanged. Added to `verb-contract.md`. Not wanted: exposing `claim_scope` itself, scope in `origins`, a `queue --check` flag. Requested by Rich mid-SQ5d; ordered before `[[boards]]` because design-to-board's first-run check waits on it | D | SQ5d | done (PR #57); N30 |
 | SQ5f | From SQ5d's cut, WSQ1's deferred parts: `[[boards]]` with `claim_scope` per entry (the check fires wherever a board is added), adapter-owned `in_claim_scope(item_id)` (the supervisor stops reading parent links for scope), rename `seams.ado`. Keep SQ5e's `scope` verb, `queue_increment`'s scope refusal and `Increment.in_claim_scope` on one predicate through the rework | D | SQ5e | done (PR #64); N34. Cut taken: `[[boards]]` to SQ5g, its shape put to Rich (N34) |
 | SQ5f2 | Before Rich rules N34: `/ask-juval` blind on the `[[boards]]` shape (N34's two facts, both options, the ruled constraints, without SQ5f's recommendation), then `/ask-eric` on the names if they move (Increment identity and Origin uniqueness across boards; "Fleet"). Recorded in N34 for Rich's ruling; no code | D | SQ5f | done (PR #65); N34. Juval: (A′), against N34's ledger-only (A) |
-| SQ5g | From SQ5f's cut: `[[boards]]`, ruled (A′) by Rich (N34): one fleet per repository, no `[[boards]]`. Build a required `[fleet] name` (no default, no env or flag layer, scaffolded empty) with every host-global name derived from it (`squadra-<name>.service`/`.timer` with `install-units` refusing to overwrite a unit for another `FLEET_HOME`, compose project `squadra-<name>-increment-<id>`, `tag_prefix` defaulting to `<name>:`, `fleetctl.sh`'s tmux names); the name stamped into `fleet_root`, the tick refusing a differing stamp, or no stamp with increment dirs and no explicit `tag_prefix`, while increment dirs exist; GitHub `validate_config()` fails closed unless the board's repository is `origin`; README Scoping; Eric's Fleet glossary entry, settled row and header | D | SQ5f2; Rich's N34 ruling (2026-10-28) | todo; `handoffs/SQ5g-boards.md` |
-| SQ5g2 | From Rich's N34 ruling: `install-units` refuses a second fleet on the host whose board repository matches an existing fleet's (Juval's first branch: issue numbers are per repository, so two fleets on one repository would be two fleets on one issue). No `{fleet}` in the branch template | D | SQ5g | todo; handoff written by SQ5g |
+| SQ5g | From SQ5f's cut: `[[boards]]`, ruled (A′) by Rich (N34): one fleet per repository, no `[[boards]]`. Build a required `[fleet] name` (no default, no env or flag layer, scaffolded empty) with every host-global name derived from it (`squadra-<name>.service`/`.timer` with `install-units` refusing to overwrite a unit for another `FLEET_HOME`, compose project `squadra-<name>-increment-<id>`, `tag_prefix` defaulting to `<name>:`, `fleetctl.sh`'s tmux names); the name stamped into `fleet_root`, the tick refusing a differing stamp, or no stamp with increment dirs and no explicit `tag_prefix`, while increment dirs exist; GitHub `validate_config()` fails closed unless the board's repository is `origin`; README Scoping; Eric's Fleet glossary entry, settled row and header | D | SQ5f2; Rich's N34 ruling (2026-10-28) | done (PR #67); N35. No cut: all five items and both of Eric's additions built |
+| SQ5g2 | From Rich's N34 ruling: `install-units` refuses a second fleet on the host whose board repository matches an existing fleet's (Juval's first branch: issue numbers are per repository, so two fleets on one repository would be two fleets on one issue). No `{fleet}` in the branch template | D | SQ5g | todo; `handoffs/SQ5g2-one-fleet-per-repository.md`. Also from SQ5g (N35): the fleet-host `goss.yaml` / `SMOKE.md` still name `squadra.service` / `.timer` |
 | SQ6 | claude-skills DB7 finding (i): `squadra init --check` validated with `--provider`'s default `ado`, not the toml's provider. `--provider` now defaults to `None`; the scaffold falls back to `ado`, and the check passes `None` so `load_config`'s precedence (toml < env < flag) holds. Tests: toml wins with no flag or env, `FLEET_PROVIDER` beats the toml, the flag beats both | — (DB7) | — | done (PR #56); N29 |
 | SQ7 | claude-skills DB7 finding (iii), Juval's option D (board-knowledge `sessions/2026-10-27-juval-squadra-init-preflight-findings.md`): host-side git credentials are ADO-shaped (`repo._CREDENTIAL_HELPER` supplies `$AZURE_DEVOPS_EXT_PAT`), and the claim's own fetch (`worktree.py:107`) bypasses that helper, so the preflight and the claim auth differently. Put credential acquisition for host-side git ops behind one boundary, resolved from the target remote's host rather than the board provider (an ADO board over a GitHub repo is valid). The probe and every host-side clone, fetch and push go through it, so the "exact auth path" claim is true. Keep it fail-closed. The rejection message names the credential actually used. Rename the `_ado_*` probe symbols and sweep ADO assumptions outside `board.py` (e.g. the `scaffold.py` comment on the provider PAT). Not wanted: relabelling the log line, skipping the probe when the provider isn't ADO (silent broadening on the claim path), folding into SQ5f. Latent on Rich's Mac (SSH origin, N29); must land before the first live GitHub tick over an HTTPS origin | — (DB7) | SQ5f, for order only: no design dependency, but both edit `TickSeams` on this branch | todo; `handoffs/SQ7-host-git-credentials.md` |
 | SQ8 | claude-skills DB-D13 (DB11; Rich's ruling of Juval's "A second break in the same rule", board-knowledge `sessions/2026-10-27-juval-first-run-parent-scope.md`): report partial items as data, in a fixed format, instead of only `squadra board origins`' one stderr line per partial item (N18), which is not contract. The case: a first run stops mid-create of a queue, leaving a partial item; the map is revised (a title changes); `increments_by_origin` leaves the partial item out, so design-to-board's re-run takes the first-run path, its checks pass, and `queue` is refused (`QueueRefusedError`, exit 3) with a fix that loops. Each entry carries at least the item id and the Origin, and enough for a caller to tell whether a `queue_increment` with given arguments would finish it or be refused under N14's retry rule; better, keep that judgment in squadra behind `check_queue_finishes`, as SQ5e did for scope. Verb or shape is this effort's to settle (`/ask-juval`, `/ask-eric` if wanted); not in `origins`' `{origin: …}` shape, for the reason DB-D12 kept scope out of it. Add it to `verb-contract.md`; the fake answers it too. Unblocks claude-skills DB11 (S9), which first probes the loop on the fake | — (DB11) | — (scheduled around SQ5f, Rich's call; never alongside another unit on this branch) | done (PR #62); N32 |
@@ -979,6 +979,77 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
     4. Both of Eric's additions, in SQ5g.
     5. SQ5g, then SQ5g2.
 
+- N35 (SQ5g): **one fleet per repository, `[fleet] name`, built as Rich
+  ruled N34 (A′).** N34's ruling already records WSQ1 Choice 3's rule standing
+  with its direction reversed, and Choice 4's new wording, so nothing was
+  added for that.
+  - `[fleet] name` (`SquadraConfig.fleet_name`): required, no default, no env
+    or flag layer (a test sets `FLEET_NAME` and the toml wins),
+    `^[a-z0-9][a-z0-9-]{0,23}$`. The charset was checked against compose's
+    project rule (lowercase alphanumerics, `-`, `_`; alphanumeric first) and
+    systemd's unit-name characters. It also excludes tmux's `.` and `:`, and
+    the 24-character cap keeps `<name>:awaiting-pr-approval` within GitHub's
+    50-character label limit. `squadra init` scaffolds `name = ""` and leaves
+    `tag_prefix` commented out. Loading resolves `claim_scope` before the
+    name, so a missing scope is still the first failure (SQ5d's guard test is
+    unchanged). `load_fleet_name` reads only the name, for the ticker and
+    `install-units`.
+  - Derived names: units `squadra-<name>.service` / `.timer` (templates keep
+    their packaged names; `units.unit_filename`, the timer's `Unit=`); compose
+    project `squadra-<name>-increment-<id>` (`supervisor._spec_for`, its one
+    construction site); `tag_prefix` `<name>:` unless `[board].tag_prefix` or
+    `FLEET_TAG_PREFIX` is set (`SquadraConfig.tag_prefix_explicit`); tmux
+    ticker `squadra-<name>-ticker`, set by `squadra start|stop|status|log` as
+    `FLEET_TICKER_SESSION` (an explicit value still wins; `fleetctl.sh` now
+    requires it). The stop message's `fleet` runner session was stale: no
+    runner uses tmux (none in `src/`), so the line is replaced by "in-flight
+    increments keep running in their sandboxes".
+  - `install-units` refuses (`UnitConflictError`, exit 1, nothing written)
+    when an existing `squadra-<name>.service` renders a different
+    `FLEET_HOME`; a re-install over its own home is allowed. **Finding for
+    Rich:** `install-units` takes the name as a required `--fleet-name`,
+    because on a fresh host it runs before the first tick clones `FLEET_HOME`,
+    so there is no `squadra.toml` to read. When the checkout's
+    `squadra.toml` exists, a different `[fleet] name` is refused (exit 2).
+    It is not an override layer: the tick reads the name from the toml only.
+    The residue is a fresh host whose flag disagrees with the toml it later
+    clones. The unit is then misnamed, but the stamp, the projects and the tag
+    prefix still follow the toml. SQ5g2 reads existing units anyway and can
+    close it. `fleet-host-activate.sh` and `cloud-init.fleet-host.yaml` now
+    require `FLEET_NAME` in the env file and pass it.
+  - Stamp: `fleet_root/fleet-name`. `engines.fleet_stamp_refusal` (pure)
+    refuses with increment dirs (`fleet_root/<digits>/`) present when the
+    stamp names another fleet, or when there is no stamp and `tag_prefix` is
+    defaulted (Eric's addition). `run_tick` checks it under the lock before
+    any board read and returns 1. The write goes through a new seam,
+    `TickSeams.write_fleet_stamp`, which `dry_run_seams` absorbs, so a dry run
+    checks but never stamps. Increment dirs outlive finalize (they hold the
+    archive), so a rename is refused until they are moved aside, as ruled
+    ("while increment dirs exist").
+  - Origin check: `GhApiGitHub` takes a required `read_origin` (no default:
+    a default would skip the check). `validate_config()` checks it first and
+    fails closed unless `github_repository_of(origin)` equals
+    `[board.github].repository`. The comparison ignores case and the host;
+    all three remote forms are parsed. The error names only the parsed
+    `owner/name`, never the URL, because an HTTPS origin can carry a token.
+    `_build_github` passes `repo.target_remote_url(fleet_home)`, which falls
+    back to `FLEET_APP_REPO_URL` before the first clone. ADO has no check
+    (README says so).
+  - Tests: `tests/test_fleet_name.py` is Juval's acceptance test plus the
+    unstamped case and the dry-run stamp. Each of its four guards (compose
+    name, origin check, stamp refusal, unit overwrite) was mutation-checked:
+    removing the guard fails a named test. The existing suites now use
+    `[fleet] name = "test-fleet"` and the derived project names. One dry-run
+    contract fixture seeds claims under `fleet:`, so it sets
+    `tag_prefix = "fleet:"`, the documented upgrade path.
+  - **Not done, for SQ5g2:** `docs/fleet-host/goss.yaml` and `SMOKE.md`
+    still expect `/etc/systemd/system/squadra.service` / `.timer`, so the
+    on-host acceptance fails after an upgrade until they are templated on the
+    name (goss `--vars`). Deploying this to gswa-fleet-host also needs
+    `FLEET_NAME` in `/opt/squadra/fleet-host.env`, removal of the old
+    `squadra.service` / `.timer`, and either `tag_prefix = "fleet:"` in its
+    `squadra.toml` or no increment dirs.
+
 ## Session log
 
 | Session | Date | Unit | Outcome | Handoff written |
@@ -1008,3 +1079,4 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
 | Handoff (SQ5f2) | 2026-10-28 | — | At Rich's request before he rules N34. Wrote `handoffs/SQ5f2-consult-boards.md`: `/ask-juval` blind on the `[[boards]]` shape, then `/ask-eric` on Increment identity, Origin uniqueness across boards and "Fleet". SQ5g now depends on SQ5f2. No code | `handoffs/SQ5f2-consult-boards.md` (gate: PR #64 merged) |
 | SQ5f2 | 2026-10-28 | SQ5f2 | PR #65. Gate checked (SQ5f merged, PR #64; no other board-writes PR open). Branch fast-forwarded to `main` (`b09414d`). `/ask-juval` blind on N34: (A′), one fleet per repository with a required name and every host-global name derived from it, built now; he disagrees with N34's ledger-only (A) (units, compose `down -v` and `tag_prefix` collide on one host; board repository vs `origin` unchecked). `/ask-eric`: Fleet, `[fleet] name`, plus two additions (unstamped `fleet_root`, `fleetctl.sh` tmux names). His code claims checked. Both session files in board-knowledge, Choice blank. N34 amended with five questions for Rich in order; SQ5g row and handoff updated for (A′). No code | `handoffs/SQ5g-boards.md` (gate: this PR merged + Rich's N34 ruling) |
 | N34 ruling | 2026-10-28 | SQ5f2 | PR #66. At Rich's request after PR #65 merged. Branch fast-forwarded to `main` (`70d9908`). Rich ruled (A′), Eric's names and both additions, SQ5g then SQ5g2. Juval's blocking question 2 checked against GitHub's documentation by two subagents: numbers per repository (one-number-one-issue inferred, reuse undocumented), an issue on several Projects (the adapter already reads only its own project's item). Choice filled in both session files. N34, SQ5g row, new SQ5g2 row, SQ5g handoff narrowed to (A′). No code | `handoffs/SQ5g-boards.md` (gate: this PR merged) |
+| SQ5g | 2026-10-28 | SQ5g | PR #67. Gate checked (PR #66 merged; only dependabot PRs open). Branch fast-forwarded to `main` (`6c6d67c`). Built (A′) as ruled: required `[fleet] name`; units, compose project, default `tag_prefix` and tmux ticker derived from it; `install-units --fleet-name` refusing another fleet's unit; `fleet_root` stamp with the unstamped refusal; GitHub `validate_config()` checks `origin`. README Scoping, Eric's Fleet glossary entry, header and settled row. Juval's acceptance test, mutation-checked. N35. No cut. ruff, pyright, 1131 tests green | `handoffs/SQ5g2-one-fleet-per-repository.md` (gate: this PR merged) |

@@ -115,7 +115,7 @@ from squadra.domain import (
     WorkItemLinks,
 )
 from squadra.dry_run import DryRunCleanup, DryRunWorktree
-from squadra.engines import LifecycleEngine, increment_branch
+from squadra.engines import LifecycleEngine, fleet_stamp_refusal, increment_branch
 from squadra.git_host import host_git_argv
 from squadra.manifest import ManifestRead, read_manifest, write_increment_context
 from squadra.repo import remote_auth_ok, target_remote_url
@@ -125,6 +125,8 @@ from squadra.status import FleetStatus, StatusUpdate, load_or_none, update
 from squadra.worktree import GitWorktreeAccess, WorktreeAccess
 
 CLAIMED_AT_FILENAME: Final[str] = "claimed-at"
+# ``fleet_root/fleet-name``: the ``[fleet] name`` this root belongs to (N34).
+FLEET_STAMP_FILENAME: Final[str] = "fleet-name"
 COMPOSE_FILENAME: Final[str] = "compose.yaml"
 AGENT_SERVICE: Final[str] = "agent"
 AUTH_PROBE_TIMEOUT_SECONDS: Final[float] = 120.0
@@ -256,6 +258,24 @@ def egress_denied_host_from_logs(logs: str) -> str | None:
     return match.group(1) if match is not None else None
 
 
+def _write_fleet_stamp(fleet_root: Path, fleet_name: str) -> None:
+    """Stamp ``fleet_root`` with the fleet's name, so a later rename is seen."""
+    (fleet_root / FLEET_STAMP_FILENAME).write_text(fleet_name + "\n", encoding="utf-8")
+
+
+def _read_fleet_stamp(fleet_root: Path) -> str | None:
+    """Return the name ``fleet_root`` is stamped with, or ``None`` when unstamped."""
+    path: Path = fleet_root / FLEET_STAMP_FILENAME
+    if not path.is_file():
+        return None
+    return path.read_text(encoding="utf-8").strip() or None
+
+
+def _has_increment_dirs(fleet_root: Path) -> bool:
+    """Whether ``fleet_root`` holds any per-increment ``<id>/`` directory."""
+    return any(child.is_dir() and child.name.isdigit() for child in fleet_root.iterdir())
+
+
 def _write_claimed_at(item_id: int, fleet_root: Path, timestamp: str) -> None:
     """Record the claim time so a never-started claim can be aged out and reaped."""
     directory: Path = fleet_root / str(item_id)
@@ -274,7 +294,7 @@ class TickSeams:
     auth probe via ``auth_ok`` (each spawns a process and so is itself a side
     effect a dry run must not perform); increment-context injection via
     ``write_context``; the local fleet-state writes via ``update_status`` /
-    ``write_claimed_at``. Keeping this exhaustive is what makes ``dry_run_seams`` a
+    ``write_claimed_at`` / ``write_fleet_stamp``. Keeping this exhaustive is what makes ``dry_run_seams`` a
     write-blocking boundary rather than a flag — never add a side effect without
     routing it through a seam.
 
@@ -295,6 +315,7 @@ class TickSeams:
     commits_present: Callable[[Path, str], bool] = field(default=_read_commits_present)
     update_status: Callable[[int, StatusUpdate, Path], object] = field(default=update)
     write_claimed_at: Callable[[int, Path, str], None] = field(default=_write_claimed_at)
+    write_fleet_stamp: Callable[[Path, str], None] = field(default=_write_fleet_stamp)
 
 
 @contextmanager
@@ -342,6 +363,18 @@ def run_tick(seams: TickSeams, config: SquadraConfig) -> int:
         if not acquired:
             _log("tick skipped — another tick holds the lock")
             return 0
+        stamp: str | None = _read_fleet_stamp(config.fleet_root)
+        refusal: str | None = fleet_stamp_refusal(
+            stamp,
+            config.fleet_name,
+            has_increments=_has_increment_dirs(config.fleet_root),
+            tag_prefix_explicit=config.tag_prefix_explicit,
+        )
+        if refusal is not None:
+            _log(f"tick refused — {refusal}")
+            return 1
+        if stamp != config.fleet_name:
+            seams.write_fleet_stamp(config.fleet_root, config.fleet_name)
         engine = LifecycleEngine()
         views: list[IncrementView] = _gather(seams, config, engine)
         if _claim_work_pending(views, config):
@@ -575,7 +608,7 @@ def _spec_for(item_id: int, branch: str, config: SquadraConfig) -> SandboxSpec:
     worktree: Path = _worktree_for(branch, config)
     return SandboxSpec(
         item_id=item_id,
-        project=f"squadra-increment-{item_id}",
+        project=f"squadra-{config.fleet_name}-increment-{item_id}",
         compose_file=worktree / ".squadra" / COMPOSE_FILENAME,
         worktree=worktree,
         agent_service=AGENT_SERVICE,
@@ -1080,13 +1113,18 @@ def _dry_run_write_claimed_at(item_id: int, _fleet_root: Path, _timestamp: str) 
     _log(f"[dry-run] WOULD write the claimed-at marker of #{item_id}")
 
 
+def _dry_run_write_fleet_stamp(_fleet_root: Path, fleet_name: str) -> None:
+    """Absorb the fleet-name stamp write, logging it."""
+    _log(f"[dry-run] WOULD stamp fleet_root with fleet name {fleet_name!r}")
+
+
 def dry_run_seams(seams: TickSeams) -> TickSeams:
     """Wrap every mutating seam so the tick cannot mutate anything.
 
     Reads pass through — the tick still gathers facts and decides, reporting the
     would-be actions — but every write (board, sandbox launch/teardown/exec,
     deterministic cleanup, worktree create/archive/prune, the PAT + claude auth
-    probes, increment-context injection, local status/marker files) becomes a logged
+    probes, increment-context injection, local status/marker/stamp files) becomes a logged
     ``[dry-run] WOULD …`` no-op. The fact-gathering read seams (``sandbox.inspect``
     / ``logs``, ``read_manifest``, ``commits_present``) stay real: they are pure
     reads and the plan is meaningless without them. The tick lock and supervisor
@@ -1103,6 +1141,7 @@ def dry_run_seams(seams: TickSeams) -> TickSeams:
         write_context=_dry_run_write_context,
         update_status=_dry_run_update_status,
         write_claimed_at=_dry_run_write_claimed_at,
+        write_fleet_stamp=_dry_run_write_fleet_stamp,
     )
 
 

@@ -9,7 +9,7 @@
 #
 # It deliberately does NOT enable the timer and does NOT clone app-backend:
 #   - fleet activation is a separate, deliberate `systemctl enable --now
-#     squadra.timer` after the on-host smoke passes (decision 16);
+#     squadra-<name>.timer` after the on-host smoke passes (decision 16);
 #   - `squadra fleet-tick` clones FLEET_HOME on the first tick.
 #
 # Reads /opt/squadra/fleet-host.env (laid down by cloud-init) for FLEET_KEY_VAULT,
@@ -28,6 +28,8 @@ log() { echo "fleet-host-activate: $*"; }
 [ -f "$ENV_FILE" ] && . "$ENV_FILE"
 : "${FLEET_KEY_VAULT:?set FLEET_KEY_VAULT in $ENV_FILE}"
 : "${FLEET_HOME:?set FLEET_HOME in $ENV_FILE}"
+# The fleet's [fleet] name (its squadra.toml's): the units install as squadra-<name>.*
+: "${FLEET_NAME:?set FLEET_NAME in $ENV_FILE}"
 VENV=${FLEET_VENV:-/opt/squadra/venv}
 # Azure DevOps org/project the board adapter resolves from `az devops configure`
 # defaults (board.py::_configured_default). Overridable via the env file; default
@@ -51,6 +53,7 @@ log "installing squadra==${SQUADRA_VERSION} from PyPI into ${VENV}"
 # Render + install the systemd units (timer NOT enabled).
 sudo "$VENV/bin/squadra" install-units \
   --key-vault "$FLEET_KEY_VAULT" \
+  --fleet-name "$FLEET_NAME" \
   --fleet-home "$FLEET_HOME" \
   --venv-bin "$VENV/bin" \
   --app-repo-url "${FLEET_APP_REPO_URL:-}"
@@ -64,4 +67,4 @@ log "configuring az devops defaults: organization=${ADO_ORG} project=${ADO_PROJE
 az devops configure --defaults "organization=${ADO_ORG}" "project=${ADO_PROJECT}"
 sudo az devops configure --defaults "organization=${ADO_ORG}" "project=${ADO_PROJECT}"
 
-log "done. Smoke a dry-run, then activate: sudo systemctl enable --now squadra.timer"
+log "done. Smoke a dry-run, then activate: sudo systemctl enable --now squadra-${FLEET_NAME}.timer"

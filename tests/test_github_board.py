@@ -37,6 +37,7 @@ from squadra.scaffold import render_squadra_toml
 from tests.helpers.github_stub import (
     GH_STATES,
     GITHUB_CONFIG,
+    ORIGIN_URL,
     REPOSITORY,
     InMemoryGitHub,
     StubbedGitHubBoard,
@@ -247,6 +248,7 @@ def test_validate_config_refuses_a_tag_prefix_covering_the_commit_marker() -> No
         tags=Tags("squadra:"),
         claim_scope=ClaimScope.WHOLE_BOARD,
         parent_scope_ids=(),
+        read_origin=lambda: ORIGIN_URL,
     )
     with pytest.raises(BoardValidationError, match="commit marker"):
         board.validate_config()
@@ -259,6 +261,7 @@ def test_validate_config_fails_on_a_missing_project() -> None:
         states=GH_STATES,
         claim_scope=ClaimScope.WHOLE_BOARD,
         parent_scope_ids=(),
+        read_origin=lambda: ORIGIN_URL,
     )
     with pytest.raises(BoardValidationError, match="no project 99"):
         board.validate_config()
@@ -428,6 +431,7 @@ def test_a_workflow_moving_the_status_before_the_read_back_raises_after_the_comm
         states=GH_STATES,
         claim_scope=ClaimScope.WHOLE_BOARD,
         parent_scope_ids=(),
+        read_origin=lambda: ORIGIN_URL,
     )
     with pytest.raises(BoardValidationError, match="did not land queued.*Item added to project"):
         board.create_increment(IncrementRequest("A:I1", EPIC, (), "I1", ""))
@@ -471,6 +475,9 @@ def test_finishing_refuses_anything_but_the_requests_partial_item(labels: list[s
 # --- [board.github] config ------------------------------------------------------------------
 
 _GITHUB_TOML: str = """
+[fleet]
+name = "test-fleet"
+
 [board]
 provider = "github"
 claim_scope = "whole-board"
@@ -532,8 +539,10 @@ def test_board_github_is_not_required_for_another_provider(tmp_path: Path) -> No
 
 def test_the_scaffolded_github_map_validates_against_a_default_project(tmp_path: Path) -> None:
     # GitHub's default project template: Todo / In Progress / Done
-    text: str = render_squadra_toml("github").replace(
-        'claim_scope = ""', 'claim_scope = "whole-board"'
+    text: str = (
+        render_squadra_toml("github")
+        .replace('claim_scope = ""', 'claim_scope = "whole-board"')
+        .replace('name = ""', 'name = "test-fleet"', 1)
     )
     path: Path = tmp_path / "squadra.toml"
     path.write_text(text, encoding="utf-8")
@@ -545,4 +554,5 @@ def test_the_scaffolded_github_map_validates_against_a_default_project(tmp_path:
         states=config.states,
         claim_scope=ClaimScope.WHOLE_BOARD,
         parent_scope_ids=(),
+        read_origin=lambda: ORIGIN_URL,
     ).validate_config()

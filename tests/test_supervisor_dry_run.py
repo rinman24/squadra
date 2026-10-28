@@ -69,7 +69,7 @@ def test_dry_run_tick_mutates_nothing_and_reports_every_would_be_action(
     # #41 reap-eligible (active + fleet:claimed, container exited non-zero -> crash),
     make_issue(41, title="feat: example", state=Lifecycle.ACTIVE, tags=["fleet:claimed"])
     write(make_status(phase="tdd", last_heartbeat=_ANCIENT), fleet_root)
-    fake_sandbox.seed("squadra-increment-41", SandboxExited(exit_code=1))
+    fake_sandbox.seed("squadra-test-fleet-increment-41", SandboxExited(exit_code=1))
     # #50 claim-eligible (queued, untagged, unblocked).
     make_issue(50, title="feat: fresh increment")
 
@@ -98,18 +98,18 @@ def test_dry_run_tick_mutates_nothing_and_reports_every_would_be_action(
     # The would-be actions are still planned and reported.
     out: str = capsys.readouterr().out
     assert "WOULD delete branch 'feat/increment-40-merged'" in out
-    assert "WOULD compose down -v project 'squadra-increment-40'" in out
+    assert "WOULD compose down -v project 'squadra-test-fleet-increment-40'" in out
     assert "WOULD remove tag 'fleet:claimed' from #40" in out
     assert "WOULD comment on #40" in out
     assert "WOULD archive worktree" in out  # reap of #41
     assert "WOULD move #41 to queued" in out
-    assert "WOULD tear down sandbox squadra-increment-41" in out
+    assert "WOULD tear down sandbox squadra-test-fleet-increment-41" in out
     assert "WOULD create worktree" in out  # claim of #50
     assert "on branch 'feat/increment-50-fresh-increment'" in out  # default template
     assert "WOULD inject increment context" in out
     assert "WOULD move #50 to active" in out
     assert "WOULD add tag 'fleet:claimed' to #50" in out
-    assert "WOULD launch sandbox squadra-increment-50" in out
+    assert "WOULD launch sandbox squadra-test-fleet-increment-50" in out
 
 
 def test_dry_run_skips_the_auth_probe_but_still_plans_the_claim(
@@ -131,7 +131,7 @@ def test_dry_run_skips_the_auth_probe_but_still_plans_the_claim(
     assert run_tick(seams, make_config()) == 0
     out: str = capsys.readouterr().out
     assert "WOULD run the claude auth preflight" in out
-    assert "WOULD launch sandbox squadra-increment-50" in out
+    assert "WOULD launch sandbox squadra-test-fleet-increment-50" in out
     assert fake_sandbox.launches == []
 
 
@@ -154,7 +154,7 @@ def test_dry_run_skips_the_pat_probe_but_still_plans_the_claim(
     assert run_tick(seams, make_config()) == 0
     out: str = capsys.readouterr().out
     assert "WOULD run the ADO PAT auth preflight" in out
-    assert "WOULD launch sandbox squadra-increment-50" in out
+    assert "WOULD launch sandbox squadra-test-fleet-increment-50" in out
     assert fake_sandbox.launches == []
 
 
@@ -219,7 +219,9 @@ def test_main_engages_dry_run_from_the_flag_and_the_env(
         raise SystemExit(0)  # never reach the real tick
 
     monkeypatch.setattr(supervisor, "build_seams", _spy_build_seams)
-    (tmp_path / "squadra.toml").write_text('[board]\nclaim_scope = "whole-board"\n')
+    (tmp_path / "squadra.toml").write_text(
+        '[fleet]\nname = "test-fleet"\n[board]\nclaim_scope = "whole-board"\n'
+    )
     argv: list[str] = ["--fleet-root", str(tmp_path), "--fleet-home", str(tmp_path)]
     with pytest.raises(SystemExit):
         supervisor.main([*argv, "--dry-run"])

@@ -37,7 +37,7 @@ TAGS: Tags = Tags()
 ITEM: int = 7
 TITLE: str = "feat: ship it"
 BRANCH: str = "feat/increment-7-ship-it-a2"
-PROJECT: str = f"squadra-increment-{ITEM}"
+PROJECT: str = f"squadra-test-fleet-increment-{ITEM}"
 ATTEMPT: int = 2
 OTHER_LABEL: str = "area:billing"  # not the fleet's: the relinquish keeps it
 

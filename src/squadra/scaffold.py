@@ -41,7 +41,6 @@ from squadra.config import (
     DEFAULT_WORKTREE_DIR,
     GITHUB_PROVIDER,
 )
-from squadra.constants import DEFAULT_TAG_PREFIX
 
 RUNNER_SKILL_TEMPLATE: str = "runner-skill.md"
 CLEANUP_SKILL_TEMPLATE: str = "cleanup-skill.md"
@@ -83,6 +82,16 @@ def render_squadra_toml(provider: str = DEFAULT_PROVIDER) -> str:
 # FLEET_PYTHON, and the provider PAT (e.g. AZURE_DEVOPS_EXT_PAT). Set those in
 # the environment, not here.
 
+[fleet]
+# REQUIRED, no default: this fleet's name, its identity. Lowercase letters,
+# digits and hyphens, at most 24 characters. Its systemd units
+# (squadra-<name>.service/.timer), sandbox compose projects
+# (squadra-<name>-increment-<id>), tmux ticker and default tag prefix (<name>:)
+# derive from it, so two fleets on one host never collide. One fleet per
+# repository. No env override, and never rename a fleet with increments in
+# flight: a different name is a different fleet.
+name = ""
+
 [board]
 # Board provider. Defaults to "ado". Override: [board].provider / FLEET_PROVIDER
 # / `squadra --provider`.
@@ -93,8 +102,8 @@ base_branch = "{DEFAULT_BASE_BRANCH}"
 
 # Namespace prefix for the fleet's board tags (the five canonical suffixes —
 # claimed/failed/needs-decision/qa-ready/awaiting-pr-approval — hang off this).
-# Override: FLEET_TAG_PREFIX.
-tag_prefix = "{DEFAULT_TAG_PREFIX}"
+# Defaults to "<[fleet] name>:". Override here or with FLEET_TAG_PREFIX.
+# tag_prefix = "my-fleet:"
 
 # REQUIRED, no default: what on this board the fleet may claim. Left empty on
 # purpose; squadra will not load until you choose one:

@@ -16,7 +16,7 @@ into one surface (ADR-0001 decision 3), superseding the earlier thin
   PAT + ``ANTHROPIC_API_KEY`` from Key Vault via the VM managed identity and
   apply them to this process's env, ensure ``FLEET_HOME`` is a current checkout,
   then run one tick in-process. This is the ``ExecStart`` of the systemd
-  ``squadra.service``.
+  ``squadra-<name>.service``.
 - ``squadra install-units`` — render the packaged systemd unit templates against
   the host's paths/vault/cadence and write them to the systemd unit directory
   (does **not** enable the timer — fleet activation stays a deliberate step).
@@ -47,7 +47,14 @@ from typing import TYPE_CHECKING, NoReturn, cast
 
 from squadra import scaffold, status
 from squadra._resources import resolve_script
-from squadra.config import DEFAULT_PROVIDER, ConfigError, load_config
+from squadra.config import (
+    CONFIG_FILENAME,
+    DEFAULT_PROVIDER,
+    FLEET_NAME_PATTERN,
+    ConfigError,
+    load_config,
+    load_fleet_name,
+)
 from squadra.domain import Lifecycle, PartialItemReport, ProposedRequest
 
 if TYPE_CHECKING:
@@ -140,6 +147,12 @@ def _build_parser() -> tuple[argparse.ArgumentParser, frozenset[str]]:
         help="render + install the fleet-host systemd units (does not enable the timer)",
     )
     install.add_argument("--key-vault", required=True, help="Key Vault name fleet-tick reads from")
+    install.add_argument(
+        "--fleet-name",
+        required=True,
+        help="the fleet's [fleet] name (units install as squadra-<name>.*); must match "
+        "<fleet-home>/squadra.toml when the checkout exists",
+    )
     install.add_argument(
         "--fleet-home",
         type=Path,
@@ -261,7 +274,7 @@ def _cmd_tick(extra: Sequence[str]) -> int:
 def _cmd_fleet_tick(extra: Sequence[str]) -> int:
     """Run one fleet-host tick: bootstrap KV secrets + sync the app repo, then tick.
 
-    This is the systemd ``squadra.service`` ``ExecStart`` (ADR-0002 §11): it
+    This is the systemd ``squadra-<name>.service`` ``ExecStart`` (ADR-0002 §11): it
     authenticates as the VM managed identity, reads the PAT + ``ANTHROPIC_API_KEY``
     from Key Vault, applies them to *this* process's environment (never to disk),
     ensures ``FLEET_HOME`` is a current checkout, and then runs the same in-process
@@ -306,22 +319,36 @@ def _cmd_install_units(args: argparse.Namespace) -> int:
 
     Writing the units neither reloads systemd nor enables the timer — those stay
     deliberate operator steps (``systemctl daemon-reload``; then, only when
-    activating the fleet, ``systemctl enable --now squadra.timer``).
+    activating the fleet, ``systemctl enable --now squadra-<name>.timer``).
+
+    The name comes from ``--fleet-name`` because a fresh host installs its
+    units before the first tick clones ``FLEET_HOME``. When the checkout's
+    ``squadra.toml`` exists, its ``[fleet] name`` must agree; that file is the
+    name's one source (N34), so the flag only says which fleet is meant.
     """
     from squadra.units import (  # noqa: PLC0415
         DEFAULT_INTERVAL_SECONDS,
         DEFAULT_SYSTEMD_DIR,
         DEFAULT_USER,
+        UnitConflictError,
         UnitContext,
         install_units,
+        unit_filename,
     )
 
     fleet_home: Path = args.fleet_home
+    fleet_name: str = args.fleet_name
+    try:
+        _check_install_name(fleet_home, fleet_name)
+    except ConfigError as exc:
+        print(f"squadra install-units: {exc}", file=sys.stderr)
+        return 2
     venv_bin: Path = args.venv_bin if args.venv_bin is not None else Path(sys.executable).parent
     fleet_root: Path = (
         args.fleet_root if args.fleet_root is not None else fleet_home / ".claude" / "fleet"
     )
     ctx = UnitContext(
+        fleet_name=fleet_name,
         venv_bin=venv_bin,
         fleet_home=fleet_home,
         fleet_root=fleet_root,
@@ -333,15 +360,37 @@ def _cmd_install_units(args: argparse.Namespace) -> int:
         user=args.user if args.user is not None else DEFAULT_USER,
     )
     dest: Path = args.dest if args.dest is not None else DEFAULT_SYSTEMD_DIR
-    written: list[Path] = install_units(ctx, dest=dest)
+    try:
+        written: list[Path] = install_units(ctx, dest=dest)
+    except UnitConflictError as exc:
+        print(f"squadra install-units: {exc}", file=sys.stderr)
+        return 1
     for path in written:
         print(f"squadra: wrote {path}")
     print(
         "next steps: `sudo systemctl daemon-reload`, smoke a dry-run "
         "(`systemd-run --wait --pipe squadra fleet-tick --dry-run`), then activate "
-        "with `sudo systemctl enable --now squadra.timer`."
+        f"with `sudo systemctl enable --now {unit_filename('squadra.timer', fleet_name)}`."
     )
     return 0
+
+
+def _check_install_name(fleet_home: Path, fleet_name: str) -> None:
+    """Refuse an invalid ``--fleet-name``, or one the checkout's ``squadra.toml`` contradicts."""
+    if FLEET_NAME_PATTERN.fullmatch(fleet_name) is None:
+        raise ConfigError(
+            "--fleet-name must be 1-24 lowercase letters, digits or hyphens, starting "
+            f"with a letter or digit, got {fleet_name!r}"
+        )
+    config_path: Path = fleet_home / CONFIG_FILENAME
+    if not config_path.is_file():
+        return
+    configured: str = load_fleet_name(fleet_home, config_path=config_path)
+    if configured != fleet_name:
+        raise ConfigError(
+            f"--fleet-name {fleet_name!r} differs from {config_path}'s [fleet] name "
+            f"{configured!r}; install the units under the configured name"
+        )
 
 
 def _env_truthy(name: str) -> bool:
@@ -361,6 +410,16 @@ def _cmd_fleetctl(command: str, extra: Sequence[str]) -> int:
     script: str = str(resolve_script("fleetctl.sh"))
     env: dict[str, str] = dict(os.environ)
     env.setdefault("FLEET_PYTHON", sys.executable)
+    if "FLEET_TICKER_SESSION" not in env:
+        # The tmux ticker is host-global, so its session derives from the
+        # fleet's name (N34): two fleets on one dev box run two tickers.
+        fleet_home_raw: str = env.get("FLEET_HOME", "").strip()
+        fleet_home: Path = Path(fleet_home_raw) if fleet_home_raw else Path.cwd()
+        try:
+            env["FLEET_TICKER_SESSION"] = f"squadra-{load_fleet_name(fleet_home)}-ticker"
+        except ConfigError as exc:
+            print(f"squadra {command}: {exc}", file=sys.stderr)
+            return 2
     try:
         os.execvpe("bash", ["bash", script, command, *extra], env)
     except OSError as exc:  # bash missing / not runnable

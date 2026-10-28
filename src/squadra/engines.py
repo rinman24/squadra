@@ -44,6 +44,42 @@ from squadra.domain import (
 )
 
 
+def fleet_stamp_refusal(
+    stamp: str | None, fleet_name: str, *, has_increments: bool, tag_prefix_explicit: bool
+) -> str | None:
+    """Why the tick must refuse ``fleet_root``'s name stamp, or ``None`` when it may tick.
+
+    A fleet's name is its identity (N34): its claims carry the tag prefix derived
+    from it, so a fleet ticking with work in flight under another name reads its
+    own claimed items as a human's and never finalizes or reaps them. Refused:
+
+    - a stamp naming another fleet while increment dirs exist (a rename, or two
+      units sharing one ``fleet_root``);
+    - no stamp while increment dirs exist and ``tag_prefix`` is defaulted from
+      the name: a ``fleet_root`` from before the name existed, whose claims carry
+      the old default ``fleet:``, which is a rename the stamp cannot see.
+
+    With no increment dirs there is nothing in flight to orphan, so any name may
+    (re)stamp the root.
+    """
+    if not has_increments or stamp == fleet_name:
+        return None
+    if stamp is not None:
+        return (
+            f"fleet_root is stamped for fleet {stamp!r} and holds increment dirs, but "
+            f"[fleet] name is {fleet_name!r}: a renamed fleet would orphan the old "
+            "fleet's claims. Restore the name, or finish and move aside its increment dirs"
+        )
+    if tag_prefix_explicit:
+        return None
+    return (
+        f"fleet_root holds increment dirs but no fleet name stamp, and [board].tag_prefix "
+        f"now defaults to {fleet_name + ':'!r}: claims made under the old default "
+        "'fleet:' would be orphaned. Set [board].tag_prefix to the prefix those "
+        "claims carry, or finish and move aside the increment dirs"
+    )
+
+
 def increment_branch(
     item_id: int, title: str, attempt: int, template: str = DEFAULT_BRANCH_TEMPLATE
 ) -> str:

@@ -44,7 +44,7 @@ def _now() -> str:
 
 
 def _project(item_id: int) -> str:
-    return f"squadra-increment-{item_id}"
+    return f"squadra-test-fleet-increment-{item_id}"
 
 
 # --- finalize parity ----------------------------------------------------------

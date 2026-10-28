@@ -85,7 +85,7 @@ def test_inflight_claimed_issue_counts_against_cap(
     write(make_status(issue_id=4, runner_id="runner-4-a1", last_heartbeat=_now()), fleet_root)
     from squadra.domain import SandboxRunning  # noqa: PLC0415
 
-    fake_sandbox.seed("squadra-increment-4", SandboxRunning())
+    fake_sandbox.seed("squadra-test-fleet-increment-4", SandboxRunning())
     make_issue(5)
     make_issue(6)
 
@@ -253,7 +253,7 @@ def test_launch_failure_rolls_the_claim_back(
 ) -> None:
     make_issue(5, title="feat: x")
     make_issue(6, title="feat: y")
-    fake_sandbox.fail_launch.add("squadra-increment-5")
+    fake_sandbox.fail_launch.add("squadra-test-fleet-increment-5")
 
     assert run_tick(make_seams(), make_config()) == 0
 

@@ -669,6 +669,7 @@ def _build_ado(config: SquadraConfig) -> BoardAccess:
 def _build_github(config: SquadraConfig) -> BoardAccess:
     """Construct the GitHub adapter over ``[board.github]``'s repository and project."""
     from squadra.github_board import GhApiGitHub  # noqa: PLC0415 - import cycle
+    from squadra.repo import target_remote_url  # noqa: PLC0415 - only GitHub reads origin
 
     if config.github is None:
         raise ConfigError('[board.github] is required for provider "github"')
@@ -679,6 +680,7 @@ def _build_github(config: SquadraConfig) -> BoardAccess:
         tags=config.tags,
         claim_scope=config.claim_scope,
         parent_scope_ids=config.parent_scope_ids,
+        read_origin=lambda: target_remote_url(config.fleet_home),
     )
 
 

@@ -54,16 +54,18 @@ def test_init_writes_squadra_toml_and_skill_templates(tmp_path: Path) -> None:
     assert (tmp_path / "cleanup-skill.md").is_file()
 
     parsed: dict[str, object] = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    fleet: dict[str, object] = _table(parsed, "fleet")
     board: dict[str, object] = _table(parsed, "board")
     pipeline: dict[str, object] = _table(parsed, "pipeline")
 
+    assert fleet == {"name": ""}  # unnamed until the operator names the fleet (N34)
     assert set(board) >= {
         "provider",
         "base_branch",
-        "tag_prefix",
         "claim_scope",
         "parent_scope_ids",
     }
+    assert "tag_prefix" not in board  # defaults from [fleet] name, so left commented
     assert board["provider"] == "ado"
     assert board["claim_scope"] == ""  # undeclared until the operator chooses
     assert set(pipeline) >= {
@@ -105,11 +107,14 @@ def test_init_force_overwrites(tmp_path: Path) -> None:
 
 
 def _declare_scope(fleet_home: Path) -> None:
-    """Fill in the scaffold's empty ``claim_scope``, as an operator would."""
+    """Fill in the scaffold's empty ``claim_scope`` and ``[fleet] name``, as an operator would."""
     config_path: Path = fleet_home / "squadra.toml"
     text: str = config_path.read_text(encoding="utf-8")
     config_path.write_text(
-        text.replace('claim_scope = ""', 'claim_scope = "whole-board"', 1), encoding="utf-8"
+        text.replace('claim_scope = ""', 'claim_scope = "whole-board"', 1).replace(
+            'name = ""', 'name = "test-fleet"', 1
+        ),
+        encoding="utf-8",
     )
 
 
@@ -345,6 +350,8 @@ def test_install_units_renders_and_writes(tmp_path: Path) -> None:
             "install-units",
             "--key-vault",
             "the-vault",
+            "--fleet-name",
+            "app",
             "--fleet-home",
             str(tmp_path / "home"),
             "--venv-bin",
@@ -356,10 +363,10 @@ def test_install_units_renders_and_writes(tmp_path: Path) -> None:
         ]
     )
     assert rc == 0
-    service: str = (dest / "squadra.service").read_text(encoding="utf-8")
+    service: str = (dest / "squadra-app.service").read_text(encoding="utf-8")
     assert "Environment=FLEET_KEY_VAULT=the-vault" in service
     assert "ExecStart=/opt/squadra/venv/bin/squadra fleet-tick" in service
-    assert (dest / "squadra.timer").is_file()
+    assert (dest / "squadra-app.timer").is_file()
 
 
 def test_install_units_has_no_scope_flag(capsys: pytest.CaptureFixture[str]) -> None:
@@ -369,11 +376,27 @@ def test_install_units_has_no_scope_flag(capsys: pytest.CaptureFixture[str]) -> 
     assert "--parent-scope-ids" not in capsys.readouterr().out
 
 
-def test_fleetctl_subcommand_shells_to_script(monkeypatch: pytest.MonkeyPatch) -> None:
+def _pkg_script(name: str) -> Path:
+    return Path(f"/pkg/{name}")
+
+
+def _named_fleet_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Point ``FLEET_HOME`` at a checkout whose ``squadra.toml`` names the fleet."""
+    (tmp_path / "squadra.toml").write_text('[fleet]\nname = "test-fleet"\n', encoding="utf-8")
+    monkeypatch.setenv("FLEET_HOME", str(tmp_path))
+    monkeypatch.delenv("FLEET_TICKER_SESSION", raising=False)
+
+
+def test_fleetctl_subcommand_shells_to_script(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _named_fleet_home(monkeypatch, tmp_path)
     execed: list[tuple[str, list[str], str | None]] = []
+    sessions: list[str | None] = []
 
     def _fake_execvpe(file: str, argv: Sequence[str], env: dict[str, str]) -> None:
         execed.append((file, list(argv), env.get("FLEET_PYTHON")))
+        sessions.append(env.get("FLEET_TICKER_SESSION"))
 
     def _fake_resolve(name: str) -> Path:
         return Path(f"/pkg/{name}")
@@ -387,9 +410,22 @@ def test_fleetctl_subcommand_shells_to_script(monkeypatch: pytest.MonkeyPatch) -
     assert file == "bash"
     assert argv == ["bash", "/pkg/fleetctl.sh", "start", "-f"]
     assert fleet_python == sys.executable
+    assert sessions == ["squadra-test-fleet-ticker"]  # host-global, so from the name
 
 
-def test_fleetctl_missing_bash_returns_127(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fleetctl_refuses_an_unnamed_fleet(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("FLEET_HOME", str(tmp_path))
+    monkeypatch.delenv("FLEET_TICKER_SESSION", raising=False)
+    monkeypatch.setattr(cli, "resolve_script", _pkg_script)
+    assert cli.main(["status"]) == 2
+    assert "[fleet] name is required" in capsys.readouterr().err
+
+
+def test_fleetctl_missing_bash_returns_127(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _named_fleet_home(monkeypatch, tmp_path)
+
     def _fake_resolve(name: str) -> Path:
         return Path(f"/pkg/{name}")
 

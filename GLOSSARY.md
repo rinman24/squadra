@@ -1,10 +1,14 @@
 # squadra fleet
 
-squadra drives an unattended Claude implementation fleet against a target repository;
-the board is the source of truth. At the board adapter, an Increment is represented by
+squadra drives unattended Claude implementation fleets, each against one target
+repository and one board; the board is the source of truth. At the board adapter, an Increment is represented by
 one Issue (ADO: work item); its Tasks are the Issue's child items.
 
 ## Language
+
+**Fleet**:
+The named claimant that takes Increments from one board and delivers them into one repository. Its identity is its name (`[fleet] name`): the name marks its claims on the board, through the tag prefix derived from it, and its resources on the host (units, sandbox projects, fleet root). A fleet with a different name is a different fleet, so the name never changes while any of its Increments is in flight. One `squadra.toml` configures one fleet; a second board is a second fleet. A host running one or more fleets is a fleet host.
+_Avoid_: Instance, squadra instance (a deployment word), deployment, board (the board is what a fleet claims from, never the fleet)
 
 **Increment**:
 One board item taken through the fleet as a single unit of delivery. Its identity is the board item: every attempt, and every claim, branch and PR an attempt makes, belongs to the same Increment. It is delivered when one of its PRs merges.
