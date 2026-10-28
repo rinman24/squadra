@@ -31,7 +31,7 @@ def _seams(board: GitHubShapedFakeBoard, sandbox: FakeSandbox | None = None) -> 
     # `git ls-remote` (pat_ok) or `claude` (auth_ok) — the claim must hinge on
     # the board, not on ambient host auth.
     return TickSeams(
-        ado=board,
+        board=board,
         sandbox=sandbox if sandbox is not None else FakeSandbox(),
         cleanup=FakeCleanup(),
         worktree=FakeWorktree(),
