@@ -88,9 +88,10 @@ built-in defaults  <  squadra.toml  <  FLEET_* env  <  CLI flag
 
 | Section / key | Default | Meaning |
 |---|---|---|
+| `[fleet].name` | — | **REQUIRED, no default, no env or flag override.** The fleet's name and identity: 1–24 lowercase letters, digits or hyphens, starting with a letter or digit. The systemd units (`squadra-<name>.service` / `.timer`), sandbox compose projects (`squadra-<name>-increment-<id>`), the tmux ticker (`squadra-<name>-ticker`) and the default `tag_prefix` derive from it. See [Scoping](#scoping). |
 | `[board].provider` | `ado` | `ado` \| `fake` \| `github` \| `gitlab`. Selects the `BoardAccess` adapter (registry in `squadra.board.PROVIDERS`). ADO ships today. `github` ships its reads, the tick's writes and `squadra board queue` / `withdraw` / `origins` / `scope` / `partial-items` over the `gh` CLI (one repository's issues on one Projects v2 board, `[board.github]`). A queue is 5 + n ordered `gh` writes, committed last by the `squadra:committed` label, and reads its Status back once: the project's "Item added to project" workflow must be off or set a queued Status ([ADR-0006](docs/adr/adr-0006-github-native-state.md)). A withdraw closes the issue as not planned. `origins` lists every issue of the repository that carries an Origin, on the project or not. GitLab is a tracked backlog adapter. `fake` is a local board in `<FLEET_HOME>/.squadra/fake-board.json` (a missing file is an empty board) for tests and end-to-end runs without a live board; it needs `[board.states]`, and its file format is documented in `squadra.fake_board`. |
 | `[board].base_branch` | `main` | The branch an increment PR must complete against for finalize-eligibility. |
-| `[board].tag_prefix` | `fleet:` | Configurable namespace for the fleet's tags; detection is prefix-based (`startswith`). The five suffixes are fixed (see [Tag vocabulary](#tag-vocabulary)). |
+| `[board].tag_prefix` | `<[fleet].name>:` | Configurable namespace for the fleet's tags; detection is prefix-based (`startswith`). The five suffixes are fixed (see [Tag vocabulary](#tag-vocabulary)). Set it explicitly (or `FLEET_TAG_PREFIX`) to keep a prefix that differs from the name. |
 | `[board].claim_scope` | — | **REQUIRED, no default, no env override.** `"parents"` (claim only increments under `parent_scope_ids`) or `"whole-board"` (claim every queued increment). Loading fails until it is declared; see [Scoping](#scoping). |
 | `[board].parent_scope_ids` | `[]` | The parent work-item ids `"parents"` claims under. Must be non-empty for `"parents"` and empty for `"whole-board"`. |
 | `[board.github].repository` / `.project_owner` / `.project_number` | — | **REQUIRED for `github`**, ignored otherwise: the `owner/name` repository whose issues are the board's items, and the owner and number of the Projects v2 board holding their `Status`. Auth is `gh`'s own. A missing key fails loading, naming it. |
@@ -103,10 +104,13 @@ built-in defaults  <  squadra.toml  <  FLEET_* env  <  CLI flag
 | `[pipeline].cleanup_skill` | `/cleanup-merged-branches` | Skill the finalize pass runs headlessly per merged branch. |
 
 ```toml
+[fleet]
+name             = "widgets"      # REQUIRED, no default: the fleet's identity
+
 [board]
 provider         = "ado"          # ado | fake | github | gitlab   (REQUIRED)
 base_branch      = "main"
-tag_prefix       = "fleet:"
+# tag_prefix     = "widgets:"     # defaults to "<[fleet].name>:"
 claim_scope      = "parents"      # "parents" | "whole-board"   (REQUIRED, no default)
 parent_scope_ids = [105]          # non-empty iff claim_scope = "parents"
 
@@ -414,6 +418,55 @@ when `"whole-board"` has ids. There is no env override: the legacy
 `FLEET_EPIC_IDS` / `FLEET_PARENT_SCOPE_IDS` are no longer read, and the systemd
 unit carries no scope.
 
+**One fleet per repository.** A fleet is the named claimant one
+`squadra.toml` configures: one board, delivering into one repository
+(`FLEET_HOME`), under one tag prefix and one `fleet_root`. A second board is a
+second fleet: its own `FLEET_HOME`, `squadra.toml` and `[fleet].name`. There is
+no `[[boards]]`. Every local artifact of a tick (`fleet_root/<id>/`, the sandbox
+project, the branch) is keyed by the bare item id, so two boards in one fleet
+would share them; and on GitHub the board's issues and the pushed branches must
+be one repository anyway, so every board needing a fleet lives in a repository
+of its own. For `provider = "github"`, `validate_config()` (each tick, and
+`squadra init --check`) fails closed unless `[board.github].repository` is
+`FLEET_HOME`'s `origin` (falling back to `FLEET_APP_REPO_URL` before the first
+clone). ADO has no such check: an ADO board can name any repository, and the
+operator keeps it consistent.
+
+**The fleet name.** `[fleet].name` is required and has no env or flag layer:
+the name is the fleet's identity, so a different name is a different fleet.
+Every name that is global on a fleet host derives from it, so two fleets on one
+host never collide:
+
+| Host-global name | Derived as |
+|---|---|
+| systemd units | `squadra-<name>.service` / `squadra-<name>.timer` |
+| sandbox compose project | `squadra-<name>-increment-<id>` |
+| tmux ticker (`squadra start`) | `squadra-<name>-ticker` |
+| board tag prefix | `<name>:` unless `[board].tag_prefix` is set |
+
+`squadra install-units --fleet-name NAME` installs the units under the name,
+refuses a `--fleet-name` that the checkout's `squadra.toml` contradicts, and
+refuses to overwrite a unit file that runs a different `FLEET_HOME` (another
+fleet's). The fleet name and the tag prefix stay two settings. A fleet that
+keeps the prefix its claims already carry looks like this:
+
+```toml
+[fleet]
+name = "gswa-backend"
+
+[board]
+tag_prefix = "gs:"        # not "gswa-backend:"
+```
+
+The tick stamps the name into `fleet_root/fleet-name` and refuses to tick, with
+increment dirs (`fleet_root/<id>/`) present, when the stamp names another fleet
+(a rename, or two units sharing one `fleet_root`) or when there is no stamp and
+`tag_prefix` is defaulted. The second case is an upgrade from before names
+existed: those claims carry the old default `fleet:`, which the new default
+`<name>:` would read as a human's. Set `tag_prefix = "fleet:"` to keep them, or
+finish and move aside the increment dirs. With no increment dirs any name may
+stamp the root. A dry run checks the stamp but never writes it.
+
 The board adapter answers the scope question (`BoardAccess.in_claim_scope`),
 scoped from `[board]` when `build_board` constructs it, so the supervisor never
 reads how a provider expresses scope. Every adapter today answers from the
@@ -503,18 +556,18 @@ Nothing starts the fleet automatically, and nothing loads until
   comment PR links, run the headless cleanup, move `Doing → To Do`). For a tick
   that cannot mutate, use `--dry-run`.
 - **The fleet-host (production): systemd.** The dedicated fleet-host VM schedules
-  ticks with systemd, not tmux (ADR-0002 §11): a `squadra.timer` fires a oneshot
-  `squadra.service` running `squadra fleet-tick`, which fetches the PAT +
+  ticks with systemd, not tmux (ADR-0002 §11): a `squadra-<name>.timer` fires a
+  oneshot `squadra-<name>.service` running `squadra fleet-tick`, which fetches the PAT +
   `ANTHROPIC_API_KEY` from Key Vault via the VM managed identity, syncs the app
   repo, and runs one tick. Render + install the units with `squadra install-units
-  --key-vault <kv> --fleet-home <checkout> [...]`; this does **not** enable the
+  --key-vault <kv> --fleet-name <name> --fleet-home <checkout> [...]`; this does **not** enable the
   timer. Provisioning, the on-host acceptance (`goss`), and activation
-  (`systemctl enable --now squadra.timer`) live in
+  (`systemctl enable --now squadra-<name>.timer`) live in
   [`docs/fleet-host/`](docs/fleet-host/SMOKE.md).
 - **Local / dev on demand: tmux.** `squadra {start|stop|status|log}` drives a
-  detached `fleet-ticker` tmux session whose loop fires one tick every
+  detached `squadra-<name>-ticker` tmux session (from `[fleet].name`) whose loop fires one tick every
   `FLEET_TICK_INTERVAL_SECONDS` (default 180): `start` is idempotent, `stop` kills
-  it (in-flight runners in the separate `fleet` session keep going), `status`
+  it (in-flight increments keep running in their sandboxes), `status`
   reports + tails, `log` tails (`-f` to follow). This is for hands-on local runs;
   the fleet-host uses systemd, above. (The boot-time `fleet-autostart.sh` / cron
   autostart paths have been retired in favor of systemd.)
