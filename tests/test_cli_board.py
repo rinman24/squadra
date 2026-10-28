@@ -86,11 +86,12 @@ def _main(capsys: pytest.CaptureFixture[str], *argv: str) -> tuple[int, str, str
     return rc, captured.out, captured.err
 
 
-def _proc(home: Path, *argv: str) -> subprocess.CompletedProcess[str]:
+def _proc(home: Path, *argv: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
     env: dict[str, str] = {k: v for k, v in os.environ.items() if k not in _SCRUBBED_ENV}
     env["FLEET_HOME"] = str(home)
     return subprocess.run(
         [sys.executable, "-m", "squadra.cli", "board", *argv],
+        input=stdin,
         capture_output=True,
         text=True,
         check=False,
@@ -154,6 +155,31 @@ def test_queue_reads_the_body_from_stdin(
 
     assert (rc, json.loads(out)) == (0, {"item_id": 1001})
     assert _items(fleet_home)["1001"]["body"] == "from stdin\n"
+
+
+def test_queue_passes_a_crlf_body_file_exactly_and_a_retry_still_matches(
+    fleet_home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    r"""N33: a body file is not read in text mode, whose newlines would drop the ``\r``."""
+    body: Path = fleet_home / "body.md"
+    body.write_bytes(b"line one\r\nline two\r\n")
+    argv: list[str] = [*_queue_args("A:I1"), "--body-file", str(body)]
+
+    rc, out, err = _main(capsys, *argv)
+
+    assert (rc, json.loads(out), err) == (0, {"item_id": 1001}, "")
+    assert _items(fleet_home)["1001"]["body"] == "line one\r\nline two\r\n"
+    before: bytes | None = _snapshot(fleet_home)
+    rc, out, err = _main(capsys, *argv)
+    assert (rc, json.loads(out), err) == (0, {"item_id": 1001}, "")  # A3: still identical
+    assert _snapshot(fleet_home) == before
+
+
+def test_queue_passes_a_crlf_body_on_stdin_exactly(fleet_home: Path) -> None:
+    queued = _proc(fleet_home, *_queue_args("A:I1"), "--body-file", "-", stdin="a\r\nb\r\n")
+
+    assert (queued.returncode, queued.stderr) == (0, "")
+    assert _items(fleet_home)["1001"]["body"] == "a\r\nb\r\n"
 
 
 def test_withdraw_moves_a_queued_increment_and_a_repeat_writes_nothing(
@@ -311,6 +337,19 @@ def test_a_usage_error_exits_2_on_one_prefixed_line_without_touching_the_board(
     assert (rc, out) == (2, "")
     assert len(err.splitlines()) == 1, err
     assert err.startswith(prefix), err
+    assert not fake_board_path(fleet_home).exists()
+
+
+def test_a_body_file_that_is_not_utf8_exits_2(
+    fleet_home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    body: Path = fleet_home / "latin1.md"
+    body.write_bytes("caf\u00e9".encode("latin-1"))
+
+    rc, out, err = _main(capsys, *_queue_args("A:I1"), "--body-file", str(body))
+
+    assert (rc, out) == (2, "")
+    _assert_one_error_line(err, "queue", "cannot read --body-file", "utf-8")
     assert not fake_board_path(fleet_home).exists()
 
 

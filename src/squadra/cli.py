@@ -508,7 +508,7 @@ def _parse_board_args(
     if args.verb == "queue":
         try:
             return args, _read_input(args.body_file), ()
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             raise _BoardUsageError(f"{prefix} cannot read --body-file: {exc}") from exc
     if args.verb == "partial-items":
         try:
@@ -634,10 +634,15 @@ def _run_board_verb(
 
 
 def _read_input(path: str) -> str:
-    """Read a verb's input file (a body, a request list), or stdin for ``-``, exactly as given."""
+    r"""Read a verb's input file (a body, a request list), or stdin for ``-``, exactly as given.
+
+    Decoded from bytes, not read in text mode, whose universal newlines would
+    turn ``\r\n`` into ``\n``: A3 and the partial-item finish compare the
+    body exactly (ledger N14, N33).
+    """
     if path == "-":
         return sys.stdin.read()
-    return Path(path).read_text(encoding="utf-8")
+    return Path(path).read_bytes().decode("utf-8")
 
 
 def _one_line(message: str) -> str:
