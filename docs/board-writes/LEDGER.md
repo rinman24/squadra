@@ -35,7 +35,7 @@ Under ~100K tokens per session, hard ceiling 120K, one unit per session.
 | SQ5f | From SQ5d's cut, WSQ1's deferred parts: `[[boards]]` with `claim_scope` per entry (the check fires wherever a board is added), adapter-owned `in_claim_scope(item_id)` (the supervisor stops reading parent links for scope), rename `seams.ado`. Keep SQ5e's `scope` verb, `queue_increment`'s scope refusal and `Increment.in_claim_scope` on one predicate through the rework | D | SQ5e | todo |
 | SQ6 | claude-skills DB7 finding (i): `squadra init --check` validated with `--provider`'s default `ado`, not the toml's provider. `--provider` now defaults to `None`; the scaffold falls back to `ado`, and the check passes `None` so `load_config`'s precedence (toml < env < flag) holds. Tests: toml wins with no flag or env, `FLEET_PROVIDER` beats the toml, the flag beats both | — (DB7) | — | done (PR #56); N29 |
 | SQ7 | claude-skills DB7 finding (iii), Juval's option D (board-knowledge `sessions/2026-10-27-juval-squadra-init-preflight-findings.md`): host-side git credentials are ADO-shaped (`repo._CREDENTIAL_HELPER` supplies `$AZURE_DEVOPS_EXT_PAT`), and the claim's own fetch (`worktree.py:107`) bypasses that helper, so the preflight and the claim auth differently. Put credential acquisition for host-side git ops behind one boundary, resolved from the target remote's host rather than the board provider (an ADO board over a GitHub repo is valid). The probe and every host-side clone, fetch and push go through it, so the "exact auth path" claim is true. Keep it fail-closed. The rejection message names the credential actually used. Rename the `_ado_*` probe symbols and sweep ADO assumptions outside `board.py` (e.g. the `scaffold.py` comment on the provider PAT). Not wanted: relabelling the log line, skipping the probe when the provider isn't ADO (silent broadening on the claim path), folding into SQ5f. Latent on Rich's Mac (SSH origin, N29); must land before the first live GitHub tick over an HTTPS origin | — (DB7) | SQ5f, for order only: no design dependency, but both edit `TickSeams` on this branch | todo; `handoffs/SQ7-host-git-credentials.md` |
-| SQ8 | claude-skills DB-D13 (DB11; Rich's ruling of Juval's "A second break in the same rule", board-knowledge `sessions/2026-10-27-juval-first-run-parent-scope.md`): report partial items as data, in a fixed format, instead of only `squadra board origins`' one stderr line per partial item (N18), which is not contract. The case: a first run stops mid-create of a queue, leaving a partial item; the map is revised (a title changes); `increments_by_origin` leaves the partial item out, so design-to-board's re-run takes the first-run path, its checks pass, and `queue` is refused (`QueueRefusedError`, exit 3) with a fix that loops. Each entry carries at least the item id and the Origin, and enough for a caller to tell whether a `queue_increment` with given arguments would finish it or be refused under N14's retry rule; better, keep that judgment in squadra behind `check_queue_finishes`, as SQ5e did for scope. Verb or shape is this effort's to settle (`/ask-juval`, `/ask-eric` if wanted); not in `origins`' `{origin: …}` shape, for the reason DB-D12 kept scope out of it. Add it to `verb-contract.md`; the fake answers it too. Unblocks claude-skills DB11 (S9), which first probes the loop on the fake | — (DB11) | — (scheduled around SQ5f, Rich's call; never alongside another unit on this branch) | todo; shape and names ruled by Rich (N31), glossary done; build: `handoffs/SQ8b-build-partial-items.md` |
+| SQ8 | claude-skills DB-D13 (DB11; Rich's ruling of Juval's "A second break in the same rule", board-knowledge `sessions/2026-10-27-juval-first-run-parent-scope.md`): report partial items as data, in a fixed format, instead of only `squadra board origins`' one stderr line per partial item (N18), which is not contract. The case: a first run stops mid-create of a queue, leaving a partial item; the map is revised (a title changes); `increments_by_origin` leaves the partial item out, so design-to-board's re-run takes the first-run path, its checks pass, and `queue` is refused (`QueueRefusedError`, exit 3) with a fix that loops. Each entry carries at least the item id and the Origin, and enough for a caller to tell whether a `queue_increment` with given arguments would finish it or be refused under N14's retry rule; better, keep that judgment in squadra behind `check_queue_finishes`, as SQ5e did for scope. Verb or shape is this effort's to settle (`/ask-juval`, `/ask-eric` if wanted); not in `origins`' `{origin: …}` shape, for the reason DB-D12 kept scope out of it. Add it to `verb-contract.md`; the fake answers it too. Unblocks claude-skills DB11 (S9), which first probes the loop on the fake | — (DB11) | — (scheduled around SQ5f, Rich's call; never alongside another unit on this branch) | done; N32 |
 
 ## Notes from squadra sessions
 
@@ -709,6 +709,46 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
     DB11 uses this read, consider dropping the partial half of
     `increments_and_partial_items` and `origins`' stderr line.
 
+- N32 (SQ8b, claude-skills DB-D13): **`squadra board partial-items
+  --requests-file PATH|-` built as ruled (N31).** Readings the build made,
+  none a change to the ruling:
+  - `RequestField` lives in `domain.py` (engines imports domain, so
+    `PartialItemReport` could not import it from engines) and engines
+    imports it. `check_queue_finishes` is a wrapper over `refusal_to_finish`,
+    built from `partial_item_disagreements`; its message bytes are unchanged
+    (the SQ2c refusal tests pass untouched, and a unit test asserts
+    `str(exc) == refusal_to_finish(...)`).
+  - Duplicate requests: the CLI refuses them (exit 2, before any board
+    read), and `IncrementBoard.partial_items` raises `ValueError` too, so a
+    library caller cannot get a silently last-wins answer.
+  - `_run_board_verb` lost its `verb` parameter (it is `args.verb`) to stay
+    within ruff's five-argument limit once the parsed requests were threaded
+    through; `_read_body` became `_read_input`, shared by `--body-file` and
+    `--requests-file`.
+  - The agreement test's row R has two predecessors, P (an Increment) and
+    OTHER (a partial item), not P alone. With P alone the "predecessor
+    Origin only another partial item carries" plan cannot change a verdict,
+    so a read that failed to map it would pass. With OTHER on R, the `agree`
+    plan refuses at the last link unless OTHER's Origin maps to its id, and
+    an `other-left-out` plan is added. Seven plans × every
+    `fail_create_after_step` j < k (k = 5) on the fake file through the CLI,
+    and seven plans × four stops (`seed_partial`) × four board shapes in the
+    contract suite. The parent-differs plan finishes before the parent link
+    and refuses after, on every shape.
+  - Mutation check (as SQ5e): a read that ignores the parent once set, one
+    that maps only Increments' Origins, and one that applies A3's set
+    equality to predecessors each fail the agreement tests on all four
+    shapes. A read that maps an absent Origin to a made-up id passes, and
+    must: an id no item carries can only add to the requested set, which
+    N14's subset check never refuses on. That is Juval's soundness argument,
+    so it is an equivalent mutant, not a gap.
+  - Found, not fixed (out of scope): `queue --body-file` reads with
+    `Path.read_text`, whose universal newlines turn `\r\n` into `\n`, so a
+    CRLF body is not passed "exactly as read" (N19). `partial-items` is not
+    affected (JSON escapes a CR inside a string), but a planner comparing
+    its own CRLF body with what `queue` stored would see A3 or N14 refuse.
+    For Rich: a one-line fix (`newline=""`) plus a test, in its own unit.
+
 ## Session log
 
 | Session | Date | Unit | Outcome | Handoff written |
@@ -732,3 +772,4 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
 | Handoff (SQ8) | 2026-10-27 | — | At Rich's request. Wrote `handoffs/SQ8-partial-items.md` from the SQ8 row, claude-skills DB11 and DB-D13 (read-only, `feat/design-to-board`) and Juval's session. The shape is left to the session (`/ask-juval`, Rich rules), with a design point for Juval: design-to-board checks before any write, when a row's predecessors may have no item ids yet, so a question verb over `queue`'s full arguments can't always be asked. claude-skills S8 (DB10) is done (PR #21), so SQ8 is the only squadra item design-to-board waits on (S9, DB11). No code | `handoffs/SQ8-partial-items.md` |
 | SQ8 | 2026-10-27 | SQ8 | Gate checked (no other unit in flight; SQ5f and SQ7 todo, no open PR). Branch already at `main` (`14b9258`, PR #60). Juval consulted blind on the shape (batched `partial-items` question, predecessors by Origin), Eric on the names; N31. His blocking question answered from DB-D4/DB-D7. Cut line taken before a ruling: proposal and Rich's four choices recorded, build written as a fresh handoff. No code | `handoffs/SQ8b-build-partial-items.md` (gate: Rich's N31 ruling in both session files' Choice) |
 | SQ8 (ruling) | 2026-10-27 | SQ8 | Rich ruled N31: Juval's shape, exit 3 on a board-level duplicate, all of Eric's names, partial item into `GLOSSARY.md` and `GLOSSARY-SETTLED.md` (added). Choices recorded in both session files. `handoffs/SQ8b-build-partial-items.md` rewritten with the merged build spec. No code | `handoffs/SQ8b-build-partial-items.md` (gate: this PR merged) |
+| SQ8b | 2026-10-27 | SQ8 | Gate checked (PR #61 merged; no other board-writes PR open). Branch fast-forwarded to `main` (`42778e8`). Built the ruled spec: `RequestField`, `ProposedRequest`, `PartialItemReport` (domain); `partial_item_disagreements`, `refusal_to_finish`, `item_ids_carrying`, `check_queue_finishes` as their wrapper (engines); `IncrementBoard.partial_items`; `squadra board partial-items --requests-file PATH\|-` (exit 0 for any verdicts, 2 usage/config, 3 only on a board-level duplicate, 1 provider). Agreement test on the fake file through the CLI (7 plans × j < 5) and on four shapes in the contract suite, fence test, exit tests, engine unit tests; checked by mutation. `verb-contract.md`, README rows, ADR-0005 note. N32. ruff, pyright, 1063 tests green | — (claude-skills S9's gate is this merge) |
