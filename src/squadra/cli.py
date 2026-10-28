@@ -28,8 +28,9 @@ into one surface (ADR-0001 decision 3), superseding the earlier thin
 - ``squadra increment {init|update|heartbeat|show}`` — the per-increment
   ``status.json`` ops (the new noun replacing the retired ``squadra-status``
   console script).
-- ``squadra board {queue|withdraw|origins|scope}`` — the increment verbs an outside
-  planner calls (board-writes SQ4, SQ5e, ``docs/board-writes/verb-contract.md``): thin
+- ``squadra board {queue|withdraw|origins|scope|partial-items}`` — the increment verbs
+  an outside planner calls (board-writes SQ4, SQ5e, SQ8,
+  ``docs/board-writes/verb-contract.md``): thin
   Clients over :class:`squadra.increments.IncrementBoard`, which holds every
   rule. stdout is one JSON document; an error is one stderr line prefixed
   ``squadra board <verb>:``; exit ``0`` done, ``2`` usage or configuration,
@@ -42,18 +43,19 @@ import json
 import os
 from pathlib import Path
 import sys
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING, NoReturn, cast
 
 from squadra import scaffold, status
 from squadra._resources import resolve_script
 from squadra.config import DEFAULT_PROVIDER, ConfigError, load_config
-from squadra.domain import Lifecycle
+from squadra.domain import Lifecycle, PartialItemReport, ProposedRequest
 
 if TYPE_CHECKING:
     from squadra.increments import IncrementBoard
 
 _FLEETCTL_SUBCOMMANDS: tuple[str, ...] = ("start", "stop", "status", "log")
 _INCREMENT_SUBCOMMANDS: tuple[str, ...] = ("init", "update", "heartbeat", "show")
+_REQUEST_KEYS: tuple[str, ...] = ("origin", "parent", "predecessor_origins", "title", "body")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -425,6 +427,14 @@ def _board_parser() -> _BoardArgumentParser:
     verbs.add_parser("origins", help="every Origin on the board, as JSON")
     scope = verbs.add_parser("scope", help="whether --parent is inside the claim scope (a read)")
     scope.add_argument("--parent", type=int, required=True, help="parent item id to ask about")
+    partial = verbs.add_parser(
+        "partial-items", help="every partial item, with queue's verdict on each request (a read)"
+    )
+    partial.add_argument(
+        "--requests-file",
+        required=True,
+        help="file holding a JSON list of proposed requests, or - for stdin",
+    )
     return parser
 
 
@@ -448,7 +458,7 @@ def _cmd_board(extra: Sequence[str]) -> int:
     from squadra.increments import IncrementBoard  # noqa: PLC0415
 
     try:
-        args, body = _parse_board_args(extra)
+        args, body, requests = _parse_board_args(extra)
     except _BoardUsageError as exc:
         print(_one_line(str(exc)), file=sys.stderr)
         return 2
@@ -459,7 +469,7 @@ def _cmd_board(extra: Sequence[str]) -> int:
         board = build_board(config)
         board.validate_config()
         increments = IncrementBoard(board, config.claim_scope, config.parent_scope_ids)
-        result: dict[str, object] = _run_board_verb(verb, args, body, increments, prefix)
+        result: dict[str, object] = _run_board_verb(args, body, requests, increments, prefix)
     except (ConfigError, BoardValidationError) as exc:
         print(_one_line(f"{prefix} {exc}"), file=sys.stderr)
         return 2
@@ -479,34 +489,105 @@ def _cmd_board(extra: Sequence[str]) -> int:
     return 0
 
 
-def _parse_board_args(extra: Sequence[str]) -> tuple[argparse.Namespace, str]:
-    """Parse one ``squadra board`` verb and read ``queue``'s body, before any board read.
+def _parse_board_args(
+    extra: Sequence[str],
+) -> tuple[argparse.Namespace, str, tuple[ProposedRequest, ...]]:
+    """Parse one ``squadra board`` verb and read its input file, before any board read.
 
+    Returns the arguments, ``queue``'s body and ``partial-items``' requests.
     Raises :class:`_BoardUsageError` for every usage error, each naming the verb
     once it is known: argparse's own, an unrecognized argument (argparse would
-    name the top-level prog), and an unreadable ``--body-file``.
+    name the top-level prog), an unreadable ``--body-file`` or
+    ``--requests-file``, and a malformed request list.
     """
     unknown: list[str]
     args, unknown = _board_parser().parse_known_args(list(extra))
     prefix: str = f"squadra board {args.verb}:"
     if unknown:
         raise _BoardUsageError(f"{prefix} unrecognized arguments: {' '.join(unknown)}")
-    if args.verb != "queue":
-        return args, ""
-    try:
-        return args, _read_body(args.body_file)
-    except OSError as exc:
-        raise _BoardUsageError(f"{prefix} cannot read --body-file: {exc}") from exc
+    if args.verb == "queue":
+        try:
+            return args, _read_input(args.body_file), ()
+        except OSError as exc:
+            raise _BoardUsageError(f"{prefix} cannot read --body-file: {exc}") from exc
+    if args.verb == "partial-items":
+        try:
+            return args, "", _parse_requests(_read_input(args.requests_file))
+        except OSError as exc:
+            raise _BoardUsageError(f"{prefix} cannot read --requests-file: {exc}") from exc
+        except ValueError as exc:
+            raise _BoardUsageError(f"{prefix} --requests-file: {exc}") from exc
+    return args, "", ()
+
+
+def _parse_requests(text: str) -> tuple[ProposedRequest, ...]:
+    """Parse ``partial-items``' JSON list of proposed requests, each with exactly the five keys.
+
+    Raises :class:`ValueError` for bad JSON, a non-list, a missing or extra key,
+    a wrong type (a bool is not an int) or an Origin named twice.
+    """
+    document: object = json.loads(text)  # json.JSONDecodeError is a ValueError
+    if not isinstance(document, list):
+        raise ValueError("expected a JSON list of requests")
+    requests: list[ProposedRequest] = []
+    seen: set[str] = set()
+    for index, entry in enumerate(cast("list[object]", document)):
+        request: ProposedRequest = _parse_request(index, entry)
+        if request.origin in seen:
+            raise ValueError(f"origin {json.dumps(request.origin)} is requested twice")
+        seen.add(request.origin)
+        requests.append(request)
+    return tuple(requests)
+
+
+def _parse_request(index: int, entry: object) -> ProposedRequest:
+    """Parse request ``index``: an object with exactly the keys of :class:`ProposedRequest`."""
+    where: str = f"request {index}"
+    if not isinstance(entry, dict):
+        raise ValueError(f"{where} is not a JSON object")
+    fields: dict[str, object] = cast("dict[str, object]", entry)
+    missing: list[str] = [key for key in _REQUEST_KEYS if key not in fields]
+    extra: list[str] = sorted(key for key in fields if key not in _REQUEST_KEYS)
+    if missing or extra:
+        raise ValueError(
+            f"{where} must have exactly the keys {list(_REQUEST_KEYS)}: "
+            f"missing {missing}, extra {extra}"
+        )
+    origin: object = fields["origin"]
+    parent: object = fields["parent"]
+    predecessor_origins: object = fields["predecessor_origins"]
+    title: object = fields["title"]
+    body: object = fields["body"]
+    if not isinstance(origin, str):
+        raise ValueError(f"{where}: origin must be a string")
+    if isinstance(parent, bool) or not isinstance(parent, int):
+        raise ValueError(f"{where}: parent must be an integer")
+    if not isinstance(predecessor_origins, list) or not all(
+        isinstance(item, str) for item in cast("list[object]", predecessor_origins)
+    ):
+        raise ValueError(f"{where}: predecessor_origins must be a list of strings")
+    if not isinstance(title, str):
+        raise ValueError(f"{where}: title must be a string")
+    if not isinstance(body, str):
+        raise ValueError(f"{where}: body must be a string")
+    return ProposedRequest(
+        origin=origin,
+        parent=parent,
+        predecessor_origins=tuple(cast("list[str]", predecessor_origins)),
+        title=title,
+        body=body,
+    )
 
 
 def _run_board_verb(
-    verb: str,
     args: argparse.Namespace,
     body: str,
+    requests: tuple[ProposedRequest, ...],
     increments: "IncrementBoard",
     prefix: str,
 ) -> dict[str, object]:
     """Call one verb and shape its result as the contract's stdout document."""
+    verb: str = args.verb
     if verb == "queue":
         predecessors: list[int] = args.predecessor
         item_id: int = increments.queue_increment(
@@ -519,6 +600,20 @@ def _run_board_verb(
     if verb == "scope":
         parent: int = args.parent
         return {"parent": parent, "in_claim_scope": increments.parent_in_claim_scope(parent)}
+    if verb == "partial-items":
+        reports: tuple[PartialItemReport, ...] = increments.partial_items(requests)
+        return {
+            "partial_items": [
+                {
+                    "item_id": report.item_id,
+                    "origin": report.origin,
+                    "queue": report.queue,
+                    "disagrees_on": list(report.disagrees_on),
+                    "refusal": report.refusal,
+                }
+                for report in reports
+            ]
+        }
     by_origin, partial_items = increments.increments_and_partial_items()
     for record in partial_items:
         print(
@@ -538,11 +633,11 @@ def _run_board_verb(
     }
 
 
-def _read_body(body_file: str) -> str:
-    """Read the item body from ``body_file``, or stdin for ``-``, exactly as given."""
-    if body_file == "-":
+def _read_input(path: str) -> str:
+    """Read a verb's input file (a body, a request list), or stdin for ``-``, exactly as given."""
+    if path == "-":
         return sys.stdin.read()
-    return Path(body_file).read_text(encoding="utf-8")
+    return Path(path).read_text(encoding="utf-8")
 
 
 def _one_line(message: str) -> str:
