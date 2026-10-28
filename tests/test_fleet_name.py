@@ -47,26 +47,37 @@ def _unit_ctx(name: str, home: str) -> UnitContext:
     )
 
 
+def _repository_of(home: Path, _app_repo_url: str) -> str | None:
+    return f"acme/{home.name}"  # one repository per fleet home
+
+
 # --- units -----------------------------------------------------------------------
 
 
 def test_two_fleets_install_distinct_units_and_a_reinstall_is_allowed(tmp_path: Path) -> None:
-    alpha: list[Path] = install_units(_unit_ctx("alpha", "/srv/alpha"), dest=tmp_path)
-    beta: list[Path] = install_units(_unit_ctx("beta", "/srv/beta"), dest=tmp_path)
+    alpha: list[Path] = install_units(
+        _unit_ctx("alpha", "/srv/alpha"), repository_of=_repository_of, dest=tmp_path
+    )
+    beta: list[Path] = install_units(
+        _unit_ctx("beta", "/srv/beta"), repository_of=_repository_of, dest=tmp_path
+    )
 
     assert {path.name for path in alpha} == {"squadra-alpha.service", "squadra-alpha.timer"}
     assert {path.name for path in beta} == {"squadra-beta.service", "squadra-beta.timer"}
     assert "Unit=squadra-beta.service" in (tmp_path / "squadra-beta.timer").read_text()
     # Re-installing a fleet over its own units (same FLEET_HOME) is an upgrade.
-    assert install_units(_unit_ctx("alpha", "/srv/alpha"), dest=tmp_path) == alpha
+    assert (
+        install_units(_unit_ctx("alpha", "/srv/alpha"), repository_of=_repository_of, dest=tmp_path)
+        == alpha
+    )
 
 
 def test_install_refuses_to_overwrite_another_fleet_home(tmp_path: Path) -> None:
-    install_units(_unit_ctx("alpha", "/srv/alpha"), dest=tmp_path)
+    install_units(_unit_ctx("alpha", "/srv/alpha"), repository_of=_repository_of, dest=tmp_path)
     before: str = (tmp_path / "squadra-alpha.service").read_text()
 
     with pytest.raises(UnitConflictError, match="/srv/alpha"):
-        install_units(_unit_ctx("alpha", "/srv/other"), dest=tmp_path)
+        install_units(_unit_ctx("alpha", "/srv/other"), repository_of=_repository_of, dest=tmp_path)
     assert (tmp_path / "squadra-alpha.service").read_text() == before  # nothing written
 
 

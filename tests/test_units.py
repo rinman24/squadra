@@ -18,6 +18,10 @@ from squadra.units import (
 )
 
 
+def _repository_of(_home: Path, _app_repo_url: str) -> str | None:
+    return "your-org/example-project/app-backend"
+
+
 def _ctx() -> UnitContext:
     return UnitContext(
         fleet_name="app",
@@ -81,7 +85,7 @@ def test_missing_placeholder_is_loud() -> None:
 
 
 def test_install_units_writes_both_files_without_touching_systemd(tmp_path: Path) -> None:
-    written: list[Path] = install_units(_ctx(), dest=tmp_path)
+    written: list[Path] = install_units(_ctx(), repository_of=_repository_of, dest=tmp_path)
 
     assert sorted(p.name for p in written) == ["squadra-app.service", "squadra-app.timer"]
     for path in written:
@@ -95,6 +99,6 @@ def test_install_units_uses_injected_writer(tmp_path: Path) -> None:
     def _writer(path: Path, content: str) -> None:
         captured[path] = content
 
-    install_units(_ctx(), dest=tmp_path, writer=_writer)
+    install_units(_ctx(), repository_of=_repository_of, dest=tmp_path, writer=_writer)
 
     assert set(captured) == {tmp_path / "squadra-app.service", tmp_path / "squadra-app.timer"}

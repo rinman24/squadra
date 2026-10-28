@@ -172,7 +172,10 @@ def _build_parser() -> tuple[argparse.ArgumentParser, frozenset[str]]:
         help="fleet state dir (default: <fleet-home>/.claude/fleet)",
     )
     install.add_argument(
-        "--app-repo-url", default="", help="remote fleet-tick keeps fleet-home synced to"
+        "--app-repo-url",
+        default="",
+        help="remote fleet-tick keeps fleet-home synced to; also names the fleet's "
+        "repository while fleet-home has no origin (one fleet per repository on a host)",
     )
     install.add_argument(
         "--interval-seconds", type=int, default=None, help="timer cadence (default: 180)"
@@ -325,7 +328,11 @@ def _cmd_install_units(args: argparse.Namespace) -> int:
     units before the first tick clones ``FLEET_HOME``. When the checkout's
     ``squadra.toml`` exists, its ``[fleet] name`` must agree; that file is the
     name's one source (N34), so the flag only says which fleet is meant.
+    Another fleet's units already serving this fleet's repository, or a
+    repository that can't be resolved while another fleet is installed, refuse
+    the install (exit 1, nothing written).
     """
+    from squadra import repo  # noqa: PLC0415
     from squadra.units import (  # noqa: PLC0415
         DEFAULT_INTERVAL_SECONDS,
         DEFAULT_SYSTEMD_DIR,
@@ -361,7 +368,7 @@ def _cmd_install_units(args: argparse.Namespace) -> int:
     )
     dest: Path = args.dest if args.dest is not None else DEFAULT_SYSTEMD_DIR
     try:
-        written: list[Path] = install_units(ctx, dest=dest)
+        written: list[Path] = install_units(ctx, repository_of=repo.fleet_repository, dest=dest)
     except UnitConflictError as exc:
         print(f"squadra install-units: {exc}", file=sys.stderr)
         return 1
