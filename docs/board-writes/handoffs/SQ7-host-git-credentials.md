@@ -1,8 +1,8 @@
 # Handoff: SQ7 · one credential boundary for host-side git (board-writes, part 7)
 
 Rich starts a fresh `claude` session in `~/Code/squadra` and gives it this file.
-**Do not start until SQ5f's PR (and any SQ5g it cut) has merged on squadra
-`main`.** SQ7 doesn't depend on SQ5f's design. The gate only keeps the two
+**Do not start until SQ5f's PR, and the SQ5g and SQ5g2 it led to, have merged
+on squadra `main`.** SQ7 doesn't depend on SQ5f's design. The gate only keeps the two
 in series, because both edit `supervisor.py`'s `TickSeams` and its builders on
 the shared `feat/board-writes` branch. If it hasn't merged, stop and tell Rich.
 Fetch first, then fast-forward the `feat/board-writes` worktree
@@ -26,7 +26,9 @@ it. Rich chose Juval's option D (ledger N29). Read only these:
    - `src/squadra/repo.py`: `_CREDENTIAL_HELPER` (resets inherited helpers,
      then supplies `$AZURE_DEVOPS_EXT_PAT`), the bootstrap clone and fetch
      (both through it), `target_remote_url`, `remote_auth_ok` (the
-     `ls-remote` probe, through it).
+     `ls-remote` probe, through it). `repository_identity` and
+     `fleet_repository` (SQ5g2, N36) name a repository and drop its host on
+     purpose; credentials resolve by host, so don't route them by that key.
    - `src/squadra/worktree.py` `GitWorktreeAccess.create`: the claim's own
      `fetch origin` (about line 107), with **no** credential helper (ambient
      credentials). This is why the probe's "exact auth path" claim is false.
