@@ -33,6 +33,8 @@ Under ~100K tokens per session, hard ceiling 120K, one unit per session.
 | SQ5d | From SQ5c's cut: relinquishing a fleet-claimed WITHDRAWN item and the hand-DONE sandbox stop (N25, once Rich rules on Juval's answer and Eric names the state and action); then WSQ1's deferred parts: `[[boards]]` with `claim_scope` per entry, adapter-owned `in_claim_scope(item_id)`, rename `seams.ado`; N10 closes by the relinquish rule if ruled, else GitHub's compare-and-set is checked | D | SQ5c; Rich's N25 choice | done (PR #55); N27. N10 closed. Cut taken: `[[boards]]`, `in_claim_scope` and the rename to SQ5f (after SQ5e) |
 | SQ5e | claude-skills DB-D12 (Rich's Choice in board-knowledge `sessions/2026-10-27-juval-first-run-parent-scope.md`): the read verb `squadra board scope --parent ID` → `{"parent": N, "in_claim_scope": bool}`; exit 0 either way, 2 for config, 1 for provider; `validate_config()` first; never writes. Behind the one predicate `queue_increment`'s `ClaimScopeRefusedError` and `Increment.in_claim_scope` use (today `engines.parent_in_claim_scope`). Agreement test: scope ∈ {whole-board, parents [1]} × parent ∈ {1, 2}: `scope` says in scope exactly when `queue` is not refused for scope, and leaves the board unchanged. Added to `verb-contract.md`. Not wanted: exposing `claim_scope` itself, scope in `origins`, a `queue --check` flag. Requested by Rich mid-SQ5d; ordered before `[[boards]]` because design-to-board's first-run check waits on it | D | SQ5d | todo |
 | SQ5f | From SQ5d's cut, WSQ1's deferred parts: `[[boards]]` with `claim_scope` per entry (the check fires wherever a board is added), adapter-owned `in_claim_scope(item_id)` (the supervisor stops reading parent links for scope), rename `seams.ado`. Keep SQ5e's `scope` verb, `queue_increment`'s scope refusal and `Increment.in_claim_scope` on one predicate through the rework | D | SQ5e | todo |
+| SQ6 | claude-skills DB7 finding (i): `squadra init --check` validated with `--provider`'s default `ado`, not the toml's provider. `--provider` now defaults to `None`; the scaffold falls back to `ado`, and the check passes `None` so `load_config`'s precedence (toml < env < flag) holds. Tests: toml wins with no flag or env, `FLEET_PROVIDER` beats the toml, the flag beats both | — (DB7) | — | done (S7); N29 |
+| SQ7 | claude-skills DB7 finding (iii), Juval's option D (board-knowledge `sessions/2026-10-27-juval-squadra-init-preflight-findings.md`): host-side git credentials are ADO-shaped (`repo._CREDENTIAL_HELPER` supplies `$AZURE_DEVOPS_EXT_PAT`), and the claim's own fetch (`worktree.py:107`) bypasses that helper, so the preflight and the claim auth differently. Put credential acquisition for host-side git ops behind one boundary, resolved from the target remote's host rather than the board provider (an ADO board over a GitHub repo is valid). The probe and every host-side clone, fetch and push go through it, so the "exact auth path" claim is true. Keep it fail-closed. The rejection message names the credential actually used. Rename the `_ado_*` probe symbols and sweep ADO assumptions outside `board.py` (e.g. the `scaffold.py` comment on the provider PAT). Not wanted: relabelling the log line, skipping the probe when the provider isn't ADO (silent broadening on the claim path), folding into SQ5f. Latent on Rich's Mac (SSH origin, N29); must land before the first live GitHub tick over an HTTPS origin | — (DB7) | — (independent of SQ5f) | todo |
 
 ## Notes from squadra sessions
 
@@ -556,6 +558,61 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
     so its sandbox is not stopped by the new rule. `_park_needs_decision`
     already tore it down; not changed.
 
+- N28 (S7, claude-skills DB7): **design-to-board's acceptance run (DB5,
+  claude-skills session S5, 2026-10-27) against N23, N24 and N26.** squadra
+  `34a2234` (SQ5b) installed as a uv tool, on `rinman24/squadra-sandbox` +
+  project #1, `claim_scope = "parents"`, `--parent 1`. It ran before SQ5c's
+  live run, so the adapter's first live writes were DB5's create path, not
+  N26's (N26 already saw the `squadra:committed` label DB5 made).
+  - Five `squadra board queue` calls (#3; #4 blocked by #3; #5 blocked by #4;
+    #6 blocked by #3; #7 blocked by #6), each making all 5 + n writes (N24),
+    and two `squadra board withdraw` calls (#4, #5: closed as not planned)
+    worked. Each read-back saw QUEUED (Status `Todo`). DB5 credits `Todo` to
+    the "Item added to project" workflow. Per N26 the create writes the
+    queued Status itself, so the two cannot be told apart.
+  - The labels POST created the missing `squadra:committed` on #3's commit
+    write (N24's first fact, for that label; N26 showed it with
+    `fleet:claimed`).
+  - DB5 left two of N24's facts unverified: re-adding an issue to the project
+    and `addSubIssue` refusing a parented child. N26 verified both later the
+    same day, so none of N24's facts is still open.
+  - "Item closed" set #4's and #5's Status to `Done`. They still read
+    WITHDRAWN (closure wins), and claude-skills DB8 turns the workflow off.
+  - Re-checked by S7 on `main` `e4083e6`, against a temp `FLEET_HOME` holding
+    a copy of the sandbox's `squadra.toml`: `tick --dry-run` →
+    `inflight=[] claimable=[3] states={3: 'claimable', 6: 'blocked', 7:
+    'blocked'}`, the same as DB5's acceptance line.
+
+- N29 (S7, claude-skills DB7): **DB5's three squadra findings, ruled by Rich
+  after Juval** (board-knowledge
+  `sessions/2026-10-27-juval-squadra-init-preflight-findings.md`). Each was
+  reproduced on `main` `e4083e6` in a temp `FLEET_HOME` holding a copy of the
+  sandbox's `squadra.toml`.
+  - (i) **Fixed (SQ6).** Without `--provider`, the check built the ADO
+    adapter and failed on an ADO project's Issue states (`Doing`/`Done`/`To
+    Do`). argparse put `ado` at the flag layer, so the env and toml layers
+    were never reached. After SQ6 the same command reads `config OK`.
+  - (ii) **Dropped, no row.** The finding's "rewrites" was wrong: the two
+    templates are written only when absent and are skipped otherwise unless
+    `--force`. That matches the README's `init [--check]` (scaffold, then
+    validate), and the templates are inert until a consumer wires them in.
+  - (iii) **SQ7.** Still logged on `main`. Juval: the log line is accurate;
+    the defect is that host-side git auth is ADO-shaped and the probe and the
+    claim's fetch auth differently (confirmed: `worktree.py:107` uses
+    `host_git_argv` with no credential helper). His blocking question is the
+    origin form and `AZURE_DEVOPS_EXT_PAT` on the host of the first live
+    GitHub tick. Probe run alone on Rich's Mac, against
+    `~/Code/squadra-sandbox` (`remote_auth_ok(target_remote_url(...))`, one
+    read-only `ls-remote`): SSH origin (`git@github.com`), the variable
+    unset, `True`. So SQ7 is latent there, not blocking. Over an HTTPS
+    origin to the private sandbox it would very likely fail every tick that
+    has claim work and tell the operator to rotate an ADO Key Vault secret
+    (code reading, not run).
+  - **DB-D12's `scope` verb is not built.** `verb-contract.md` on `main`
+    `e4083e6` has no `scope`. It is SQ5e (todo, ahead of SQ5f), as SQ5d
+    recorded, so S7 added no row. claude-skills DB10/S8's gate is SQ5e's
+    merge on `main`.
+
 ## Session log
 
 | Session | Date | Unit | Outcome | Handoff written |
@@ -572,3 +629,4 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
 | SQ5b | 2026-10-27 | SQ5b | PR #53. Gate checked (PR #52 merged). Branch fast-forwarded to `main` (`9a324ed`). GitHub's `create_increment` (k = 5 + n ordered `gh` writes, idempotent under `partial_item`, commit marker last, Status read back) and `items_with_origin` (every Origin-bearing issue of the repository by GraphQL listing, not search); write endpoints verified by introspection (N24). `increment` suite four-shaped, crash-safe suite on `file` + `gh` with a fault after each j < k, Juval's interloper and Eric's cleared-Status tests, `\r\n` bodies (N23). README provider row. Cut: the tick's refused-requeue report and the live sandbox run to SQ5c, with an open question on the tick case (N24). ruff, pyright, 827 tests green | `handoffs/SQ5c-boards-scope.md` |
 | SQ5c | 2026-10-27 | SQ5c | PR #54. Gate checked (PR #53 merged). Branch fast-forwarded to `main` (`34a2234`). In-tick refused state write reported per item and the tick goes on (`StateWriteRefusedError`, N25), contract-tested for every close reason. N24's between-ticks case put to Juval: option A (release), awaiting Rich's Choice. Live sandbox run (N26): every write, N24's three facts verified. Cut: the release rule, `[[boards]]`, `in_claim_scope`, the rename and N10 to SQ5d. ruff, pyright, tests green | `handoffs/SQ5d-release-and-boards.md` (gate: SQ5c merged + Rich's N25 choice) |
 | SQ5d | 2026-10-27 | SQ5d | PR #55. Gate checked (PR #54 merged; Rich's N25 Choice filled in). Branch fast-forwarded to `main` (`5fbba34`). Eric named the rule (relinquish / `withdrawn-in-flight`, N27). Built: engine step 0 + hand-DONE sandbox stop, the claimed-WITHDRAWN gather, `_relinquish`, the `Relinquished` comment on both renderers, the `withdrawn` park (manifest vocabulary split from status), the GitHub listing memo; ADR-0004, GLOSSARY, README, N3, N10 (closed). Contract tests on `gh` + ADO-shaped fake, completed and N10 variants. Cut: `[[boards]]`, `in_claim_scope`, the rename to SQ5f. Rich's mid-session add-on (DB-D12's `squadra board scope` verb) recorded as SQ5e, not built (session budget). ruff, pyright, tests green | `handoffs/SQ5e-board-scope-verb.md`, then `handoffs/SQ5f-boards-scope.md` |
+| S7 | 2026-10-27 | SQ6 (done), SQ7 (todo); claude-skills DB7 | Gate checked (SQ5d merged, PR #55, `e4083e6`). Branch fast-forwarded to `main`. Recorded DB5's live facts against N23, N24 and N26 (N28): none of N24's facts is still open. Reproduced DB7's findings in a temp `FLEET_HOME` (never writing the sandbox); Rich asked `/ask-juval` before ruling, then ruled as Juval said: (i) fixed (SQ6), (ii) dropped, (iii) row SQ7. Juval's probe was run alone on Rich's Mac: SSH, passes, so SQ7 is latent there (N29). DB-D12's verb is not built; it stays SQ5e. ruff, pyright, 862 tests green | `handoffs/SQ5e-board-scope-verb.md` (unchanged) |
