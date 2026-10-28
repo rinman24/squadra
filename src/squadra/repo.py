@@ -21,8 +21,10 @@ from executing during a host-side op.
 from collections.abc import Callable, Mapping, Sequence
 import os
 from pathlib import Path
+import re
 import subprocess
 from typing import Final
+from urllib.parse import unquote
 
 from squadra.git_host import host_git_argv, with_hooks_guard
 
@@ -49,6 +51,31 @@ _CREDENTIAL_HELPER: Final[tuple[str, ...]] = (
     "credential.helper=",
     "-c",
     'credential.helper=!f() { echo username=pat; echo "password=$AZURE_DEVOPS_EXT_PAT"; }; f',
+)
+
+# Azure DevOps remotes, each capturing (org, project, repo): HTTPS on dev.azure.com
+# (the project segment is absent when the repo is named after its project), HTTPS on
+# the legacy <org>.visualstudio.com (optionally under DefaultCollection), and SSH on
+# ssh.dev.azure.com or vs-ssh.visualstudio.com (``v3/<org>/<project>/<repo>``).
+_ADO_REMOTES: Final[tuple[re.Pattern[str], ...]] = (
+    re.compile(
+        r"^https?://(?:[^@/]+@)?dev\.azure\.com/([^/]+)/(?:([^/]+)/)?_git/([^/]+?)/?$", re.I
+    ),
+    re.compile(
+        r"^https?://(?:[^@/]+@)?([^./]+)\.visualstudio\.com/(?:defaultcollection/)?"
+        r"(?:([^/]+)/)?_git/([^/]+?)/?$",
+        re.I,
+    ),
+    re.compile(
+        r"^(?:ssh://)?[^@/]+@(?:ssh\.dev\.azure\.com|vs-ssh\.visualstudio\.com)[:/]v3/"
+        r"([^/]+)/([^/]+)/([^/]+?)/?$",
+        re.I,
+    ),
+)
+# Any other remote whose path is ``<owner>/<name>(.git)``: GitHub's three forms,
+# HTTPS, ``ssh://`` and scp-like (the same shapes ``github_repository_of`` reads).
+_OWNER_NAME_REMOTE: Final[re.Pattern[str]] = re.compile(
+    r"^(?:[a-z+]+://(?:[^@/]+@)?[^/]+/|[^@:/]+@[^:/]+:)([^/]+)/([^/]+?)(?:\.git)?/?$"
 )
 
 
@@ -165,6 +192,48 @@ def target_remote_url(
             return url
     fallback: str = env.get(APP_REPO_URL_ENV, "").strip()
     return fallback or None
+
+
+def repository_identity(url: str) -> str | None:
+    """Return the repository a remote URL names, as a provider-neutral key, or ``None``.
+
+    Two remotes name the same repository exactly when their keys are equal, so
+    the key drops what varies between remotes of one repository: the transport,
+    any userinfo (an HTTPS remote can carry a token), ``.git``, percent-encoding
+    and case (GitHub and Azure DevOps names are case-insensitive).
+
+    - Azure DevOps: ``<org>/<project>/<repo>``, from any of its remote forms.
+    - Otherwise ``<owner>/<name>`` for a two-segment path: GitHub's forms. The
+      host is not compared, as ``github_repository_of`` does not compare it.
+
+    The two shapes have different segment counts, so they never collide. Any
+    other URL (a local path, a nested group) is ``None``: the caller fails
+    closed rather than guess.
+    """
+    raw: str = url.strip()
+    for pattern in _ADO_REMOTES:
+        ado: re.Match[str] | None = pattern.match(raw)
+        if ado is not None:
+            org, project, name = ado.group(1), ado.group(2), ado.group(3)
+            return unquote(f"{org}/{project or name}/{name}").lower()
+    owned: re.Match[str] | None = _OWNER_NAME_REMOTE.match(raw)
+    if owned is None:
+        return None
+    return unquote(f"{owned.group(1)}/{owned.group(2)}").lower()
+
+
+def fleet_repository(fleet_home: Path, app_repo_url: str, *, run: GitRun = _run_git) -> str | None:
+    """Return the repository a fleet serves (:func:`repository_identity`), or ``None``.
+
+    Resolved as :func:`target_remote_url` resolves it — ``fleet_home``'s
+    ``origin``, else ``app_repo_url`` — except that the fallback is the fleet's
+    own clone URL (from its unit or its ``install-units`` flag), never this
+    process's ``FLEET_APP_REPO_URL``.
+    """
+    url: str | None = target_remote_url(
+        fleet_home, run=run, environ={APP_REPO_URL_ENV: app_repo_url}
+    )
+    return repository_identity(url) if url is not None else None
 
 
 def remote_auth_ok(remote_url: str, *, run: GitRun = _run_git_probe) -> bool:

@@ -447,7 +447,21 @@ host never collide:
 `squadra install-units --fleet-name NAME` installs the units under the name,
 refuses a `--fleet-name` that the checkout's `squadra.toml` contradicts, and
 refuses to overwrite a unit file that runs a different `FLEET_HOME` (another
-fleet's). The fleet name and the tag prefix stay two settings. A fleet that
+fleet's). It also refuses, writing nothing, a fleet whose repository another
+fleet's service on the host already serves, the unnamed `squadra.service` from
+before names included: issue numbers are per repository, so two fleets on one
+repository would claim the same issues. Each fleet's repository is its
+`FLEET_HOME`'s `origin`, else its clone URL (the unit's `FLEET_APP_REPO_URL`,
+or `--app-repo-url` for the fleet being installed), compared by repository, not
+by URL: GitHub `owner/name` and Azure DevOps `org/project/repo`, ignoring
+transport, credentials, `.git` and case. A repository that can't be resolved
+(no checkout, no clone URL, or a remote of another shape) refuses while another
+fleet is installed; pass `--app-repo-url` or clone first. Two hosts on one
+repository are out of reach of this check. The service carries the name it was
+installed for (`FLEET_INSTALLED_NAME`), and `squadra fleet-tick` refuses
+(exit 2), after syncing the checkout, when its `squadra.toml` names another
+fleet: on a fresh host the flag is given before the toml is cloned. The check
+never sets the name. The fleet name and the tag prefix stay two settings. A fleet that
 keeps the prefix its claims already carry looks like this:
 
 ```toml
