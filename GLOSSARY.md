@@ -29,3 +29,7 @@ _Avoid_: Release (squadra and its target repos release software), roll back and 
 **Origin**:
 The opaque reference an outside caller attaches when it queues an Increment. It is unique on the board, never reused, and never parsed by squadra. It is not the Increment's identity.
 _Avoid_: Key, external ID
+
+**Partial item**:
+A board item a crash left mid-create: it carries its Origin but is in no Lifecycle bucket, so it is not an Increment and the tick never sees it. Queuing its Origin again finishes it when the request agrees with what is on the item, and is refused otherwise. See ADR-0005.
+_Avoid_: Incomplete item (complete means delivered here), partial increment (partial qualifies item, never Increment)
