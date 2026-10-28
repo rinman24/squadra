@@ -18,7 +18,7 @@ engine into the live tick (``squadra.supervisor.run_tick``).
 from collections.abc import Mapping, Sequence
 import re
 
-from squadra.config import DEFAULT_BRANCH_TEMPLATE, ClaimScope
+from squadra.config import DEFAULT_BRANCH_TEMPLATE, ClaimScope, parent_in_claim_scope
 from squadra.domain import (
     AwaitAgent,
     EscalateEgressDenied,
@@ -113,17 +113,6 @@ class DuplicateOriginError(ValueError):
 
 class UnknownOriginError(ValueError):
     """Raised when a verb names an Origin that no Increment on the board carries; a partial item does not count."""
-
-
-def parent_in_claim_scope(
-    parent: int | None, claim_scope: ClaimScope, parent_scope_ids: tuple[int, ...]
-) -> bool:
-    """Whether an item under ``parent`` is inside ``[board].claim_scope``.
-
-    The one definition of claim scope: the tick's claim gate, the increment
-    query and the increment writes all use it, so they cannot disagree.
-    """
-    return claim_scope is ClaimScope.WHOLE_BOARD or parent in parent_scope_ids
 
 
 def index_by_origin(records: Sequence[OriginRecord]) -> dict[str, OriginRecord]:

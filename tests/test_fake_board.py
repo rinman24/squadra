@@ -15,7 +15,7 @@ import sys
 import pytest
 
 from squadra.board import BoardValidationError, build_board
-from squadra.config import SquadraConfig, load_config
+from squadra.config import ClaimScope, SquadraConfig, load_config
 from squadra.domain import IncrementRequest, Lifecycle, OriginRecord
 from squadra.fake_board import FAKE_BOARD_FILE, JsonFileBoard, fake_board_path
 
@@ -145,11 +145,14 @@ def test_an_unknown_item_names_the_board_file(config: SquadraConfig) -> None:
 _WRITER: str = """
 import sys
 from pathlib import Path
+from squadra.config import ClaimScope
 from squadra.domain import IncrementRequest, Lifecycle
 from squadra.fake_board import JsonFileBoard
 
 states = {Lifecycle.QUEUED: ("Backlog",), Lifecycle.ACTIVE: ("Doing",), Lifecycle.DONE: ("Done",)}
-board = JsonFileBoard(Path(sys.argv[1]), states=states)
+board = JsonFileBoard(
+    Path(sys.argv[1]), states=states, claim_scope=ClaimScope.WHOLE_BOARD, parent_scope_ids=()
+)
 for n in range(int(sys.argv[3])):
     board.create_increment(IncrementRequest(f"{sys.argv[2]}:{n}", 200, (1, 2), "t", "b"))
 """
@@ -165,6 +168,8 @@ def test_concurrent_processes_never_corrupt_the_file_or_share_an_id(tmp_path: Pa
     assert [writer.wait(timeout=60) for writer in writers] == [0, 0, 0]
     board = JsonFileBoard(
         path,
+        claim_scope=ClaimScope.WHOLE_BOARD,
+        parent_scope_ids=(),
         states={
             Lifecycle.QUEUED: ("Backlog",),
             Lifecycle.ACTIVE: ("Doing",),

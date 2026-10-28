@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from squadra.board import BoardValidationError, render_ado_html, render_github_markdown
-from squadra.config import ADO_BASIC_STATES
+from squadra.config import ADO_BASIC_STATES, ClaimScope, item_in_claim_scope
 from squadra.domain import (
     CommentEvent,
     IncrementRequest,
@@ -99,6 +99,8 @@ class AdoShapedFakeBoard:
         states: Mapping[Lifecycle, tuple[str, ...]] = ADO_BASIC_STATES,
         available_states: tuple[str, ...] | None = None,
         tags: Tags = Tags(),
+        claim_scope: ClaimScope = ClaimScope.WHOLE_BOARD,
+        parent_scope_ids: tuple[int, ...] = (),
     ) -> None:
         """Seed an empty board.
 
@@ -108,6 +110,8 @@ class AdoShapedFakeBoard:
         """
         self._states = states
         self._tags = tags
+        self._claim_scope = claim_scope
+        self._parent_scope_ids = parent_scope_ids
         self._available: set[str] = set(
             available_states
             if available_states is not None
@@ -165,6 +169,12 @@ class AdoShapedFakeBoard:
         """Return the seeded parent / predecessor links of the item."""
         item: _AdoItem = self.items[item_id]
         return WorkItemLinks(parent_id=item.parent_id, predecessor_ids=item.predecessor_ids)
+
+    def in_claim_scope(self, item_id: int) -> bool:
+        """Answer from the construction-time scope, by the seeded parent link."""
+        return item_in_claim_scope(
+            lambda: self.item_links(item_id).parent_id, self._claim_scope, self._parent_scope_ids
+        )
 
     def item_state(self, item_id: int) -> Lifecycle:
         """Reverse-map the item's native state to its lifecycle bucket."""
@@ -354,10 +364,14 @@ class GitHubShapedFakeBoard:
         states: Mapping[Lifecycle, tuple[str, ...]] = GITHUB_STATES,
         available_statuses: tuple[str, ...] | None = None,
         tags: Tags = Tags(),
+        claim_scope: ClaimScope = ClaimScope.WHOLE_BOARD,
+        parent_scope_ids: tuple[int, ...] = (),
     ) -> None:
         """Seed an empty board; ``available_statuses`` drives ``validate_config``."""
         self._states = states
         self._tags = tags
+        self._claim_scope = claim_scope
+        self._parent_scope_ids = parent_scope_ids
         self._available: set[str] = set(
             available_statuses
             if available_statuses is not None
@@ -414,6 +428,12 @@ class GitHubShapedFakeBoard:
         """Return the seeded sub-issue parent / dependency links."""
         item: _GitHubItem = self.items[item_id]
         return WorkItemLinks(parent_id=item.parent_id, predecessor_ids=item.predecessor_ids)
+
+    def in_claim_scope(self, item_id: int) -> bool:
+        """Answer from the construction-time scope, by the seeded parent link."""
+        return item_in_claim_scope(
+            lambda: self.item_links(item_id).parent_id, self._claim_scope, self._parent_scope_ids
+        )
 
     def item_state(self, item_id: int) -> Lifecycle:
         """Reverse-map the issue's native status to its lifecycle bucket."""
@@ -539,9 +559,17 @@ class RecordingFileBoard(JsonFileBoard):
         *,
         states: Mapping[Lifecycle, tuple[str, ...]] = FILE_STATES,
         tags: Tags = Tags(),
+        claim_scope: ClaimScope = ClaimScope.WHOLE_BOARD,
+        parent_scope_ids: tuple[int, ...] = (),
     ) -> None:
         """Open the board file at ``path``; nothing is written until the first call."""
-        super().__init__(path, states=states, tags=tags)
+        super().__init__(
+            path,
+            states=states,
+            tags=tags,
+            claim_scope=claim_scope,
+            parent_scope_ids=parent_scope_ids,
+        )
         self.state_writes: list[tuple[int, Lifecycle]] = []
 
     def set_state(self, item_id: int, state: Lifecycle) -> None:

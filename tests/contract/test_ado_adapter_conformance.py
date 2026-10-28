@@ -19,7 +19,7 @@ import json
 import pytest
 
 from squadra.board import AzCliAdo, BoardValidationError
-from squadra.config import ADO_BASIC_STATES
+from squadra.config import ADO_BASIC_STATES, ClaimScope
 from squadra.domain import Lifecycle, WorkItem
 
 # native ADO-Basic done state ("Done") that DONE maps onto
@@ -72,6 +72,8 @@ def _adapter(available_states: tuple[str, ...]) -> AzCliAdo:
         run=_CannedAz(available_states=available_states),
         project="proj",
         states=ADO_BASIC_STATES,
+        claim_scope=ClaimScope.WHOLE_BOARD,
+        parent_scope_ids=(),
     )
 
 

@@ -352,6 +352,7 @@ def test_parent_scope_filter_limits_claims(
     make_issue(6, parent_id=99)
     make_issue(7, parent_id=None)
     config: SquadraConfig = make_config(claim_scope=ClaimScope.PARENTS, parent_scope_ids=(68,))
+    fake_board.set_claim_scope(config.claim_scope, config.parent_scope_ids)
 
     assert run_tick(make_seams(), config) == 0
 

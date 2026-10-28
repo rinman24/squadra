@@ -115,7 +115,7 @@ from squadra.domain import (
     WorkItemLinks,
 )
 from squadra.dry_run import DryRunCleanup, DryRunWorktree
-from squadra.engines import LifecycleEngine, increment_branch, parent_in_claim_scope
+from squadra.engines import LifecycleEngine, increment_branch
 from squadra.git_host import host_git_argv
 from squadra.manifest import ManifestRead, read_manifest, write_increment_context
 from squadra.repo import remote_auth_ok, target_remote_url
@@ -424,7 +424,7 @@ def _build_facts(
     branch: str = _branch_for(item, status, config)
     spec: SandboxSpec = _spec_for(item.item_id, branch, config)
     worktree: Path = _worktree_for(branch, config)
-    gates: _QueuedGates = _queued_gates(seams, config, item, lifecycle)
+    gates: _QueuedGates = _queued_gates(seams, item, lifecycle)
 
     # Container liveness/exit — meaningful for a fleet-claimed increment in
     # flight, or in the done bucket (a hand-closed item whose sandbox may still
@@ -506,23 +506,23 @@ _UNGATED: _QueuedGates = _QueuedGates(
 )
 
 
-def _queued_gates(
-    seams: TickSeams, config: SquadraConfig, item: WorkItem, lifecycle: Lifecycle
-) -> _QueuedGates:
-    """Read the claim gates for a queued candidate, from one link read.
+def _queued_gates(seams: TickSeams, item: WorkItem, lifecycle: Lifecycle) -> _QueuedGates:
+    """Read the claim gates for a queued candidate.
 
     Only the queued bucket gates on these; for any other bucket they are moot
-    (the engine ignores them) and no link is read, so an in-flight item reparented
-    out of scope still finalizes or reaps. An out-of-scope item's predecessors are
-    moot too (the engine reports it out of scope first), so they are not read.
-    Each predecessor's state is read once: a withdrawn predecessor is never done,
-    and is reported apart from one still in flight.
+    (the engine ignores them) and nothing is read, so an in-flight item reparented
+    out of scope still finalizes or reaps. Scope is the adapter's answer: the
+    supervisor never reads how a provider expresses it (WSQ1, SQ5f). An
+    out-of-scope item's predecessors are moot too (the engine reports it out of
+    scope first), so they are not read. Each predecessor's state is read once: a
+    withdrawn predecessor is never done, and is reported apart from one still in
+    flight.
     """
     if lifecycle is not Lifecycle.QUEUED:
         return _UNGATED
-    links: WorkItemLinks = seams.board.item_links(item.item_id)
-    if not parent_in_claim_scope(links.parent_id, config.claim_scope, config.parent_scope_ids):
+    if not seams.board.in_claim_scope(item.item_id):
         return replace(_UNGATED, in_claim_scope=False)
+    links: WorkItemLinks = seams.board.item_links(item.item_id)
     states: list[Lifecycle] = [seams.board.item_state(pred) for pred in links.predecessor_ids]
     return _QueuedGates(
         in_claim_scope=True,
@@ -1007,6 +1007,10 @@ class ReadOnlyBoard:
     def item_links(self, item_id: int) -> WorkItemLinks:
         """Pass the read through to the wrapped client."""
         return self._inner.item_links(item_id)
+
+    def in_claim_scope(self, item_id: int) -> bool:
+        """Pass the read through to the wrapped client."""
+        return self._inner.in_claim_scope(item_id)
 
     def item_state(self, item_id: int) -> Lifecycle:
         """Pass the read through to the wrapped client."""

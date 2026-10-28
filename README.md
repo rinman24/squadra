@@ -414,6 +414,12 @@ when `"whole-board"` has ids. There is no env override: the legacy
 `FLEET_EPIC_IDS` / `FLEET_PARENT_SCOPE_IDS` are no longer read, and the systemd
 unit carries no scope.
 
+The board adapter answers the scope question (`BoardAccess.in_claim_scope`),
+scoped from `[board]` when `build_board` constructs it, so the supervisor never
+reads how a provider expresses scope. Every adapter today answers from the
+item's parent link, through the same predicate as `squadra board scope` and
+`queue`'s scope refusal.
+
 A `queued` item outside the scope is reported `out-of-scope` (terminal for the
 fleet, never claimed), distinct from `blocked` (in scope, predecessors not all
 done). Scope gates the `queued` bucket only: an in-flight item later reparented
