@@ -10,7 +10,10 @@ and prunes stale administrative entries (the reap path's worktree work).
 ``GitWorktreeAccess`` is the concrete adapter. The git command runner and the
 filesystem move are injected as constructor seams (mirroring ``AzCliAdo.run``),
 so unit and contract tests drive it against fakes — no live git checkout or real
-disk moves are required. The dry-run wrapper lives alongside in
+disk moves are required. Its ``fetch`` authenticates through
+:mod:`squadra.remote_auth`: the ``credential`` seam is the one the supervisor's
+preflight probes (:class:`squadra.repo.TargetRemote`), so a claim fetches with
+the credential the probe proved. The dry-run wrapper lives alongside in
 :mod:`squadra.dry_run` so a tick physically cannot mutate.
 
 The orchestration wiring (F4) — mapping the engine's launch / retry actions onto
@@ -25,6 +28,7 @@ import subprocess
 from typing import Protocol
 
 from squadra.git_host import host_git_argv
+from squadra.remote_auth import RemoteCredential, remote_git_argv
 
 DEFAULT_BASE_REF: str = "origin/main"
 
@@ -79,7 +83,10 @@ class GitWorktreeAccess:
 
     The command runner and the move callable are injected so tests drive fakes;
     in production they are :func:`_run_quiet` and :func:`_move`. ``fleet_home``
-    is the repo squadra operates on (the ``git -C`` target).
+    is the repo squadra operates on (the ``git -C`` target). ``credential``
+    resolves the credential for ``fleet_home``'s remote at fetch time (in
+    production :meth:`squadra.repo.TargetRemote.credential`); it is required, so
+    no fetch can fall back to ambient credentials.
     """
 
     def __init__(
@@ -87,11 +94,13 @@ class GitWorktreeAccess:
         fleet_home: str | Path,
         run: Callable[[Sequence[str]], int] = _run_quiet,
         *,
+        credential: Callable[[], RemoteCredential | None],
         move: Callable[[str, str], None] = _move,
     ) -> None:
-        """Bind the access to its repo root, a git runner, and a move callable."""
+        """Bind the access to its repo root, a git runner, a credential and a move callable."""
         self._fleet_home = str(fleet_home)
         self._run = run
+        self._credential = credential
         self._move = move
 
     def create(
@@ -102,9 +111,14 @@ class GitWorktreeAccess:
         The fetch runs first so the worktree branches off a freshly-fetched base;
         a failed fetch short-circuits (the worktree is never added off a stale
         base). This matches the "always rebase onto current main" semantics —
-        the eventual rebase is a no-op.
+        the eventual rebase is a no-op. The fetch authenticates with the remote's
+        credential; a remote with none fails closed (no fetch, not created).
         """
-        if self._run(host_git_argv("fetch", "origin", work_dir=self._fleet_home)) != 0:
+        credential: RemoteCredential | None = self._credential()
+        if credential is None:
+            return WorktreeCreateResult(created=False, branch=branch)
+        fetch: list[str] = remote_git_argv(credential, "fetch", "origin", work_dir=self._fleet_home)
+        if self._run(fetch) != 0:
             return WorktreeCreateResult(created=False, branch=branch)
         added: int = self._run(
             host_git_argv(

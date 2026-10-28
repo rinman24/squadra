@@ -23,6 +23,7 @@ from squadra.board import BoardAccess
 from squadra.config import ClaimScope, SquadraConfig
 from squadra.domain import Lifecycle, SandboxRunning, Tags
 from squadra.increments import IncrementBoard
+from squadra.remote_auth import RemoteAuthProbe
 from squadra.status import FleetStatus, load_or_none, write
 from squadra.supervisor import TickSeams, run_tick
 from tests.helpers.board_fakes import ADO_STATES_WITH_WITHDRAWN, AdoShapedFakeBoard
@@ -113,7 +114,7 @@ class Fleet:
             sandbox=self.sandbox,
             cleanup=self.cleanup,
             worktree=self.worktree,
-            pat_ok=lambda: True,
+            remote_auth=lambda: RemoteAuthProbe(ok=True),
             auth_ok=lambda: True,
         )
 
@@ -253,7 +254,7 @@ def test_a_claim_racing_a_withdrawal_is_relinquished_next_tick(
             sandbox=sandbox,
             cleanup=FakeCleanup(),
             worktree=worktree,
-            pat_ok=lambda: True,
+            remote_auth=lambda: RemoteAuthProbe(ok=True),
             auth_ok=lambda: True,
         )
         assert run_tick(seams, config) == 0

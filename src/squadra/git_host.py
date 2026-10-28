@@ -7,8 +7,8 @@ or set ``core.hooksPath`` to an agent-controlled directory **inside the
 worktree**. Later, a **host-side** git op runs against that same worktree — the
 supervisor's worktree create / archive / cleanup, the ``base..HEAD`` commit
 count, the app-repo bootstrap, and (when wired) the branch push / PR create.
-Those host-side ops run in the *supervisor* context, which holds the ADO PAT and
-the VM managed identity (Key Vault access). A hook that fires there is a sandbox
+Those host-side ops run in the *supervisor* context, which holds the git remote
+credential (:mod:`squadra.remote_auth`) and the VM managed identity (Key Vault access). A hook that fires there is a sandbox
 escape into the credential-holding host.
 
 Two coupled hardenings, applied together because either alone reopens the hole:
@@ -37,9 +37,10 @@ from on-disk config.
 The host-side **push** of an increment's commits is the credential-holding op at the
 centre of this threat model, but it is not yet wired in code (it is the deferred
 write-tail the supervisor's ``_handoff`` documents). When it is wired it MUST be
-built as ``host_git_argv(*credential_helper, "push", "origin", branch,
-work_dir=worktree)`` — the same builder fetch / worktree-create / branch-delete
-already use — so a ``pre-push`` hook planted in the bind-mounted worktree cannot
+built as ``remote_git_argv(credential, "push", "origin", branch, work_dir=worktree)``
+(:mod:`squadra.remote_auth`, which wraps :func:`host_git_argv` — the same builder
+fetch / worktree-create / branch-delete already use), with the credential from
+:meth:`squadra.repo.TargetRemote.credential` — so a ``pre-push`` hook planted in the bind-mounted worktree cannot
 fire in the host context. ``tests/test_git_host.py`` proves that contract
 (planted ``pre-push`` hook neutralized, plus a bare-push control), so a future
 push that bypasses this builder is a reviewable regression, not a silent escape.

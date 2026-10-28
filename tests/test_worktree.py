@@ -12,9 +12,16 @@ these tests assert that hardening as well as the git sub-command.
 
 from collections.abc import Sequence
 
+from squadra.remote_auth import RemoteCredential, credential_for
 from squadra.worktree import GitWorktreeAccess, WorktreeCreateResult
 
 _REPO = "/repo"
+_GITHUB_SSH: RemoteCredential | None = credential_for("git@github.com:owner/app.git")
+
+
+def _ssh_credential() -> RemoteCredential | None:
+    """The credential seam: an SSH remote (no ``-c`` overrides, ambient ssh)."""
+    return _GITHUB_SSH
 
 
 def _is_guarded(argv: Sequence[str], repo: str = _REPO) -> bool:
@@ -63,7 +70,7 @@ class _RecordingMover:
 
 def test_create_fetches_then_adds_a_branch_worktree_off_origin_main() -> None:
     runner = _RecordingRunner()
-    wt = GitWorktreeAccess(fleet_home=_REPO, run=runner)
+    wt = GitWorktreeAccess(fleet_home=_REPO, run=runner, credential=_ssh_credential)
     result: WorktreeCreateResult = wt.create(
         branch="feat/increment-9-x", worktree="/wt/increment-9", base_ref="origin/main"
     )
@@ -79,7 +86,7 @@ def test_create_fetches_then_adds_a_branch_worktree_off_origin_main() -> None:
 
 def test_create_defaults_the_base_ref_to_origin_main() -> None:
     runner = _RecordingRunner()
-    wt = GitWorktreeAccess(fleet_home=_REPO, run=runner)
+    wt = GitWorktreeAccess(fleet_home=_REPO, run=runner, credential=_ssh_credential)
     wt.create(branch="feat/increment-1-a", worktree="/wt/increment-1")
     assert runner.calls[-1][-1] == "origin/main"
 
@@ -88,14 +95,14 @@ def test_create_reports_failure_when_worktree_add_fails() -> None:
     runner = _RecordingRunner(
         fail_on=(("worktree", "add", "-b", "feat/x", "/wt/x", "origin/main"),)
     )
-    wt = GitWorktreeAccess(fleet_home=_REPO, run=runner)
+    wt = GitWorktreeAccess(fleet_home=_REPO, run=runner, credential=_ssh_credential)
     result: WorktreeCreateResult = wt.create(branch="feat/x", worktree="/wt/x")
     assert result.created is False
 
 
 def test_create_does_not_add_when_the_fetch_fails() -> None:
     runner = _RecordingRunner(fail_on=(("fetch", "origin"),))
-    wt = GitWorktreeAccess(fleet_home=_REPO, run=runner)
+    wt = GitWorktreeAccess(fleet_home=_REPO, run=runner, credential=_ssh_credential)
     result: WorktreeCreateResult = wt.create(branch="feat/x", worktree="/wt/x")
     assert result.created is False
     # a failed fetch short-circuits — the worktree is never added off a stale base
@@ -105,7 +112,7 @@ def test_create_does_not_add_when_the_fetch_fails() -> None:
 def test_archive_moves_the_dead_worktree_under_the_attempt_slot() -> None:
     runner = _RecordingRunner()
     mover = _RecordingMover()
-    wt = GitWorktreeAccess(fleet_home=_REPO, run=runner, move=mover)
+    wt = GitWorktreeAccess(fleet_home=_REPO, run=runner, credential=_ssh_credential, move=mover)
     archived = wt.archive(worktree="/wt/increment-9", archive_root="/fleet/9/archive", attempt=2)
     assert str(archived) == "/fleet/9/archive/attempt-2"
     assert mover.moves == [("/wt/increment-9", "/fleet/9/archive/attempt-2")]
@@ -114,7 +121,7 @@ def test_archive_moves_the_dead_worktree_under_the_attempt_slot() -> None:
 def test_archive_then_prune_drops_the_stale_administrative_entry() -> None:
     runner = _RecordingRunner()
     mover = _RecordingMover()
-    wt = GitWorktreeAccess(fleet_home=_REPO, run=runner, move=mover)
+    wt = GitWorktreeAccess(fleet_home=_REPO, run=runner, credential=_ssh_credential, move=mover)
     wt.archive(worktree="/wt/increment-9", archive_root="/fleet/9/archive", attempt=1)
     assert wt.prune() is True
     assert _is_guarded(runner.calls[-1])
@@ -123,5 +130,5 @@ def test_archive_then_prune_drops_the_stale_administrative_entry() -> None:
 
 def test_prune_reports_failure_on_nonzero_exit() -> None:
     runner = _RecordingRunner(fail_on=(("worktree", "prune"),))
-    wt = GitWorktreeAccess(fleet_home=_REPO, run=runner)
+    wt = GitWorktreeAccess(fleet_home=_REPO, run=runner, credential=_ssh_credential)
     assert wt.prune() is False

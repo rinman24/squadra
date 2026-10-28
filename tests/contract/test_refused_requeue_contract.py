@@ -17,6 +17,7 @@ import pytest
 
 from squadra.config import SquadraConfig
 from squadra.domain import Lifecycle, SandboxExited
+from squadra.remote_auth import RemoteAuthProbe
 from squadra.status import FleetStatus, write
 from squadra.supervisor import TickSeams, run_tick
 from tests.helpers.cleanup_fakes import FakeCleanup
@@ -60,7 +61,7 @@ def _seams(board: StubbedGitHubBoard, sandbox: FakeSandbox, **overrides: object)
         sandbox=sandbox,
         cleanup=FakeCleanup(),
         worktree=FakeWorktree(),
-        pat_ok=lambda: True,
+        remote_auth=lambda: RemoteAuthProbe(ok=True),
         auth_ok=lambda: True,
         **overrides,  # type: ignore[arg-type]
     )

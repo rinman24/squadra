@@ -27,6 +27,7 @@ from squadra.constants import (
     STALENESS_THRESHOLD_SECONDS,
 )
 from squadra.domain import Lifecycle, LifecycleFacts
+from squadra.remote_auth import RemoteAuthProbe
 from squadra.status import FleetStatus
 from squadra.supervisor import TickSeams
 from tests.helpers.cleanup_fakes import FakeCleanup
@@ -110,8 +111,13 @@ def fake_worktree() -> FakeWorktree:
 
 
 def _always_ok() -> bool:
-    """Auth-probe stub that always passes — tests never run a real PAT/claude probe."""
+    """Auth-probe stub that always passes — tests never run a real claude probe."""
     return True
+
+
+def _remote_ok() -> RemoteAuthProbe:
+    """Remote-probe stub that always passes — tests never run a real ``git ls-remote``."""
+    return RemoteAuthProbe(ok=True)
 
 
 @pytest.fixture
@@ -129,7 +135,7 @@ def make_seams(
             sandbox=fake_sandbox,
             cleanup=fake_cleanup,
             worktree=fake_worktree,
-            pat_ok=_always_ok,
+            remote_auth=_remote_ok,
             auth_ok=_always_ok,
         )
         return dataclasses.replace(base, **overrides)

@@ -30,15 +30,17 @@ names are configuration.
 
 Only the **claim/launch** path now needs a working ``claude`` (the contained
 runner is the fleet's single LLM call — finalize cleanup is deterministic, ADR-
-0002 decision 4) *and* a working Azure DevOps PAT (claiming an increment does host-side
-git remote ops — worktree create off ``origin/main``, then push — over HTTPS+PAT,
-no SSH key). A tick with claim work pending preflights both before it claims: the
-PAT via a ``git ls-remote`` against the target remote, then claude via a throwaway
-prompt. On a failed probe (a rejected/expired PAT, dead claude auth, or a transient
-outage all read identically) the tick degrades to the non-claim decisions — the
-finalize + reap pass, which never claim and so never touch that auth — and retries
-next tick. The PAT probe runs first and short-circuits, so a dead PAT does not pay
-to spawn claude.
+0002 decision 4) *and* working git auth to the target remote (claiming an increment
+does host-side git remote ops — worktree create off ``origin/main``, then push —
+with the credential :mod:`squadra.remote_auth` resolves from the remote's host,
+not from the board provider). A tick with claim work pending preflights both
+before it claims: the remote via a ``git ls-remote`` with that same credential,
+then claude via a throwaway prompt. On a failed probe (a rejected/expired
+credential, a remote with no credential, dead claude auth, or a transient outage
+all read identically) the tick degrades to the non-claim decisions — the finalize
++ reap pass, which never claim and so never touch that auth — and retries next
+tick. The remote probe runs first and short-circuits, so a dead credential does
+not pay to spawn claude.
 
 Overlapping ticks serialize via a non-blocking ``flock`` on
 ``<fleet-root>/supervisor.lock`` — the losing tick exits cleanly without touching
@@ -47,8 +49,8 @@ the board.
 A tick can be a **dry run** (``--dry-run`` / ``FLEET_DRY_RUN=1``): the full
 fact-gather + decide logic runs and reports what a real tick WOULD do, but every
 side effect — board writes, sandbox launch/teardown/exec, deterministic cleanup,
-worktree create/archive/prune, increment-context injection, the PAT + claude auth
-probes, and local status/marker writes — is suppressed at the ``TickSeams`` boundary
+worktree create/archive/prune, increment-context injection, the remote + claude
+auth probes, and local status/marker writes — is suppressed at the ``TickSeams`` boundary
 (``dry_run_seams``), so the tick physically cannot mutate. ``FLEET_MAX_RUNNERS=0``
 is *not* a safe smoke: it only zeroes the claim budget. Use a dry run.
 
@@ -118,7 +120,8 @@ from squadra.dry_run import DryRunCleanup, DryRunWorktree
 from squadra.engines import LifecycleEngine, fleet_stamp_refusal, increment_branch
 from squadra.git_host import host_git_argv
 from squadra.manifest import ManifestRead, read_manifest, write_increment_context
-from squadra.repo import remote_auth_ok, target_remote_url
+from squadra.remote_auth import CredentialKind, RemoteAuthProbe, RemoteCredential
+from squadra.repo import TargetRemote
 from squadra.sandbox import ComposeSandbox, DryRunSandbox, SandboxAccess
 from squadra.secrets import secret_names_from_env
 from squadra.status import FleetStatus, StatusUpdate, load_or_none, update
@@ -174,7 +177,7 @@ def _claude_auth_ok(
     return completed.returncode == 0 and "READY" in completed.stdout
 
 
-# --- ADO PAT probe (guards the claim/launch path's host-side git remote ops) ---
+# --- remote auth probe (guards the claim/launch path's host-side git remote ops) ---
 
 
 def _resolve_fleet_home() -> Path:
@@ -183,34 +186,63 @@ def _resolve_fleet_home() -> Path:
     return Path(raw) if raw is not None and raw.strip() else Path.cwd()
 
 
-def _ado_pat_ok(fleet_home: Path | None = None) -> bool:
-    """Actively probe the ADO PAT on the git auth path the fleet's claims use.
+def _remote_auth_probe(fleet_home: Path | None = None) -> RemoteAuthProbe:
+    """Actively probe git auth to the target remote on the path the fleet's claims use.
 
-    Resolves the target remote from ``FLEET_HOME``'s ``origin`` (else
-    ``FLEET_APP_REPO_URL``) and runs ``git ls-remote`` against it with the
-    env-var PAT credential helper — the exact path of every host-side clone/
-    fetch/push, so it cannot pass while a real claim's git op fails. A missing
-    remote, a rejected/expired/wrong-scope PAT, a timeout, or no ``git`` all read
-    as unavailable; the tick degrades to the non-claim decisions and retries.
+    :meth:`squadra.repo.TargetRemote.probe`: resolves the target remote from
+    ``FLEET_HOME``'s ``origin`` (else ``FLEET_APP_REPO_URL``) and runs ``git
+    ls-remote`` with the credential the claim's worktree fetch uses, so it cannot
+    pass while the claim's fetch authenticates another way. A missing remote, a
+    host with no credential, a rejected/expired/wrong-scope credential, a timeout,
+    or no ``git`` all read as unavailable; the tick degrades to the non-claim
+    decisions and retries.
     """
     home: Path = fleet_home if fleet_home is not None else _resolve_fleet_home()
-    remote: str | None = target_remote_url(home)
-    if remote is None:
-        return False
-    return remote_auth_ok(remote)
+    return TargetRemote(home).probe()
 
 
-def _ado_pat_rejected_message() -> str:
-    """Build the actionable one-line error logged when the PAT preflight fails."""
-    secret: str = secret_names_from_env().ado_pat
-    return (
-        "ado PAT rejected on the git auth path (git ls-remote against the target "
-        "remote failed) — skipped the claim/launch decisions; running the non-claim "
-        f"decisions only, retrying next tick. Rotate the {secret!r} Key Vault secret "
-        "(it is expired or lacks Code (Read & Write)): see the README 'Supervisor' "
-        "section and the consuming repo's runbook docs/contributing/afk-fleet.md -> "
-        "'Key Vault secrets & PAT rotation'."
-    )
+_SKIPPED_CLAIM: Final[str] = (
+    "skipped the claim/launch decisions; running the non-claim decisions only, retrying next tick."
+)
+
+
+def _remote_auth_rejected_message(probe: RemoteAuthProbe) -> str:
+    """Build the actionable one-line error for a failed remote preflight.
+
+    Names the credential actually tried and how to fix that one; the Key Vault
+    rotation text is for an Azure DevOps PAT only.
+    """
+    credential: RemoteCredential | None = probe.credential
+    if credential is None:
+        host: str = probe.host if probe.host is not None else "unresolved"
+        return (
+            f"no git credential for the target remote (host: {host}) — {_SKIPPED_CLAIM} "
+            "squadra authenticates host-side git to Azure DevOps and github.com only, "
+            "over HTTPS or SSH: point FLEET_HOME's origin (or FLEET_APP_REPO_URL) at one."
+        )
+    rejected: str = "rejected on the git auth path (git ls-remote against the target remote failed)"
+    match credential.kind:
+        case CredentialKind.ADO_PAT:
+            secret: str = secret_names_from_env().ado_pat
+            return (
+                f"ado PAT {rejected} — {_SKIPPED_CLAIM} Rotate the {secret!r} Key Vault "
+                "secret (it is expired or lacks Code (Read & Write)): see the README "
+                "'Supervisor' section and the consuming repo's runbook "
+                "docs/contributing/afk-fleet.md -> 'Key Vault secrets & PAT rotation'."
+            )
+        case CredentialKind.GITHUB_GH:
+            return (
+                f"{credential.host} token from the gh CLI {rejected} — {_SKIPPED_CLAIM} "
+                "Run `gh auth status` on this host, then set GH_TOKEN or re-run "
+                "`gh auth login` with a token that can read and write the repository's "
+                "contents."
+            )
+        case CredentialKind.SSH:
+            return (
+                f"ssh key for {credential.host} {rejected} — {_SKIPPED_CLAIM} Check this "
+                f"host's ssh key for {credential.host} (`ssh -T git@{credential.host}`; "
+                "is it loaded in ssh-agent?)."
+            )
 
 
 # --- fact-gathering read seams (host-side I/O; pass through in dry-run) --------
@@ -290,7 +322,7 @@ class TickSeams:
     The **mutating** seams are what ``dry_run_seams`` must wrap so a dry-run tick
     physically cannot write: board writes via ``board``; sandbox launch/teardown/
     exec via ``sandbox``; deterministic cleanup via ``cleanup``; worktree create/
-    archive/prune via ``worktree``; the PAT probe via ``pat_ok`` and the claude
+    archive/prune via ``worktree``; the remote probe via ``remote_auth`` and the claude
     auth probe via ``auth_ok`` (each spawns a process and so is itself a side
     effect a dry run must not perform); increment-context injection via
     ``write_context``; the local fleet-state writes via ``update_status`` /
@@ -308,7 +340,7 @@ class TickSeams:
     sandbox: SandboxAccess
     cleanup: CleanupAccess
     worktree: WorktreeAccess
-    pat_ok: Callable[[], bool] = field(default=_ado_pat_ok)
+    remote_auth: Callable[[], RemoteAuthProbe] = field(default=_remote_auth_probe)
     auth_ok: Callable[[], bool] = field(default=_claude_auth_ok)
     write_context: Callable[..., object] = field(default=write_increment_context)
     read_manifest: Callable[[Path], ManifestRead] = field(default=read_manifest)
@@ -379,10 +411,11 @@ def run_tick(seams: TickSeams, config: SquadraConfig) -> int:
         views: list[IncrementView] = _gather(seams, config, engine)
         if _claim_work_pending(views, config):
             # Both probes guard the claim/launch path only (finalize + reap never
-            # claim and never touch this auth). The PAT probe runs first and
-            # short-circuits, so a dead PAT never pays to spawn the claude probe.
-            if not seams.pat_ok():
-                _log(_ado_pat_rejected_message())
+            # claim and never touch this auth). The remote probe runs first and
+            # short-circuits, so a dead credential never pays to spawn the claude probe.
+            remote: RemoteAuthProbe = seams.remote_auth()
+            if not remote.ok:
+                _log(_remote_auth_rejected_message(remote))
                 _execute_non_claim(seams, config, views)
                 return 0
             if not seams.auth_ok():
@@ -1082,10 +1115,10 @@ class ReadOnlyBoard:
         return 0
 
 
-def _dry_run_pat_ok() -> bool:
-    """Skip the PAT preflight — a ``git ls-remote`` probe is itself a network side effect."""
-    _log("[dry-run] WOULD run the ADO PAT auth preflight; assuming it passes")
-    return True
+def _dry_run_remote_auth() -> RemoteAuthProbe:
+    """Skip the remote preflight — a ``git ls-remote`` probe is itself a network side effect."""
+    _log("[dry-run] WOULD run the git remote auth preflight; assuming it passes")
+    return RemoteAuthProbe(ok=True)
 
 
 def _dry_run_auth_ok() -> bool:
@@ -1123,7 +1156,7 @@ def dry_run_seams(seams: TickSeams) -> TickSeams:
 
     Reads pass through — the tick still gathers facts and decides, reporting the
     would-be actions — but every write (board, sandbox launch/teardown/exec,
-    deterministic cleanup, worktree create/archive/prune, the PAT + claude auth
+    deterministic cleanup, worktree create/archive/prune, the remote + claude auth
     probes, increment-context injection, local status/marker/stamp files) becomes a logged
     ``[dry-run] WOULD …`` no-op. The fact-gathering read seams (``sandbox.inspect``
     / ``logs``, ``read_manifest``, ``commits_present``) stay real: they are pure
@@ -1136,7 +1169,7 @@ def dry_run_seams(seams: TickSeams) -> TickSeams:
         sandbox=DryRunSandbox(seams.sandbox),
         cleanup=DryRunCleanup(seams.cleanup),
         worktree=DryRunWorktree(seams.worktree),
-        pat_ok=_dry_run_pat_ok,
+        remote_auth=_dry_run_remote_auth,
         auth_ok=_dry_run_auth_ok,
         write_context=_dry_run_write_context,
         update_status=_dry_run_update_status,
@@ -1147,18 +1180,20 @@ def dry_run_seams(seams: TickSeams) -> TickSeams:
 
 def build_seams(config: SquadraConfig, *, dry_run: bool = False) -> TickSeams:
     """Build the production seams; with ``dry_run``, wrap them so nothing can mutate."""
+    remote: TargetRemote = TargetRemote(config.fleet_home)
     seams = TickSeams(
         board=build_board(config),
         sandbox=ComposeSandbox(),
         cleanup=DeterministicCleanup(config.fleet_home),
-        worktree=GitWorktreeAccess(config.fleet_home),
-        pat_ok=lambda: _ado_pat_ok(config.fleet_home),
+        # One TargetRemote backs both, so the probe runs the claim fetch's auth path.
+        worktree=GitWorktreeAccess(config.fleet_home, credential=remote.credential),
+        remote_auth=remote.probe,
     )
     if not dry_run:
         return seams
     _log(
         "DRY-RUN tick: reads and planning only — every board write, sandbox launch/"
-        "teardown, deterministic cleanup, worktree change, PAT + claude probe, increment-context "
+        "teardown, deterministic cleanup, worktree change, remote + claude probe, increment-context "
         "injection, and local fleet-state write is suppressed and logged as '[dry-run] WOULD …'"
     )
     return dry_run_seams(seams)
