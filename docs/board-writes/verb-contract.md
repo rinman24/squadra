@@ -1,7 +1,8 @@
 # The increment verb contract and its CLI surface
 
 Frozen by SQ2 (2026-10-09), amended by SQ2c (2026-10-09) to Rich's N7 and N8
-ruling, which reopens DB-D1/DB-D4. Rulings: claude-skills DB-D1–DB-D5. Layering:
+ruling, which reopens DB-D1/DB-D4, and by SQ5e (2026-10-27) with the `scope`
+read (claude-skills DB-D12). Rulings: claude-skills DB-D1–DB-D5. Layering:
 [ADR-0005](../adr/adr-0005-increment-verbs.md). Code: `squadra.increments`.
 
 ## The contract
@@ -14,6 +15,7 @@ ruling, which reopens DB-D1/DB-D4. Rulings: claude-skills DB-D1–DB-D5. Layerin
 | `queue_increment(origin, parent, predecessors, title, body) -> item_id` | Lands a QUEUED item under `parent` with the predecessor links, carrying `origin` opaquely. If `origin` is already on the board with identical arguments, returns that item. If only a partial item carries `origin` and agrees with the request, finishes it and returns its id | Parent outside claim scope (`ClaimScopeRefusedError`); `origin` present with any differing argument, or withdrawn, or on a partial item that disagrees (`QueueRefusedError`); `origin` carried twice (`DuplicateOriginError`) |
 | `withdraw_increment(origin) -> item_id` | The Increment carrying `origin`: QUEUED → WITHDRAWN. Already WITHDRAWN: no write | No Increment carries `origin`, including one only a partial item carries (`UnknownOriginError`); `origin` carried twice (`DuplicateOriginError`); item outside claim scope (`ClaimScopeRefusedError`); ACTIVE or DONE on a fresh read (`TransitionRefusedError`); a board with no withdrawn state (`BoardValidationError`) |
 | `increments_by_origin() -> {origin: Increment}` | Every Origin an Increment carries, every bucket. `Increment(item_id, parent, lifecycle, in_claim_scope)`; scope is reported, never filtered. Partial items are left out | A duplicate Origin (`DuplicateOriginError`, naming both items, a partial one included) |
+| `parent_in_claim_scope(parent) -> bool` | Whether an item under `parent` is inside the claim scope. Reads nothing from the board. The one predicate behind `queue_increment`'s and `withdraw_increment`'s `ClaimScopeRefusedError` and `Increment.in_claim_scope`, so the answer and a queue never disagree | Nothing: it is a question, not a write |
 
 Notes:
 - `parent` is required under both claim scopes (DB-D5). `Increment.parent` is
@@ -33,6 +35,13 @@ Notes:
   the board agrees with the request: title and body equal, the parent equal
   once set, the predecessors present a subset of those requested. Anything
   else is refused, naming the item and the disagreement (ledger N8).
+- `parent_in_claim_scope` answers the question, never hands over the rule:
+  `claim_scope` and `parent_scope_ids` stay squadra's (claude-skills DB-D12,
+  after Juval, board-knowledge
+  `sessions/2026-10-27-juval-first-run-parent-scope.md`). It lets
+  design-to-board fail a map's first-run `--parent` that is out of scope
+  before any write, when no Origin of the map is yet on the board to report
+  `in_claim_scope`.
 - `withdraw_increment` goes by Origin (ledger N7), so a hand-queued item with
   no Origin is out of its reach; a human withdraws that on the board. It
   re-reads the item's state just before writing; the read-then-write gap
@@ -51,6 +60,7 @@ squadra board queue    --origin ORIGIN --parent ID [--predecessor ID ...]
                        --title TITLE --body-file PATH|-
 squadra board withdraw --origin ORIGIN
 squadra board origins
+squadra board scope    --parent ID
 ```
 
 - `--parent` is required on every `queue`, under either scope. squadra decides
@@ -67,9 +77,16 @@ squadra board origins
     whose row was withdrawn before a retry finished it stays on the board for
     good, and this line is the only place it shows. Both halves come from one
     board read, `IncrementBoard.increments_and_partial_items()` (ledger N18).
+  - `scope` → `{"parent": 200, "in_claim_scope": false}`. A read: it exits `0`
+    whether the parent is in scope or not, runs `validate_config()` first like
+    every verb (so `2` for configuration, `1` for a provider failure), and never
+    writes.
 - Exit codes: `0` done; `2` usage or configuration (argparse, `ConfigError`,
   `BoardValidationError`); `3` refused by a rule (`ClaimScopeRefusedError`,
   `QueueRefusedError`, `TransitionRefusedError`, `DuplicateOriginError`,
   `UnknownOriginError`), with nothing written; `1` anything else, such as a provider failure.
+  `scope` never exits `3`: an out-of-scope parent is an answer, not a refusal.
 - No `--dry-run` on the writes: design-to-board's own dry run (DB-D1 E) is the
-  preview, and `origins` is read-only.
+  preview, and `origins` and `scope` are read-only. `scope` is not a
+  `queue --check`: it answers only the claim-scope question, not every refusal
+  `queue` can raise.
