@@ -15,7 +15,7 @@ deliberate-park / failed-park distinction directly into its fact-derivation
 engine into the live tick (``squadra.supervisor.run_tick``).
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 import re
 
 from squadra.config import DEFAULT_BRANCH_TEMPLATE, ClaimScope
@@ -35,6 +35,7 @@ from squadra.domain import (
     OriginRecord,
     ParkNeedsDecision,
     RelinquishClaim,
+    RequestField,
     RetryIncrement,
     SignalClaimable,
     State,
@@ -205,23 +206,68 @@ def check_queue_finishes(existing: OriginRecord, request: IncrementRequest) -> N
     Title and body go on with the Origin's first call, so they are compared
     exactly. Anything else is real disagreement: raises
     :class:`QueueRefusedError` naming the item and what disagrees, and writes
-    nothing.
+    nothing. The rule is :func:`partial_item_disagreements`; the message is
+    :func:`refusal_to_finish`, which ``squadra board partial-items`` reports
+    without raising, so the read and ``queue`` share one predicate (SQ8, N31).
     """
-    differs: list[str] = []
+    refusal: str | None = refusal_to_finish(existing, request)
+    if refusal is not None:
+        raise QueueRefusedError(refusal)
+
+
+def partial_item_disagreements(
+    existing: OriginRecord, request: IncrementRequest
+) -> tuple[tuple[RequestField, str], ...]:
+    """Each way the partial item ``existing`` disagrees with ``request``, as (field, clause).
+
+    N14's four checks, in order: the parent once set, predecessors on the
+    item that are not requested, the title, the body. Empty when a retry with
+    ``request`` would finish the item.
+    """
+    disagreements: list[tuple[RequestField, str]] = []
     if existing.parent is not None and existing.parent != request.parent:
-        differs.append(f"parent {existing.parent} != {request.parent}")
+        disagreements.append(("parent", f"parent {existing.parent} != {request.parent}"))
     extra: set[int] = set(existing.predecessors) - set(request.predecessors)
     if extra:
-        differs.append(f"predecessors {sorted(extra)} on the item are not requested")
-    if existing.title != request.title:
-        differs.append(f"title {existing.title!r} != {request.title!r}")
-    if existing.body != request.body:
-        differs.append("body differs")
-    if differs:
-        raise QueueRefusedError(
-            f"origin {request.origin!r} is on partial item {existing.item_id}, which disagrees "
-            f"with this request: {'; '.join(differs)}"
+        disagreements.append(
+            ("predecessors", f"predecessors {sorted(extra)} on the item are not requested")
         )
+    if existing.title != request.title:
+        disagreements.append(("title", f"title {existing.title!r} != {request.title!r}"))
+    if existing.body != request.body:
+        disagreements.append(("body", "body differs"))
+    return tuple(disagreements)
+
+
+def refusal_to_finish(existing: OriginRecord, request: IncrementRequest) -> str | None:
+    """Return the :class:`QueueRefusedError` message a retry with ``request`` raises, or ``None``.
+
+    ``None`` exactly when :func:`partial_item_disagreements` finds none.
+    """
+    disagreements: tuple[tuple[RequestField, str], ...] = partial_item_disagreements(
+        existing, request
+    )
+    if not disagreements:
+        return None
+    clauses: str = "; ".join(clause for _, clause in disagreements)
+    return (
+        f"origin {request.origin!r} is on partial item {existing.item_id}, which disagrees "
+        f"with this request: {clauses}"
+    )
+
+
+def item_ids_carrying(
+    origins: Sequence[str], records: Mapping[str, OriginRecord]
+) -> tuple[int, ...]:
+    """Map ``origins`` to the ids of the items carrying them, Increments or partial items.
+
+    An Origin no item carries is dropped. The drop is sound only for N14's
+    subset check: a predecessor not yet on the board gets a new id when it is
+    queued, which no partial item can already carry, assuming a board never
+    reuses an item id (Juval, ledger N31). So this is not a general
+    Origin-to-id map, and a queue path must not use it.
+    """
+    return tuple(records[origin].item_id for origin in origins if origin in records)
 
 
 # --- LifecycleEngine: the derived-state FSM (ADR-0002 decision 3) -------------

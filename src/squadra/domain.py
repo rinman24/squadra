@@ -19,6 +19,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Literal
 
 from squadra.constants import (
     DEFAULT_TAG_PREFIX,
@@ -117,6 +118,49 @@ class OriginRecord:
     def partial(self) -> bool:
         """Whether this is a partial item: its create has not committed it, so it is in no bucket."""
         return self.lifecycle is None
+
+
+RequestField = Literal["parent", "predecessors", "title", "body"]
+"""The compared fields of an :class:`IncrementRequest`; Origin is the key, not a field."""
+
+
+@dataclass(frozen=True, slots=True)
+class ProposedRequest:
+    """An :class:`IncrementRequest` the planner has not made yet.
+
+    Its predecessors are named by Origin, because some have no item id until
+    this run queues them (SQ8, ledger N31).
+    """
+
+    origin: str
+    parent: int
+    predecessor_origins: tuple[str, ...]
+    title: str
+    body: str
+
+
+@dataclass(frozen=True, slots=True)
+class PartialItemReport:
+    """One partial item and ``queue_increment``'s verdict on the request naming its Origin.
+
+    ``requested`` and ``refusal`` are stored; :attr:`queue` derives from them,
+    as :attr:`OriginRecord.partial` derives from ``lifecycle``. ``refusal`` is
+    byte for byte the :class:`~squadra.engines.QueueRefusedError` message
+    ``queue`` would raise; ``disagrees_on`` names its fields, in its order.
+    """
+
+    item_id: int
+    origin: str
+    requested: bool
+    disagrees_on: tuple[RequestField, ...]
+    refusal: str | None
+
+    @property
+    def queue(self) -> Literal["finishes", "refuses"] | None:
+        """What ``queue`` would do with the request: ``None`` when no request names the item."""
+        if not self.requested:
+            return None
+        return "refuses" if self.refusal is not None else "finishes"
 
 
 @dataclass(frozen=True, slots=True)

@@ -13,7 +13,13 @@ from dataclasses import replace
 import pytest
 
 from squadra.config import ClaimScope
-from squadra.domain import IncrementRequest, Lifecycle, OriginRecord
+from squadra.domain import (
+    IncrementRequest,
+    Lifecycle,
+    OriginRecord,
+    PartialItemReport,
+    RequestField,
+)
 from squadra.engines import (
     DuplicateOriginError,
     QueueRefusedError,
@@ -24,7 +30,10 @@ from squadra.engines import (
     check_transition,
     increment_branch,
     index_by_origin,
+    item_ids_carrying,
     parent_in_claim_scope,
+    partial_item_disagreements,
+    refusal_to_finish,
 )
 
 
@@ -218,3 +227,64 @@ def test_check_queue_finishes_refuses_disagreement_naming_the_item(
 ) -> None:
     with pytest.raises(QueueRefusedError, match=f"partial item 7, .*{named}"):
         check_queue_finishes(partial, _REQUEST)
+
+
+# --- the partial-items read (SQ8, ledger N31) -------------------------------------
+
+
+def test_partial_item_disagreements_are_n14s_four_checks_in_order() -> None:
+    every: OriginRecord = replace(
+        _PARTIAL, parent=201, predecessors=(150, 152), title="u", body="c"
+    )
+    assert partial_item_disagreements(every, _REQUEST) == (
+        ("parent", "parent 201 != 200"),
+        ("predecessors", "predecessors [152] on the item are not requested"),
+        ("title", "title 'u' != 't'"),
+        ("body", "body differs"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("partial", "fields"),
+    [
+        (_PARTIAL, ()),
+        (replace(_PARTIAL, parent=200, predecessors=(150, 151)), ()),
+        (replace(_PARTIAL, parent=201), ("parent",)),
+        (replace(_PARTIAL, predecessors=(152,)), ("predecessors",)),
+        (replace(_PARTIAL, title="u", body="c"), ("title", "body")),
+    ],
+)
+def test_refusal_to_finish_is_none_exactly_when_nothing_disagrees(
+    partial: OriginRecord, fields: tuple[str, ...]
+) -> None:
+    disagreements: tuple[tuple[RequestField, str], ...] = partial_item_disagreements(
+        partial, _REQUEST
+    )
+    refusal: str | None = refusal_to_finish(partial, _REQUEST)
+    assert tuple(field for field, _ in disagreements) == fields
+    assert (refusal is None) is (fields == ())
+    if refusal is None:
+        check_queue_finishes(partial, _REQUEST)  # must not raise
+    else:
+        with pytest.raises(QueueRefusedError) as raised:
+            check_queue_finishes(partial, _REQUEST)
+        assert str(raised.value) == refusal  # one message, byte for byte
+
+
+def test_item_ids_carrying_maps_increments_and_partial_items_and_drops_an_absent_origin() -> None:
+    increment: OriginRecord = replace(_RECORD, item_id=7, origin="A:P")
+    partial: OriginRecord = replace(_PARTIAL, item_id=8, origin="A:OTHER")
+    records: dict[str, OriginRecord] = {"A:P": increment, "A:OTHER": partial}
+    assert item_ids_carrying(["A:OTHER", "A:NEW", "A:P"], records) == (8, 7)
+    assert item_ids_carrying([], records) == ()
+
+
+@pytest.mark.parametrize(
+    ("requested", "refusal", "queue"),
+    [(False, None, None), (True, None, "finishes"), (True, "no", "refuses")],
+)
+def test_a_partial_item_reports_queue_from_requested_and_refusal(
+    requested: bool, refusal: str | None, queue: str | None
+) -> None:
+    report: PartialItemReport = PartialItemReport(7, "A:I1", requested, (), refusal)
+    assert report.queue == queue
