@@ -3,7 +3,7 @@
 # each tick is a fresh, crash-only process under the supervisor's own flock, so
 # an overlapping fire exits cleanly. Rendered from package data by
 # `squadra install-units`; do not edit in place.
-Description=squadra fleet supervisor tick
+Description=squadra fleet ${fleet_name} supervisor tick
 After=network-online.target docker.service
 Wants=network-online.target
 Requires=docker.service

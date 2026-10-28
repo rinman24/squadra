@@ -10,7 +10,7 @@ systemd.
 from pathlib import Path
 
 from squadra.units import (
-    UNIT_FILENAMES,
+    UNIT_TEMPLATES,
     UnitContext,
     install_units,
     render_unit,
@@ -20,6 +20,7 @@ from squadra.units import (
 
 def _ctx() -> UnitContext:
     return UnitContext(
+        fleet_name="app",
         venv_bin=Path("/opt/squadra/venv/bin"),
         fleet_home=Path("/opt/squadra/app-backend"),
         fleet_root=Path("/opt/squadra/state"),
@@ -58,7 +59,7 @@ def test_service_passes_runtime_env_but_no_secret() -> None:
 def test_timer_schedules_the_service_and_is_installable_not_enabled() -> None:
     timer: str = render_unit("squadra.timer", _ctx())
     assert "OnUnitActiveSec=180s" in timer
-    assert "Unit=squadra.service" in timer
+    assert "Unit=squadra-app.service" in timer
     # [Install] lets an operator deliberately `enable` it later; rendering does
     # not enable anything by itself.
     assert "[Install]" in timer
@@ -67,7 +68,8 @@ def test_timer_schedules_the_service_and_is_installable_not_enabled() -> None:
 
 def test_render_units_covers_every_unit_filename() -> None:
     rendered = render_units(_ctx())
-    assert set(rendered) == set(UNIT_FILENAMES)
+    assert set(rendered) == {"squadra-app.service", "squadra-app.timer"}
+    assert len(rendered) == len(UNIT_TEMPLATES)
 
 
 def test_missing_placeholder_is_loud() -> None:
@@ -81,7 +83,7 @@ def test_missing_placeholder_is_loud() -> None:
 def test_install_units_writes_both_files_without_touching_systemd(tmp_path: Path) -> None:
     written: list[Path] = install_units(_ctx(), dest=tmp_path)
 
-    assert sorted(p.name for p in written) == ["squadra.service", "squadra.timer"]
+    assert sorted(p.name for p in written) == ["squadra-app.service", "squadra-app.timer"]
     for path in written:
         assert path.parent == tmp_path
         assert path.read_text(encoding="utf-8")
@@ -95,4 +97,4 @@ def test_install_units_uses_injected_writer(tmp_path: Path) -> None:
 
     install_units(_ctx(), dest=tmp_path, writer=_writer)
 
-    assert set(captured) == {tmp_path / "squadra.service", tmp_path / "squadra.timer"}
+    assert set(captured) == {tmp_path / "squadra-app.service", tmp_path / "squadra-app.timer"}

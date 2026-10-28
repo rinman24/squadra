@@ -20,7 +20,7 @@ from squadra.domain import IncrementRequest, Lifecycle, OriginRecord
 from squadra.fake_board import FAKE_BOARD_FILE, JsonFileBoard, fake_board_path
 
 _TOML: str = (
-    "[board]\n"
+    '[fleet]\nname = "test-fleet"\n[board]\n'
     'provider = "fake"\n'
     'claim_scope = "whole-board"\n'
     "[board.states]\n"

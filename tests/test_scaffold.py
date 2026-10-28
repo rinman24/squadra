@@ -26,8 +26,10 @@ from squadra.scaffold import (
 
 
 def _declare_scope(text: str) -> str:
-    """Fill in the scaffold's empty ``claim_scope``, as an operator would."""
-    return text.replace('claim_scope = ""', 'claim_scope = "whole-board"', 1)
+    """Fill in the scaffold's empty ``claim_scope`` and ``[fleet] name``, as an operator would."""
+    return text.replace('claim_scope = ""', 'claim_scope = "whole-board"', 1).replace(
+        'name = ""', 'name = "test-fleet"', 1
+    )
 
 
 def test_render_toml_leaves_claim_scope_undeclared(tmp_path: Path) -> None:

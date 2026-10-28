@@ -101,7 +101,9 @@ def test_a_requeue_that_finds_the_issue_closed_is_reported_and_the_tick_goes_on(
         fleet_root,
     )
     sandbox = FakeSandbox()
-    sandbox.seed(f"squadra-increment-{CLOSING}", SandboxExited(exit_code=1))  # a crash: retry
+    sandbox.seed(
+        f"squadra-test-fleet-increment-{CLOSING}", SandboxExited(exit_code=1)
+    )  # a crash: retry
 
     assert run_tick(_seams(board, sandbox), make_config(fleet_root=fleet_root, cap=2)) == 0
 
@@ -109,7 +111,9 @@ def test_a_requeue_that_finds_the_issue_closed_is_reported_and_the_tick_goes_on(
     assert not issue.is_open and issue.state_reason == reason  # never reopened
     assert (CLOSING, Lifecycle.QUEUED) not in board.state_writes
     assert CLOSING not in board.comments  # no Reaped: it was not requeued
-    assert any(spec.project == f"squadra-increment-{CLOSING}" for spec in sandbox.teardowns)
+    assert any(
+        spec.project == f"squadra-test-fleet-increment-{CLOSING}" for spec in sandbox.teardowns
+    )
     assert f"requeue refused for #{CLOSING}" in capsys.readouterr().out
     assert _claimed(board, BYSTANDER)  # the tick went on
 
@@ -125,7 +129,7 @@ def test_a_rollback_that_finds_the_issue_closed_is_reported_and_the_tick_goes_on
     board.github.add(StubIssue(CLOSING, "feat: ship it", status="Todo"))
     _seed_bystander(board)
     sandbox = FakeSandbox()
-    sandbox.fail_launch.add(f"squadra-increment-{CLOSING}")
+    sandbox.fail_launch.add(f"squadra-test-fleet-increment-{CLOSING}")
 
     assert run_tick(_seams(board, sandbox), make_config(fleet_root=fleet_root, cap=1)) == 0
 
@@ -163,6 +167,8 @@ def test_a_claim_that_finds_the_issue_closed_is_reported_and_the_tick_goes_on(
     assert not issue.is_open and issue.state_reason == reason
     assert "fleet:claimed" not in issue.labels
     assert CLOSING not in board.comments
-    assert not any(spec.project == f"squadra-increment-{CLOSING}" for spec in sandbox.launches)
+    assert not any(
+        spec.project == f"squadra-test-fleet-increment-{CLOSING}" for spec in sandbox.launches
+    )
     assert f"claim refused for #{CLOSING}" in capsys.readouterr().out
     assert _claimed(board, BYSTANDER)

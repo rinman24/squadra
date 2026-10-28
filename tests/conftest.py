@@ -147,9 +147,11 @@ def make_config(fleet_root: Path, tmp_path: Path) -> Callable[..., SquadraConfig
 
     def _factory(**overrides: object) -> SquadraConfig:
         base = SquadraConfig(
+            fleet_name="test-fleet",
             provider=DEFAULT_PROVIDER,
             base_branch=DEFAULT_BASE_BRANCH,
             tag_prefix=DEFAULT_TAG_PREFIX,
+            tag_prefix_explicit=True,
             claim_scope=ClaimScope.WHOLE_BOARD,
             parent_scope_ids=(),
             states=ADO_BASIC_STATES,

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # fleetctl.sh — on-demand start/stop/status control for the fleet supervisor
-# ticker, for hands-on LOCAL/DEV runs: a detached `fleet-ticker` tmux session
+# ticker, for hands-on LOCAL/DEV runs: a detached `squadra-<name>-ticker` tmux session
 # whose loop fires one supervisor tick every FLEET_TICK_INTERVAL_SECONDS.
 #
 # NB the dedicated fleet-host does NOT use this — it schedules ticks with systemd
@@ -29,7 +29,8 @@
 #   FLEET_ROOT                   fleet state dir, holds supervisor.log
 #                                (default $FLEET_HOME/.claude/fleet)
 #   FLEET_TICK_INTERVAL_SECONDS  seconds between ticks (default 180 = the */3 cadence)
-#   FLEET_TICKER_SESSION         tmux session name for the loop (default fleet-ticker)
+#   FLEET_TICKER_SESSION         tmux session name for the loop (required; `squadra
+#                                start|stop|status|log` sets squadra-<[fleet] name>-ticker)
 
 set -u
 
@@ -37,7 +38,7 @@ SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 FLEET_HOME=${FLEET_HOME:-$(pwd)}
 FLEET_ROOT=${FLEET_ROOT:-$FLEET_HOME/.claude/fleet}
 INTERVAL=${FLEET_TICK_INTERVAL_SECONDS:-180}
-SESSION=${FLEET_TICKER_SESSION:-fleet-ticker}
+SESSION=${FLEET_TICKER_SESSION:?run via \`squadra start|stop|status|log\`, which derives it from [fleet] name}
 TICK="$SCRIPT_DIR/fleet-tick.sh"
 LOG="$FLEET_ROOT/supervisor.log"
 
@@ -76,7 +77,7 @@ cmd_stop() {
   fi
   tmux kill-session -t "$SESSION"
   log "stopped ticker '$SESSION' — no new ticks will fire."
-  log "in-flight runners live in the separate 'fleet' tmux session and keep going; the board + status.json stay authoritative. 'tmux attach -t fleet' to watch them."
+  log "in-flight increments keep running in their sandboxes; the board + status.json stay authoritative."
 }
 
 cmd_status() {

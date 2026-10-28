@@ -9,14 +9,18 @@ precedence::
 Only the un-defaultable is required: the ``provider`` (defaulted to ``ado`` for
 minimum adoption friction), ``[board.states]`` *unless* the provider's
 process is inferable (``ado`` defaults to ADO-Basic's ``To Do/Doing/Done``;
-other providers must declare their states), ``[board].claim_scope``, and, for
-``provider = "github"`` only, ``[board.github]`` (repository and project).
-Everything else has a default.
+other providers must declare their states), ``[board].claim_scope``,
+``[fleet] name``, and, for ``provider = "github"`` only, ``[board.github]``
+(repository and project). Everything else has a default.
 
-Claim scope is the one deliberate exception to "default everything": it has no
-default and no env layer, and loading fails closed (``ConfigError``) until the
-operator declares what on the board is claimable (WSQ1). A board pointed at by
-a forgotten config line must stop at this check, not reach every queued item.
+Claim scope and the fleet name are the deliberate exceptions to "default
+everything": neither has a default or an env layer, and loading fails closed
+(``ConfigError``) until the operator declares them. Claim scope says what on the
+board is claimable (WSQ1): a board pointed at by a forgotten config line must
+stop at this check, not reach every queued item. The fleet name is the fleet's
+identity (N34): every host-global name (systemd units, sandbox compose projects,
+the tmux ticker, the default ``tag_prefix``) derives from it, so two fleets on
+one host cannot collide, and a default would recreate the collision.
 
 Safety is **validate-against-board**, not mandatory typing: ``BoardAccess.
 validate_config()`` resolves the configured state names / base branch against
@@ -32,11 +36,11 @@ from dataclasses import dataclass
 from enum import Enum
 import os
 from pathlib import Path
+import re
 import tomllib
 from typing import Final, cast
 
 from squadra.constants import (
-    DEFAULT_TAG_PREFIX,
     FLEET_EFFORT,
     FLEET_MAX_RUNNERS,
     FLEET_MODEL,
@@ -57,6 +61,13 @@ DEFAULT_RUNNER_SKILL: Final[str] = "/afk-increment-runner"
 DEFAULT_TDD_SKILL: Final[str] = "/tdd"
 DEFAULT_QA_SKILL: Final[str] = "/qa"
 DEFAULT_CLEANUP_SKILL: Final[str] = "/cleanup-merged-branches"
+
+# ``[fleet] name``: lowercase letters, digits and hyphens, starting with a letter
+# or digit, at most 24 characters. Every derived name stays valid: a compose
+# project (lowercase alphanumerics, ``-``, ``_``; alphanumeric first), a systemd
+# unit name, a tmux session (no ``.`` or ``:``), and ``<name>:<suffix>`` within
+# GitHub's 50-character label limit for the longest tag suffix.
+FLEET_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(r"[a-z0-9][a-z0-9-]{0,23}")
 
 # ADO's Basic process is the one provider whose states are inferable, so it is
 # the only one that may omit ``[board.states]`` (design note, Configuration §).
@@ -125,7 +136,8 @@ def item_in_claim_scope(
 class GitHubBoardConfig:
     """``[board.github]``: the one repository and one Projects v2 board a GitHub board is.
 
-    Provider-scoped, so each ``[[boards]]`` entry can carry its own (SQ5c).
+    ``repository`` must be ``FLEET_HOME``'s ``origin``, checked by the adapter's
+    ``validate_config()`` (N34): a fleet is one repository.
     """
 
     repository: str  # "owner/name": the issues the board's items are
@@ -147,10 +159,13 @@ class GitHubBoardConfig:
 class SquadraConfig:
     """One tick's effective configuration (defaults < toml < env < flag, frozen)."""
 
+    # [fleet]
+    fleet_name: str
     # [board]
     provider: str
     base_branch: str
     tag_prefix: str
+    tag_prefix_explicit: bool  # set in toml or env, not defaulted from the name
     claim_scope: ClaimScope
     parent_scope_ids: tuple[int, ...]
     states: Mapping[Lifecycle, tuple[str, ...]]
@@ -202,14 +217,18 @@ def load_config(
         provider or os.environ.get("FLEET_PROVIDER") or _str(board, "provider") or DEFAULT_PROVIDER
     )
     claim_scope: ClaimScope = _resolve_claim_scope(board)
+    fleet_name: str = _resolve_fleet_name(_section(raw, "fleet"))
+    explicit_tag_prefix: str | None = os.environ.get("FLEET_TAG_PREFIX") or _str(
+        board, "tag_prefix"
+    )
     return SquadraConfig(
+        fleet_name=fleet_name,
         provider=resolved_provider,
         base_branch=os.environ.get("FLEET_BASE_BRANCH")
         or _str(board, "base_branch")
         or DEFAULT_BASE_BRANCH,
-        tag_prefix=os.environ.get("FLEET_TAG_PREFIX")
-        or _str(board, "tag_prefix")
-        or DEFAULT_TAG_PREFIX,
+        tag_prefix=explicit_tag_prefix or f"{fleet_name}:",
+        tag_prefix_explicit=explicit_tag_prefix is not None,
         claim_scope=claim_scope,
         parent_scope_ids=_resolve_parent_scope_ids(board, claim_scope),
         states=_resolve_states(board, resolved_provider),
@@ -229,6 +248,37 @@ def load_config(
         staleness_threshold_seconds=STALENESS_THRESHOLD_SECONDS,
         github=_resolve_github(board, resolved_provider),
     )
+
+
+def load_fleet_name(fleet_home: Path, *, config_path: Path | None = None) -> str:
+    """Read only ``[fleet] name`` from ``squadra.toml``, failing as :func:`load_config` does.
+
+    For callers that need the fleet's identity but not a whole tick's
+    configuration (the ``squadra start | stop | status | log`` ticker, and
+    ``install-units`` checking its ``--fleet-name`` against the checkout).
+    """
+    return _resolve_fleet_name(_section(_read_toml(config_path, fleet_home), "fleet"))
+
+
+def _resolve_fleet_name(fleet: Mapping[str, object]) -> str:
+    """Resolve the required ``[fleet] name`` (toml only, no default, no env layer).
+
+    The name is the fleet's identity, so an env or flag override would be a
+    rename (N34). Missing and empty (the ``squadra init`` scaffold) both fail.
+    """
+    name: str | None = _str(fleet, "name")
+    if not name:
+        raise ConfigError(
+            "[fleet] name is required: name this fleet (lowercase letters, digits and "
+            "hyphens); its systemd units, sandbox projects, tmux ticker and default "
+            "[board].tag_prefix derive from it"
+        )
+    if FLEET_NAME_PATTERN.fullmatch(name) is None:
+        raise ConfigError(
+            f"[fleet] name must be 1-24 lowercase letters, digits or hyphens, starting "
+            f"with a letter or digit, got {name!r}"
+        )
+    return name
 
 
 def _env_fleet_home() -> Path:

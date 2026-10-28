@@ -49,6 +49,7 @@ write_files:
     permissions: "0644"
     content: |
       FLEET_KEY_VAULT=fleet-kv
+      FLEET_NAME=app-backend
       FLEET_HOME=/opt/squadra/app-backend
       FLEET_APP_REPO_URL=https://dev.azure.com/your-org/example-project/_git/app-backend
       FLEET_VENV=/opt/squadra/venv
@@ -76,6 +77,7 @@ write_files:
       [ -f "$ENV_FILE" ] && . "$ENV_FILE"
       : "${FLEET_KEY_VAULT:?set FLEET_KEY_VAULT in $ENV_FILE}"
       : "${FLEET_HOME:?set FLEET_HOME in $ENV_FILE}"
+      : "${FLEET_NAME:?set FLEET_NAME ([fleet] name) in $ENV_FILE}"
       VENV=${FLEET_VENV:-/opt/squadra/venv}
       # az devops org/project the board adapter reads (board.py::_configured_default);
       # overridable via the env file, default your-org / example-project.
@@ -91,7 +93,7 @@ write_files:
       # squadra is reinstalled (it has no third-party runtime deps).
       "$VENV/bin/pip" install --upgrade --force-reinstall "squadra==${SQUADRA_VERSION}"
       sudo "$VENV/bin/squadra" install-units \
-        --key-vault "$FLEET_KEY_VAULT" --fleet-home "$FLEET_HOME" --venv-bin "$VENV/bin" \
+        --key-vault "$FLEET_KEY_VAULT" --fleet-name "$FLEET_NAME" --fleet-home "$FLEET_HOME" --venv-bin "$VENV/bin" \
         --app-repo-url "${FLEET_APP_REPO_URL:-}"
       sudo systemctl daemon-reload
       # az devops defaults the board adapter reads — set for BOTH azureuser (this
@@ -99,7 +101,7 @@ write_files:
       log "configuring az devops defaults: organization=${ADO_ORG} project=${ADO_PROJECT}"
       az devops configure --defaults "organization=${ADO_ORG}" "project=${ADO_PROJECT}"
       sudo az devops configure --defaults "organization=${ADO_ORG}" "project=${ADO_PROJECT}"
-      log "done. Smoke a dry-run, then: sudo systemctl enable --now squadra.timer"
+      log "done. Smoke a dry-run, then: sudo systemctl enable --now squadra-${FLEET_NAME}.timer"
 
 runcmd:
   # --- Docker Engine (native daemon) from the official apt repo, pinned signed key ---

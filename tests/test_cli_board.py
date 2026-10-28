@@ -32,7 +32,8 @@ _STATES_TOML: str = (
     'withdrawn = ["Dropped"]\n'
 )
 _TOML: str = (
-    '[board]\nprovider = "fake"\nclaim_scope = "parents"\nparent_scope_ids = [200]\n' + _STATES_TOML
+    '[fleet]\nname = "test-fleet"\n[board]\nprovider = "fake"\nclaim_scope = "parents"\nparent_scope_ids = [200]\n'
+    + _STATES_TOML
 )
 _SCRUBBED_ENV: tuple[str, ...] = ("FLEET_PROVIDER", "FLEET_TAG_PREFIX", "FLEET_BASE_BRANCH")
 
@@ -237,7 +238,8 @@ def test_scope_says_in_scope_exactly_when_queue_is_not_refused_for_scope(
 ) -> None:
     """claude-skills DB-D12 (SQ5e, Juval): ``scope`` and ``queue`` never disagree."""
     (fleet_home / "squadra.toml").write_text(
-        '[board]\nprovider = "fake"\n' + scope_toml + _STATES_TOML, encoding="utf-8"
+        '[fleet]\nname = "test-fleet"\n[board]\nprovider = "fake"\n' + scope_toml + _STATES_TOML,
+        encoding="utf-8",
     )
     _seed(fleet_home, _SEEDED_ITEMS)
     before: bytes | None = _snapshot(fleet_home)
@@ -360,7 +362,8 @@ def test_a_config_error_exits_2(
     fleet_home: Path, capsys: pytest.CaptureFixture[str], argv: list[str]
 ) -> None:
     (fleet_home / "squadra.toml").write_text(
-        '[board]\nprovider = "fake"\n' + _STATES_TOML, encoding="utf-8"
+        '[fleet]\nname = "test-fleet"\n[board]\nprovider = "fake"\n' + _STATES_TOML,
+        encoding="utf-8",
     )  # no claim_scope: ConfigError, fail closed
 
     rc, out, err = _main(capsys, *argv)
@@ -402,7 +405,8 @@ def test_ado_write_primitives_exit_1(
     fleet_home: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (fleet_home / "squadra.toml").write_text(
-        '[board]\nprovider = "ado"\nclaim_scope = "whole-board"\n', encoding="utf-8"
+        '[fleet]\nname = "test-fleet"\n[board]\nprovider = "ado"\nclaim_scope = "whole-board"\n',
+        encoding="utf-8",
     )
 
     def no_live_az(_self: AzCliAdo) -> None:
@@ -420,7 +424,8 @@ def test_scope_exits_1_on_a_provider_failure(
     fleet_home: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (fleet_home / "squadra.toml").write_text(
-        '[board]\nprovider = "ado"\nclaim_scope = "whole-board"\n', encoding="utf-8"
+        '[fleet]\nname = "test-fleet"\n[board]\nprovider = "ado"\nclaim_scope = "whole-board"\n',
+        encoding="utf-8",
     )
 
     def az_down(_self: AzCliAdo) -> None:
@@ -574,7 +579,7 @@ def test_partial_items_says_refuses_exactly_when_queue_refuses_with_that_message
 ) -> None:
     """claude-skills DB-D13 (SQ8, Juval): the read and ``queue`` share N14's one predicate."""
     (fleet_home / "squadra.toml").write_text(
-        '[board]\nprovider = "fake"\nclaim_scope = "parents"\nparent_scope_ids = [200, 201]\n'
+        '[fleet]\nname = "test-fleet"\n[board]\nprovider = "fake"\nclaim_scope = "parents"\nparent_scope_ids = [200, 201]\n'
         + _STATES_TOML,
         encoding="utf-8",
     )
@@ -748,7 +753,8 @@ def test_partial_items_exits_2_on_a_config_error(
     fleet_home: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     (fleet_home / "squadra.toml").write_text(
-        '[board]\nprovider = "fake"\n' + _STATES_TOML, encoding="utf-8"
+        '[fleet]\nname = "test-fleet"\n[board]\nprovider = "fake"\n' + _STATES_TOML,
+        encoding="utf-8",
     )  # no claim_scope: ConfigError, fail closed
 
     rc, out, err = _main(
@@ -793,7 +799,8 @@ def test_partial_items_exits_1_on_a_provider_failure(
     fleet_home: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (fleet_home / "squadra.toml").write_text(
-        '[board]\nprovider = "ado"\nclaim_scope = "whole-board"\n', encoding="utf-8"
+        '[fleet]\nname = "test-fleet"\n[board]\nprovider = "ado"\nclaim_scope = "whole-board"\n',
+        encoding="utf-8",
     )
 
     def no_live_az(_self: AzCliAdo) -> None:
