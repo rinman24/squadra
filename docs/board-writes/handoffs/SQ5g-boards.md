@@ -1,7 +1,7 @@
 # Handoff: SQ5g · one fleet per repository, `[fleet] name` (board-writes, part 5g)
 
 Rich starts a fresh `claude` session in `~/Code/squadra` and gives it this file.
-Gate: the PR recording Rich's N34 ruling merged on squadra `main`, and no
+Gate: PR #66 (Rich's N34 ruling) merged on squadra `main`, and no
 other board-writes unit in flight. Fetch first, then fast-forward the
 `feat/board-writes` worktree (`.claude/worktrees/board-writes`) to
 `origin/main`; if it can't fast-forward, stop and tell Rich.
