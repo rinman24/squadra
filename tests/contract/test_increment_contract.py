@@ -20,13 +20,23 @@ The ``test N`` tests are from Juval's settlement (board-knowledge
 Origin (ledger N7); 2–5 a crash-safe create, against a partial item placed
 by hand with ``seed_partial`` (ledger N8). Tests 1–5 against a create that
 really crashes part-way are in ``test_crash_safe_create_contract.py``.
+
+The partial-items read (SQ8, ledger N31) is checked against ``queue`` itself:
+it says ``"refuses"`` exactly when ``queue`` raises, with the same message.
 """
 
 import pytest
 
 from squadra.board import BoardAccess, BoardValidationError
 from squadra.config import ClaimScope
-from squadra.domain import Increment, IncrementRequest, Lifecycle, OriginRecord
+from squadra.domain import (
+    Increment,
+    IncrementRequest,
+    Lifecycle,
+    OriginRecord,
+    PartialItemReport,
+    ProposedRequest,
+)
 from squadra.engines import (
     ClaimScopeRefusedError,
     DuplicateOriginError,
@@ -467,3 +477,105 @@ def test_5_a_complete_and_an_partial_item_with_one_origin_are_a_duplicate(
         verbs.increments_by_origin()
     with pytest.raises(DuplicateOriginError, match=f"items {QUEUED_ID} and {partial}"):
         verbs.queue_increment("A:I1", P, (), "I1", "")
+
+
+# --- the partial-items read agrees with queue (SQ8, ledger N31) --------------------
+
+# R depends on P (an Increment: QUEUED_ID) and OTHER (a partial item). Each
+# stop is what a create of R leaves after write j: Origin, title and body;
+# then the parent; then P; then OTHER.
+_STOPS: list[tuple[int | None, tuple[str, ...]]] = [
+    (None, ()),
+    (P, ()),
+    (P, ("A:P",)),
+    (P, ("A:P", "A:OTHER")),
+]
+_AGREE: ProposedRequest = ProposedRequest("A:R", P, ("A:P", "A:OTHER"), "R", "b")
+# (plan, the request, the stop from which queue refuses it, and why).
+_PLANS: list[tuple[str, ProposedRequest, int | None, str | None]] = [
+    ("agree", _AGREE, None, None),
+    ("title-differs", ProposedRequest("A:R", P, ("A:P", "A:OTHER"), "R'", "b"), 0, "title"),
+    ("body-differs", ProposedRequest("A:R", P, ("A:P", "A:OTHER"), "R", "c"), 0, "body"),
+    ("parent-differs", ProposedRequest("A:R", Q, ("A:P", "A:OTHER"), "R", "b"), 1, "parent"),
+    ("p-left-out", ProposedRequest("A:R", P, ("A:OTHER",), "R", "b"), 2, "predecessors"),
+    ("other-left-out", ProposedRequest("A:R", P, ("A:P",), "R", "b"), 3, "predecessors"),
+    ("new-id", ProposedRequest("A:R", P, ("A:P", "A:OTHER", "A:NEW"), "R", "b"), None, None),
+]
+
+
+@pytest.mark.parametrize("stop", range(len(_STOPS)))
+@pytest.mark.parametrize(
+    ("proposed", "refuses_from", "field"),
+    [plan[1:] for plan in _PLANS],
+    ids=[plan[0] for plan in _PLANS],
+)
+def test_partial_items_agrees_with_queue_on_every_stop(
+    fake_board: SeedableFakeBoard,
+    stop: int,
+    proposed: ProposedRequest,
+    refuses_from: int | None,
+    field: str | None,
+) -> None:
+    """claude-skills DB-D13 (Juval): ``"refuses"`` exactly when ``queue`` raises that message."""
+    fake_board.seed_origin(QUEUED_ID, "A:P")
+    other: int = fake_board.seed_partial("A:OTHER", "O", "b", parent_id=P)
+    ids: dict[str, int] = {"A:P": QUEUED_ID, "A:OTHER": other}
+    parent, carried = _STOPS[stop]
+    r: int = fake_board.seed_partial(
+        "A:R", "R", "b", parent_id=parent, predecessor_ids=tuple(ids[o] for o in carried)
+    )
+    verbs: IncrementBoard = _verbs(fake_board)
+    before: tuple[OriginRecord, ...] = fake_board.items_with_origin()
+
+    reports: tuple[PartialItemReport, ...] = verbs.partial_items([proposed])
+
+    assert fake_board.items_with_origin() == before  # a read: nothing written
+    refuses: bool = refuses_from is not None and stop >= refuses_from
+    unrequested: PartialItemReport = PartialItemReport(other, "A:OTHER", False, (), None)
+    assert reports[0 if other < r else 1] == unrequested
+    (report,) = [x for x in reports if x.item_id == r]
+    assert report.queue == ("refuses" if refuses else "finishes")
+    assert report.disagrees_on == ((field,) if refuses else ())
+    for origin in proposed.predecessor_origins:  # as design-to-board would
+        if origin not in verbs.increments_by_origin():
+            title: str = "O" if origin == "A:OTHER" else "N"
+            ids[origin] = verbs.queue_increment(origin, P, (), title, "b")
+    predecessors: tuple[int, ...] = tuple(ids[o] for o in proposed.predecessor_origins)
+    args: tuple[str, int, tuple[int, ...], str, str] = (
+        "A:R",
+        proposed.parent,
+        predecessors,
+        proposed.title,
+        proposed.body,
+    )
+    if report.refusal is None:
+        assert verbs.queue_increment(*args) == r
+    else:
+        with pytest.raises(QueueRefusedError) as raised:
+            verbs.queue_increment(*args)
+        assert str(raised.value) == report.refusal  # byte for byte
+
+
+def test_partial_items_answers_only_n14(fake_board: SeedableFakeBoard) -> None:
+    """The fence: an Increment's A3 refusal, a withdrawn Origin, an absent one get no report."""
+    fake_board.seed_origin(QUEUED_ID, "A:I1")
+    fake_board.seed_origin(WITHDRAWN_ID, "A:I3")
+    verbs: IncrementBoard = _verbs(fake_board)
+    requests: list[ProposedRequest] = [
+        ProposedRequest(origin, P, (), "different", "b") for origin in ("A:I1", "A:I3", "A:NONE")
+    ]
+    assert verbs.partial_items(requests) == ()
+    with pytest.raises(QueueRefusedError):
+        verbs.queue_increment("A:I1", P, (), "different", "b")
+
+
+def test_partial_items_raises_on_a_board_level_duplicate_and_a_repeated_request(
+    fake_board: SeedableFakeBoard,
+) -> None:
+    fake_board.seed_partial("A:R", "R", "b", parent_id=P)
+    verbs: IncrementBoard = _verbs(fake_board)
+    with pytest.raises(ValueError, match="'A:R' is requested twice"):
+        verbs.partial_items([_AGREE, _AGREE])
+    fake_board.seed_origin(QUEUED_ID, "A:R")
+    with pytest.raises(DuplicateOriginError, match="A:R"):
+        verbs.partial_items([])

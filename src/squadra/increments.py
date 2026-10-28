@@ -16,12 +16,15 @@ them:
   withdrawn, and only by its Origin (SQ2c, ledger N7);
 - duplicate Origins raise (DB-D4 A2), and a repeated ``queue_increment`` returns
   the existing item only on identical arguments (DB-D4 A3), or finishes a
-  partial item a crash left when it agrees with the request (SQ2c, N8).
+  partial item a crash left when it agrees with the request (SQ2c, N8), and
+  :meth:`IncrementBoard.partial_items` reports that verdict before any write
+  (claude-skills DB-D13, SQ8).
 
 Every refusal raises before any write. The Origin is opaque: squadra stores it
 and compares it for equality, never parses it. The contract is per board: a
 predecessor on another board is not visible here. ``squadra board
-{queue,withdraw,origins,scope}`` (:mod:`squadra.cli`, SQ4, SQ5e) exposes these
+{queue,withdraw,origins,scope,partial-items}`` (:mod:`squadra.cli`, SQ4, SQ5e,
+SQ8) exposes these
 verbs as ``docs/board-writes/verb-contract.md`` specifies.
 """
 
@@ -29,7 +32,15 @@ from collections.abc import Sequence
 
 from squadra.board import BoardAccess
 from squadra.config import ClaimScope
-from squadra.domain import Increment, IncrementRequest, Lifecycle, OriginRecord
+from squadra.domain import (
+    Increment,
+    IncrementRequest,
+    Lifecycle,
+    OriginRecord,
+    PartialItemReport,
+    ProposedRequest,
+    RequestField,
+)
 from squadra.engines import (
     ClaimScopeRefusedError,
     UnknownOriginError,
@@ -38,15 +49,19 @@ from squadra.engines import (
     check_queue_matches,
     check_transition,
     index_by_origin,
+    item_ids_carrying,
     parent_in_claim_scope,
+    partial_item_disagreements,
+    refusal_to_finish,
 )
 
 
 class IncrementBoard:
     """``queue_increment``, ``withdraw_increment`` and ``increments_by_origin`` on one board.
 
-    Plus one read, :meth:`parent_in_claim_scope`, so a planner can ask before
-    its first queue whether a parent is in scope (SQ5e).
+    Plus two reads a planner asks before its first queue: whether a parent is
+    in scope (:meth:`parent_in_claim_scope`, SQ5e), and what ``queue`` would do
+    with each partial item (:meth:`partial_items`, SQ8).
     """
 
     def __init__(
@@ -167,6 +182,62 @@ class IncrementBoard:
             record for record in records.values() if record.partial
         )
         return increments, partial_items
+
+    def partial_items(self, requests: Sequence[ProposedRequest]) -> tuple[PartialItemReport, ...]:
+        """Report every partial item on the board, sorted by item id, with ``queue``'s verdict.
+
+        Unlike :meth:`increments_and_partial_items`, which returns partial
+        items as :class:`OriginRecord` s for ``origins``' stderr lines, this
+        returns reports with ``queue``'s verdict on the request in ``requests``
+        that names each item's Origin (claude-skills DB-D13, SQ8, ledger N31).
+        From one board read: each request's ``predecessor_origins`` map to ids
+        by :func:`~squadra.engines.item_ids_carrying` over that read, and the
+        verdict is :func:`~squadra.engines.check_queue_finishes`' own rule, so
+        the report and ``queue`` never disagree. An item no request names is
+        reported with ``requested=False``.
+
+        It answers only N14: a request aimed at an Increment, an absent Origin,
+        an out-of-scope parent or a withdrawn Origin gets no report, and scope
+        is not checked (``queue`` checks it first). Raises
+        :class:`DuplicateOriginError` on an Origin the board carries twice, and
+        :class:`ValueError` on an Origin ``requests`` names twice. Writes nothing.
+        """
+        by_origin: dict[str, ProposedRequest] = {}
+        for proposed in requests:
+            if proposed.origin in by_origin:
+                raise ValueError(f"origin {proposed.origin!r} is requested twice")
+            by_origin[proposed.origin] = proposed
+        records: dict[str, OriginRecord] = index_by_origin(self._board.items_with_origin())
+        partial_records: list[OriginRecord] = sorted(
+            (record for record in records.values() if record.partial),
+            key=lambda record: record.item_id,
+        )
+        reports: list[PartialItemReport] = []
+        for record in partial_records:
+            named: ProposedRequest | None = by_origin.get(record.origin)
+            if named is None:
+                reports.append(PartialItemReport(record.item_id, record.origin, False, (), None))
+                continue
+            request: IncrementRequest = IncrementRequest(
+                origin=named.origin,
+                parent=named.parent,
+                predecessors=item_ids_carrying(named.predecessor_origins, records),
+                title=named.title,
+                body=named.body,
+            )
+            disagrees_on: tuple[RequestField, ...] = tuple(
+                field for field, _ in partial_item_disagreements(record, request)
+            )
+            reports.append(
+                PartialItemReport(
+                    record.item_id,
+                    record.origin,
+                    True,
+                    disagrees_on,
+                    refusal_to_finish(record, request),
+                )
+            )
+        return tuple(reports)
 
     def parent_in_claim_scope(self, parent: int | None) -> bool:
         """Whether an item under ``parent`` is inside ``[board].claim_scope``; reads nothing.

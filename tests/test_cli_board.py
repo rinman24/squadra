@@ -1,4 +1,4 @@
-"""``squadra board {queue,withdraw,origins,scope}`` end to end on ``provider = "fake"`` (SQ4, SQ5e).
+"""``squadra board {queue,withdraw,origins,scope,partial-items}`` end to end on the fake (SQ4, SQ5e, SQ8).
 
 Every test runs the real CLI (``cli.main`` in-process, or ``python -m
 squadra.cli`` in a subprocess, one process per verb as design-to-board calls
@@ -458,3 +458,313 @@ def test_each_call_sees_the_board_another_process_left(fleet_home: Path) -> None
         assert (duplicate.returncode, duplicate.stdout) == (3, ""), duplicate.stderr
         _assert_one_error_line(duplicate.stderr, argv[0], "1001", "1002")
         assert _snapshot(fleet_home) == before
+
+
+# --- partial-items: queue's N14 verdict before any write (SQ8, ledger N31) -------------
+
+# Row R depends on P, an Increment, and on OTHER, a partial item, so a read that
+# failed to map OTHER's Origin to its id would refuse what queue finishes once
+# that link is on R. R's create is k = 3 + 2 writes: create, parent, P, OTHER, commit.
+_P_ID: int = 1001
+_OTHER_ID: int = 1002
+_R_ID: int = 1003
+_R_STEPS: int = 5
+_PARTIAL_OTHER: dict[str, object] = {
+    "title": "O",
+    "body": "b",
+    "state": None,
+    "parent": 200,
+    "origin": "A:OTHER",
+}
+_P_AND_OTHER: dict[str, dict[str, object]] = {
+    str(_P_ID): {"title": "P", "body": "b", "state": "Backlog", "parent": 200, "origin": "A:P"},
+    str(_OTHER_ID): _PARTIAL_OTHER,
+}
+# How design-to-board would queue each predecessor it does not see in `origins`.
+_PREDECESSOR_TITLES: dict[str, str] = {"A:OTHER": "O", "A:NEW": "N"}
+_AGREE: dict[str, object] = {
+    "origin": "A:R",
+    "parent": 200,
+    "predecessor_origins": ["A:P", "A:OTHER"],
+    "title": "R",
+    "body": "b",
+}
+# (plan, the request, the first write j after which queue refuses it, and why).
+_PLANS: list[tuple[str, dict[str, object], int | None, str | None]] = [
+    ("agree", _AGREE, None, None),  # also maps A:OTHER, a partial item, to its id
+    ("title-differs", {**_AGREE, "title": "R'"}, 1, "title"),
+    ("body-differs", {**_AGREE, "body": "c"}, 1, "body"),
+    ("parent-differs", {**_AGREE, "parent": 201}, 2, "parent"),
+    ("p-left-out", {**_AGREE, "predecessor_origins": ["A:OTHER"]}, 3, "predecessors"),
+    ("other-left-out", {**_AGREE, "predecessor_origins": ["A:P"]}, 4, "predecessors"),
+    (
+        "new-predecessor-not-on-the-board",
+        {**_AGREE, "predecessor_origins": ["A:P", "A:OTHER", "A:NEW"]},
+        None,
+        None,
+    ),
+]
+
+
+def _write_requests(home: Path, requests: object) -> str:
+    path: Path = home / "requests.json"
+    path.write_text(json.dumps(requests), encoding="utf-8")
+    return str(path)
+
+
+def _queue_or_fail(capsys: pytest.CaptureFixture[str], argv: list[str]) -> int:
+    rc, out, err = _main(capsys, *argv)
+    assert (rc, err) == (0, ""), err
+    item_id: int = json.loads(out)["item_id"]
+    return item_id
+
+
+@pytest.mark.parametrize("after_step", range(1, _R_STEPS))
+@pytest.mark.parametrize(
+    ("request_", "refuses_from", "field"),
+    [plan[1:] for plan in _PLANS],
+    ids=[plan[0] for plan in _PLANS],
+)
+def test_partial_items_says_refuses_exactly_when_queue_refuses_with_that_message(  # noqa: PLR0913
+    fleet_home: Path,
+    capsys: pytest.CaptureFixture[str],
+    after_step: int,
+    request_: dict[str, object],
+    refuses_from: int | None,
+    field: str | None,
+) -> None:
+    """claude-skills DB-D13 (SQ8, Juval): the read and ``queue`` share N14's one predicate."""
+    (fleet_home / "squadra.toml").write_text(
+        '[board]\nprovider = "fake"\nclaim_scope = "parents"\nparent_scope_ids = [200, 201]\n'
+        + _STATES_TOML,
+        encoding="utf-8",
+    )
+    _seed(fleet_home, _P_AND_OTHER, fail_create_after_step=after_step)
+    r_argv: list[str] = [*_queue_args("A:R", title="R"), "--body-file", str(fleet_home / "body.md")]
+    rc, _, err = _main(capsys, *r_argv, "--predecessor", str(_P_ID), "--predecessor", "1002")
+    assert rc == 1, err  # a real create, stopped after write `after_step`
+    assert _items(fleet_home)[str(_R_ID)]["state"] is None
+    before: bytes | None = _snapshot(fleet_home)
+
+    rc, out, err = _main(
+        capsys, "partial-items", "--requests-file", _write_requests(fleet_home, [request_])
+    )
+
+    assert (rc, err) == (0, "")  # a refusing verdict is an answer
+    assert _snapshot(fleet_home) == before  # a read: the file is byte-identical
+    other, r = json.loads(out)["partial_items"]
+    assert other == {
+        "item_id": _OTHER_ID,
+        "origin": "A:OTHER",
+        "queue": None,
+        "disagrees_on": [],
+        "refusal": None,
+    }
+    refuses: bool = refuses_from is not None and after_step >= refuses_from
+    assert (r["item_id"], r["origin"]) == (_R_ID, "A:R")
+    assert r["queue"] == ("refuses" if refuses else "finishes")
+    assert r["disagrees_on"] == ([field] if refuses else [])
+    assert (r["refusal"] is None) is not refuses
+
+    # Then as design-to-board would: queue each predecessor `origins` does not
+    # show, then queue R with the ids mapped.
+    rc, out, _ = _main(capsys, "origins")
+    ids: dict[str, int] = {o: entry["item_id"] for o, entry in json.loads(out).items()}
+    predecessors: list[str] = cast("list[str]", request_["predecessor_origins"])
+    for origin in predecessors:
+        if origin not in ids:
+            argv: list[str] = _queue_args(origin, title=_PREDECESSOR_TITLES[origin])
+            ids[origin] = _queue_or_fail(
+                capsys, [*argv, "--body-file", str(fleet_home / "body.md")]
+            )
+    (fleet_home / "r-body.md").write_text(cast("str", request_["body"]), encoding="utf-8")
+    argv = [
+        *_queue_args("A:R", parent=cast("int", request_["parent"])),
+        "--title",
+        cast("str", request_["title"]),
+        "--body-file",
+        str(fleet_home / "r-body.md"),
+    ]
+    for origin in predecessors:
+        argv += ["--predecessor", str(ids[origin])]
+    rc, out, err = _main(capsys, *argv)
+
+    if refuses:
+        assert (rc, out) == (3, "")
+        assert err == f"squadra board queue: {r['refusal']}\n"  # byte for byte
+    else:
+        assert (rc, json.loads(out), err) == (0, {"item_id": _R_ID}, "")
+
+
+def test_partial_items_gives_no_entry_for_a_request_n14_does_not_judge(
+    fleet_home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The fence: an A3 refusal, a withdrawn Origin or an absent one is not this read's answer."""
+    _seed(fleet_home, {**_SEEDED_ITEMS, "1005": {**_PARTIAL_OTHER, "origin": "A:P"}})
+    differs: dict[str, object] = {**_AGREE, "origin": "A:I1", "title": "different"}
+    requests: list[dict[str, object]] = [
+        differs,  # an Increment with different arguments: queue refuses it (A3)
+        {**_AGREE, "origin": "A:I3"},  # withdrawn
+        {**_AGREE, "origin": "A:NONE"},  # on no item
+    ]
+
+    rc, out, err = _main(
+        capsys, "partial-items", "--requests-file", _write_requests(fleet_home, requests)
+    )
+
+    assert (rc, err) == (0, "")
+    assert json.loads(out) == {
+        "partial_items": [
+            {"item_id": 1005, "origin": "A:P", "queue": None, "disagrees_on": [], "refusal": None}
+        ]
+    }
+    rc, _, err = _main(
+        capsys, *_queue_args("A:I1", title="different"), "--body-file", str(fleet_home / "body.md")
+    )
+    assert rc == 3, err  # queue does refuse it, by A3, not N14
+
+
+def test_partial_items_with_no_requests_lists_every_partial_item_by_id(
+    fleet_home: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed(
+        fleet_home,
+        {
+            "1007": {**_PARTIAL_OTHER, "origin": "B:I9"},
+            **_SEEDED_ITEMS,
+            "1005": {**_PARTIAL_OTHER, "origin": "A:I5"},
+        },
+    )
+    monkeypatch.setattr(sys, "stdin", io.StringIO("[]"))
+
+    rc, out, err = _main(capsys, "partial-items", "--requests-file", "-")
+
+    assert (rc, err) == (0, "")
+    assert json.loads(out) == {
+        "partial_items": [
+            {"item_id": 1005, "origin": "A:I5", "queue": None, "disagrees_on": [], "refusal": None},
+            {"item_id": 1007, "origin": "B:I9", "queue": None, "disagrees_on": [], "refusal": None},
+        ]
+    }
+
+
+@pytest.mark.parametrize(
+    ("text", "fragment"),
+    [
+        ("[{", "Expecting"),
+        ('{"origin": "A:R"}', "expected a JSON list"),
+        ("[1]", "request 0 is not a JSON object"),
+        (json.dumps([{k: v for k, v in _AGREE.items() if k != "body"}]), "missing ['body']"),
+        (json.dumps([{**_AGREE, "predecessors": [1001]}]), "extra ['predecessors']"),
+        (json.dumps([{**_AGREE, "parent": True}]), "parent must be an integer"),
+        (json.dumps([{**_AGREE, "parent": "200"}]), "parent must be an integer"),
+        (json.dumps([{**_AGREE, "predecessor_origins": [1001]}]), "list of strings"),
+        (json.dumps([{**_AGREE, "title": None}]), "title must be a string"),
+        (json.dumps([_AGREE, {**_AGREE, "title": "again"}]), '"A:R" is requested twice'),
+    ],
+    ids=[
+        "bad-json",
+        "not-a-list",
+        "not-an-object",
+        "missing-key",
+        "extra-key",
+        "bool-parent",
+        "string-parent",
+        "predecessor-id",
+        "null-title",
+        "origin-twice",
+    ],
+)
+def test_partial_items_exits_2_on_a_bad_request_list_before_any_board_read(
+    fleet_home: Path, capsys: pytest.CaptureFixture[str], text: str, fragment: str
+) -> None:
+    (fleet_home / "requests.json").write_text(text, encoding="utf-8")
+    (fleet_home / "squadra.toml").write_text("", encoding="utf-8")  # a board read would exit 2 too
+
+    rc, out, err = _main(
+        capsys, "partial-items", "--requests-file", str(fleet_home / "requests.json")
+    )
+
+    assert (rc, out) == (2, "")
+    _assert_one_error_line(err, "partial-items", "--requests-file", fragment)
+    assert "claim_scope" not in err  # usage first, before config is loaded
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["partial-items"], ["partial-items", "--requests-file", "/nonexistent/requests.json"]],
+    ids=["no-requests-file", "unreadable-requests-file"],
+)
+def test_partial_items_usage_errors_exit_2(
+    fleet_home: Path, capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    rc, out, err = _main(capsys, *argv)
+
+    assert (rc, out) == (2, "")
+    _assert_one_error_line(err, "partial-items", "--requests-file")
+    assert not fake_board_path(fleet_home).exists()
+
+
+def test_partial_items_exits_2_on_a_config_error(
+    fleet_home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (fleet_home / "squadra.toml").write_text(
+        '[board]\nprovider = "fake"\n' + _STATES_TOML, encoding="utf-8"
+    )  # no claim_scope: ConfigError, fail closed
+
+    rc, out, err = _main(
+        capsys, "partial-items", "--requests-file", _write_requests(fleet_home, [])
+    )
+
+    assert (rc, out) == (2, "")
+    _assert_one_error_line(err, "partial-items", "claim_scope")
+
+
+def test_partial_items_runs_validate_config_before_answering(
+    fleet_home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed(fleet_home, _SEEDED_ITEMS, states=["Backlog", "Doing", "Done"])  # no "Dropped"
+    before: bytes | None = _snapshot(fleet_home)
+
+    rc, out, err = _main(
+        capsys, "partial-items", "--requests-file", _write_requests(fleet_home, [])
+    )
+
+    assert (rc, out) == (2, "")
+    _assert_one_error_line(err, "partial-items", "Dropped")
+    assert _snapshot(fleet_home) == before
+
+
+def test_partial_items_exits_3_only_on_a_board_level_duplicate_origin(
+    fleet_home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed(fleet_home, {**_SEEDED_ITEMS, "1005": {**_PARTIAL_OTHER, "origin": "A:I1"}})
+    before: bytes | None = _snapshot(fleet_home)
+
+    rc, out, err = _main(
+        capsys, "partial-items", "--requests-file", _write_requests(fleet_home, [])
+    )
+
+    assert (rc, out) == (3, "")
+    _assert_one_error_line(err, "partial-items", "1001", "1005")
+    assert _snapshot(fleet_home) == before
+
+
+def test_partial_items_exits_1_on_a_provider_failure(
+    fleet_home: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (fleet_home / "squadra.toml").write_text(
+        '[board]\nprovider = "ado"\nclaim_scope = "whole-board"\n', encoding="utf-8"
+    )
+
+    def no_live_az(_self: AzCliAdo) -> None:
+        return None
+
+    monkeypatch.setattr(AzCliAdo, "validate_config", no_live_az)
+
+    rc, out, err = _main(
+        capsys, "partial-items", "--requests-file", _write_requests(fleet_home, [])
+    )
+
+    assert (rc, out) == (1, "")
+    _assert_one_error_line(err, "partial-items", "NotImplementedError")

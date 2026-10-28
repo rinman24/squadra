@@ -119,6 +119,18 @@ definition of scope.
   - A row withdrawn before its crashed create is finished leaves its partial
     item for good: unclaimable, invisible to the planner, its Origin never
     reused. `squadra board origins` names each one on stderr (SQ4).
+- Note, SQ8 (2026-10-27, ledger N31; claude-skills DB-D13): `IncrementBoard`
+  grew a read, `partial_items(requests)`, that reports each partial item with
+  the verdict `queue_increment` would give the request naming its Origin
+  (`check_queue_finishes`' own rule, through `refusal_to_finish`). For this
+  read only, squadra now maps predecessor Origins to item ids
+  (`engines.item_ids_carrying`, over the same `items_with_origin` read), so a
+  planner can ask before its first write, when some predecessors have no id
+  yet. The map drops an Origin no item carries, which is sound only for
+  N14's subset check (a board never reuses an item id); no queue path uses
+  it. Only `IncrementBoard` reads `items_with_origin`, so decision 2 holds.
+  Additive, as SQ5e's `parent_in_claim_scope`: the three verbs and their
+  signatures are unchanged.
 - Open (ledger N10): `withdraw_increment` reads the state, then writes it. The
   ticker can claim the item in between, leaving an item WITHDRAWN while a
   runner works on it. Closing that gap needs a compare-and-set write from the
