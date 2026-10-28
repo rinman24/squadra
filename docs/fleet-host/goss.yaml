@@ -1,8 +1,9 @@
 # goss.yaml — executable on-host acceptance for the squadra fleet-host (ADR-0002 §11).
 #
-# Run on the fleet-host VM (Docker + systemd are VM-only) after fleet-host-activate.sh:
-#   export FLEET_KEY_VAULT=fleet-kv
-#   goss -g goss.yaml validate
+# Run on the fleet-host VM (Docker + systemd are VM-only) after fleet-host-activate.sh,
+# with the fleet's name from the env file (the units are squadra-<name>.*, N34):
+#   set -a; . /opt/squadra/fleet-host.env; set +a
+#   goss -g goss.yaml --vars-inline "{\"fleet_name\": \"$FLEET_NAME\"}" validate
 # See SMOKE.md for the pinned, checksum-verified goss install and the full procedure.
 #
 # This codifies the host-side acceptance. The agent-env minimization (the PAT never
@@ -15,21 +16,29 @@ package:
     installed: true
 
 file:
-  /etc/systemd/system/squadra.service:
+  /etc/systemd/system/squadra-{{.Vars.fleet_name}}.service:
     exists: true
     contains:
       - "Type=oneshot"
       - "/squadra fleet-tick"
       - "Environment=FLEET_KEY_VAULT="
+      # fleet-tick refuses a checkout whose [fleet] name differs (N35).
+      - "Environment=FLEET_INSTALLED_NAME={{.Vars.fleet_name}}"
       # No secret material is ever written into the unit (ADR-0002 §11): the ADO PAT
       # is fetched in-process at tick time, never persisted. (squadra installs from
       # public PyPI, so there is no install-time credential to leak either.)
       - "!/AZURE_DEVOPS_EXT_PAT/"
-  /etc/systemd/system/squadra.timer:
+  /etc/systemd/system/squadra-{{.Vars.fleet_name}}.timer:
     exists: true
     contains:
-      - "Unit=squadra.service"
+      - "Unit=squadra-{{.Vars.fleet_name}}.service"
       - "OnUnitActiveSec="
+  # The unnamed units from before fleet names are gone; left in place they tick
+  # the same repository a second time (SMOKE.md, "Upgrading a host").
+  /etc/systemd/system/squadra.service:
+    exists: false
+  /etc/systemd/system/squadra.timer:
+    exists: false
   /opt/squadra/venv/bin/squadra:
     exists: true
     mode: "0755"
@@ -39,9 +48,9 @@ service:
     enabled: true
     running: true
   # Installed but deliberately NOT enabled — fleet activation is a separate,
-  # deliberate `systemctl enable --now squadra.timer` (decision 16). Flip the
+  # deliberate `systemctl enable --now squadra-<name>.timer` (decision 16). Flip the
   # expectations below to `true` only after the fleet is intentionally activated.
-  squadra.timer:
+  squadra-{{.Vars.fleet_name}}.timer:
     enabled: false
     running: false
 
@@ -60,11 +69,13 @@ command:
     exit-status: 0
   # The load-bearing end-to-end gate: a dry-run tick runs UNDER systemd (transient
   # unit, no enabled timer), which exercises fleet-tick's KV secret fetch + app-repo
-  # sync + the non-mutating tick. Exit 0 == secrets pulled, repo synced, tick planned.
+  # sync + the installed-name check + the non-mutating tick. Exit 0 == secrets
+  # pulled, repo synced, the clone's [fleet] name is the units', tick planned.
   dry-run-tick-under-systemd:
     exec: >
       systemd-run --wait --collect --quiet
       --setenv=FLEET_KEY_VAULT="$FLEET_KEY_VAULT"
+      --setenv=FLEET_INSTALLED_NAME={{.Vars.fleet_name}}
       --property=EnvironmentFile=/opt/squadra/fleet-host.env
       /opt/squadra/venv/bin/squadra fleet-tick --dry-run
     exit-status: 0
