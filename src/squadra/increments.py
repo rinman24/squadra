@@ -8,7 +8,9 @@ contract. It applies the rules once, here, over the raw
 them:
 
 - claim scope (DB-D1 A2): a verb never writes outside ``[board].claim_scope``,
-  using the tick's own definition (:func:`~squadra.engines.parent_in_claim_scope`);
+  using the tick's own definition (:func:`~squadra.engines.parent_in_claim_scope`),
+  and :meth:`IncrementBoard.parent_in_claim_scope` answers the same question
+  for a parent before any write (claude-skills DB-D12, SQ5e);
 - the transition rule (ADR-0004, DB-D2): withdrawal goes through
   :func:`~squadra.engines.check_transition`, so only a QUEUED increment can be
   withdrawn, and only by its Origin (SQ2c, ledger N7);
@@ -19,8 +21,8 @@ them:
 Every refusal raises before any write. The Origin is opaque: squadra stores it
 and compares it for equality, never parses it. The contract is per board: a
 predecessor on another board is not visible here. ``squadra board
-{queue,withdraw,origins}`` (:mod:`squadra.cli`, SQ4) exposes these verbs as
-``docs/board-writes/verb-contract.md`` specifies.
+{queue,withdraw,origins,scope}`` (:mod:`squadra.cli`, SQ4, SQ5e) exposes these
+verbs as ``docs/board-writes/verb-contract.md`` specifies.
 """
 
 from collections.abc import Sequence
@@ -41,7 +43,11 @@ from squadra.engines import (
 
 
 class IncrementBoard:
-    """``queue_increment``, ``withdraw_increment`` and ``increments_by_origin`` on one board."""
+    """``queue_increment``, ``withdraw_increment`` and ``increments_by_origin`` on one board.
+
+    Plus one read, :meth:`parent_in_claim_scope`, so a planner can ask before
+    its first queue whether a parent is in scope (SQ5e).
+    """
 
     def __init__(
         self, board: BoardAccess, claim_scope: ClaimScope, parent_scope_ids: tuple[int, ...]
@@ -73,7 +79,7 @@ class IncrementBoard:
             title=title,
             body=body,
         )
-        if not self._in_scope(parent):
+        if not self.parent_in_claim_scope(parent):
             raise ClaimScopeRefusedError(
                 f"cannot queue origin {origin!r} under #{parent}: the parent is outside "
                 f"[board].claim_scope ({self._scope_text()})"
@@ -112,7 +118,7 @@ class IncrementBoard:
                 f"cannot withdraw origin {origin!r}: no increment on the board carries it{partial}"
             )
         item_id: int = record.item_id
-        if not self._in_scope(record.parent):
+        if not self.parent_in_claim_scope(record.parent):
             raise ClaimScopeRefusedError(
                 f"cannot withdraw origin {origin!r} (#{item_id}): its parent #{record.parent} "
                 f"is outside [board].claim_scope ({self._scope_text()}). To withdraw it: "
@@ -162,7 +168,16 @@ class IncrementBoard:
         )
         return increments, partial_items
 
-    def _in_scope(self, parent: int | None) -> bool:
+    def parent_in_claim_scope(self, parent: int | None) -> bool:
+        """Whether an item under ``parent`` is inside ``[board].claim_scope``; reads nothing.
+
+        The one predicate behind :meth:`queue_increment`'s and
+        :meth:`withdraw_increment`'s :class:`ClaimScopeRefusedError` and
+        :attr:`Increment.in_claim_scope` (both
+        :func:`~squadra.engines.parent_in_claim_scope` on this board's scope),
+        so ``squadra board scope`` and ``queue`` never disagree (claude-skills
+        DB-D12, SQ5e). The scope itself stays squadra's: only the answer leaves.
+        """
         return parent_in_claim_scope(parent, self._claim_scope, self._parent_scope_ids)
 
     def _scope_text(self) -> str:

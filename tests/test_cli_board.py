@@ -1,4 +1,4 @@
-"""``squadra board {queue,withdraw,origins}`` end to end on ``provider = "fake"`` (SQ4).
+"""``squadra board {queue,withdraw,origins,scope}`` end to end on ``provider = "fake"`` (SQ4, SQ5e).
 
 Every test runs the real CLI (``cli.main`` in-process, or ``python -m
 squadra.cli`` in a subprocess, one process per verb as design-to-board calls
@@ -192,6 +192,43 @@ def test_origins_reports_every_bucket_and_names_partial_items_on_stderr(
     assert _snapshot(fleet_home) == before
 
 
+@pytest.mark.parametrize(
+    ("scope_toml", "parent", "in_scope"),
+    [
+        ('claim_scope = "whole-board"\n', 1, True),
+        ('claim_scope = "whole-board"\n', 2, True),
+        ('claim_scope = "parents"\nparent_scope_ids = [1]\n', 1, True),
+        ('claim_scope = "parents"\nparent_scope_ids = [1]\n', 2, False),
+    ],
+    ids=["whole-board-1", "whole-board-2", "parents-1-in", "parents-1-out"],
+)
+def test_scope_says_in_scope_exactly_when_queue_is_not_refused_for_scope(
+    fleet_home: Path,
+    capsys: pytest.CaptureFixture[str],
+    scope_toml: str,
+    parent: int,
+    in_scope: bool,
+) -> None:
+    """claude-skills DB-D12 (SQ5e, Juval): ``scope`` and ``queue`` never disagree."""
+    (fleet_home / "squadra.toml").write_text(
+        '[board]\nprovider = "fake"\n' + scope_toml + _STATES_TOML, encoding="utf-8"
+    )
+    _seed(fleet_home, _SEEDED_ITEMS)
+    before: bytes | None = _snapshot(fleet_home)
+
+    rc, out, err = _main(capsys, "scope", "--parent", str(parent))
+
+    assert (rc, err) == (0, "")  # a read: exit 0 whether in scope or not
+    assert json.loads(out) == {"parent": parent, "in_claim_scope": in_scope}
+    assert _snapshot(fleet_home) == before
+    rc, out, err = _main(
+        capsys, *_queue_args("A:NEW", parent=parent), "--body-file", str(fleet_home / "body.md")
+    )
+    refused_for_scope: bool = rc == 3 and "outside [board].claim_scope" in err
+    assert refused_for_scope is not in_scope
+    assert rc == (0 if in_scope else 3), err
+
+
 # --- exit 3: refused by a rule, nothing written --------------------------------------
 
 
@@ -250,6 +287,8 @@ def test_a_refused_verb_exits_3_and_leaves_the_file_byte_identical(
         ([*_queue_args("A:I1"), "--body-file", "missing.md"], "squadra board queue: "),
         (["withdraw"], "squadra board withdraw: "),
         (["origins", "--bogus"], "squadra board origins: "),
+        (["scope"], "squadra board scope: "),
+        (["scope", "--parent", "x"], "squadra board scope: "),
         (["nonsense"], "squadra board: "),
     ],
     ids=[
@@ -259,6 +298,8 @@ def test_a_refused_verb_exits_3_and_leaves_the_file_byte_identical(
         "missing-body-file",
         "no-origin",
         "extra",
+        "scope-no-parent",
+        "scope-bad-parent",
         "bad-verb",
     ],
 )
@@ -273,15 +314,20 @@ def test_a_usage_error_exits_2_on_one_prefixed_line_without_touching_the_board(
     assert not fake_board_path(fleet_home).exists()
 
 
-def test_a_config_error_exits_2(fleet_home: Path, capsys: pytest.CaptureFixture[str]) -> None:
+@pytest.mark.parametrize(
+    "argv", [["origins"], ["scope", "--parent", "200"]], ids=["origins", "scope"]
+)
+def test_a_config_error_exits_2(
+    fleet_home: Path, capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
     (fleet_home / "squadra.toml").write_text(
         '[board]\nprovider = "fake"\n' + _STATES_TOML, encoding="utf-8"
     )  # no claim_scope: ConfigError, fail closed
 
-    rc, out, err = _main(capsys, "origins")
+    rc, out, err = _main(capsys, *argv)
 
     assert (rc, out) == (2, "")
-    _assert_one_error_line(err, "origins", "claim_scope")
+    _assert_one_error_line(err, argv[0], "claim_scope")
 
 
 def test_a_board_validation_error_exits_2(
@@ -294,6 +340,19 @@ def test_a_board_validation_error_exits_2(
 
     assert (rc, out) == (2, "")
     _assert_one_error_line(err, "withdraw", "Dropped")
+    assert _snapshot(fleet_home) == before
+
+
+def test_scope_runs_validate_config_before_answering(
+    fleet_home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed(fleet_home, _SEEDED_ITEMS, states=["Backlog", "Doing", "Done"])  # no "Dropped"
+    before: bytes | None = _snapshot(fleet_home)
+
+    rc, out, err = _main(capsys, "scope", "--parent", "200")
+
+    assert (rc, out) == (2, "")
+    _assert_one_error_line(err, "scope", "Dropped")
     assert _snapshot(fleet_home) == before
 
 
@@ -316,6 +375,24 @@ def test_ado_write_primitives_exit_1(
 
     assert (rc, out) == (1, "")
     _assert_one_error_line(err, "origins", "NotImplementedError")
+
+
+def test_scope_exits_1_on_a_provider_failure(
+    fleet_home: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (fleet_home / "squadra.toml").write_text(
+        '[board]\nprovider = "ado"\nclaim_scope = "whole-board"\n', encoding="utf-8"
+    )
+
+    def az_down(_self: AzCliAdo) -> None:
+        raise RuntimeError("az: connection refused")
+
+    monkeypatch.setattr(AzCliAdo, "validate_config", az_down)
+
+    rc, out, err = _main(capsys, "scope", "--parent", "200")
+
+    assert (rc, out) == (1, "")
+    _assert_one_error_line(err, "scope", "RuntimeError", "connection refused")
 
 
 def test_a_crashed_queue_exits_1_and_a_retry_in_a_second_process_finishes_it(

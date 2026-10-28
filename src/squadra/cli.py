@@ -28,8 +28,8 @@ into one surface (ADR-0001 decision 3), superseding the earlier thin
 - ``squadra increment {init|update|heartbeat|show}`` — the per-increment
   ``status.json`` ops (the new noun replacing the retired ``squadra-status``
   console script).
-- ``squadra board {queue|withdraw|origins}`` — the increment verbs an outside
-  planner calls (board-writes SQ4, ``docs/board-writes/verb-contract.md``): thin
+- ``squadra board {queue|withdraw|origins|scope}`` — the increment verbs an outside
+  planner calls (board-writes SQ4, SQ5e, ``docs/board-writes/verb-contract.md``): thin
   Clients over :class:`squadra.increments.IncrementBoard`, which holds every
   rule. stdout is one JSON document; an error is one stderr line prefixed
   ``squadra board <verb>:``; exit ``0`` done, ``2`` usage or configuration,
@@ -177,7 +177,9 @@ def _build_parser() -> tuple[argparse.ArgumentParser, frozenset[str]]:
     )
     # add_help=False: `squadra board <verb> --help` passes through to _board_parser.
     subparsers.add_parser(
-        "board", add_help=False, help="increment verbs on the board {queue|withdraw|origins}"
+        "board",
+        add_help=False,
+        help="increment verbs on the board {queue|withdraw|origins|scope}",
     )
 
     return parser, frozenset(_FLEETCTL_SUBCOMMANDS)
@@ -421,6 +423,8 @@ def _board_parser() -> _BoardArgumentParser:
     withdraw = verbs.add_parser("withdraw", help="withdraw the QUEUED increment carrying --origin")
     withdraw.add_argument("--origin", required=True, help="the Origin to withdraw")
     verbs.add_parser("origins", help="every Origin on the board, as JSON")
+    scope = verbs.add_parser("scope", help="whether --parent is inside the claim scope (a read)")
+    scope.add_argument("--parent", type=int, required=True, help="parent item id to ask about")
     return parser
 
 
@@ -512,6 +516,9 @@ def _run_board_verb(
     if verb == "withdraw":
         withdrawn: int = increments.withdraw_increment(args.origin)
         return {"item_id": withdrawn, "lifecycle": Lifecycle.WITHDRAWN.value}
+    if verb == "scope":
+        parent: int = args.parent
+        return {"parent": parent, "in_claim_scope": increments.parent_in_claim_scope(parent)}
     by_origin, partial_items = increments.increments_and_partial_items()
     for record in partial_items:
         print(

@@ -140,6 +140,30 @@ def test_queue_increment_under_whole_board_takes_any_parent(board: BoardAccess) 
     assert board.item_links(item_id).parent_id == OUT
 
 
+@pytest.mark.parametrize("whole_board", [True, False], ids=["whole-board", "parents"])
+@pytest.mark.parametrize("parent", [P, OUT], ids=["in", "out"])
+def test_parent_in_claim_scope_agrees_with_queue_and_the_reported_scope(
+    board: BoardAccess, whole_board: bool, parent: int
+) -> None:
+    """claude-skills DB-D12 (SQ5e): the read, queue's refusal and ``in_claim_scope`` agree."""
+    verbs: IncrementBoard = _whole_board(board) if whole_board else _verbs(board, P)
+    seeded: int = _whole_board(board).queue_increment("A:SEEDED", parent, (), "S", "")
+    before: int = _origin_count(board)
+
+    answer: bool = verbs.parent_in_claim_scope(parent)
+
+    assert answer is (whole_board or parent == P)
+    assert _origin_count(board) == before  # a read: nothing written
+    reported: Increment = verbs.increments_by_origin()["A:SEEDED"]
+    assert (reported.item_id, reported.in_claim_scope) == (seeded, answer)
+    if answer:
+        verbs.queue_increment("A:NEW", parent, (), "N", "")
+    else:
+        with pytest.raises(ClaimScopeRefusedError):
+            verbs.queue_increment("A:NEW", parent, (), "N", "")
+    assert _origin_count(board) == before + int(answer)
+
+
 def test_queue_increment_retried_with_identical_arguments_returns_the_same_item(
     board: BoardAccess,
 ) -> None:
