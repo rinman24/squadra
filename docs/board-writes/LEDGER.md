@@ -37,7 +37,7 @@ Under ~100K tokens per session, hard ceiling 120K, one unit per session.
 | SQ5g | From SQ5f's cut: `[[boards]]`, ruled (A′) by Rich (N34): one fleet per repository, no `[[boards]]`. Build a required `[fleet] name` (no default, no env or flag layer, scaffolded empty) with every host-global name derived from it (`squadra-<name>.service`/`.timer` with `install-units` refusing to overwrite a unit for another `FLEET_HOME`, compose project `squadra-<name>-increment-<id>`, `tag_prefix` defaulting to `<name>:`, `fleetctl.sh`'s tmux names); the name stamped into `fleet_root`, the tick refusing a differing stamp, or no stamp with increment dirs and no explicit `tag_prefix`, while increment dirs exist; GitHub `validate_config()` fails closed unless the board's repository is `origin`; README Scoping; Eric's Fleet glossary entry, settled row and header | D | SQ5f2; Rich's N34 ruling (2026-10-28) | done (PR #67); N35. No cut: all five items and both of Eric's additions built |
 | SQ5g2 | From Rich's N34 ruling: `install-units` refuses a second fleet on the host whose board repository matches an existing fleet's (Juval's first branch: issue numbers are per repository, so two fleets on one repository would be two fleets on one issue). No `{fleet}` in the branch template | D | SQ5g | done (PR #68); N36. No cut: all three items built (the repository refusal, the installed-name check, the fleet-host acceptance and upgrade steps) |
 | SQ6 | claude-skills DB7 finding (i): `squadra init --check` validated with `--provider`'s default `ado`, not the toml's provider. `--provider` now defaults to `None`; the scaffold falls back to `ado`, and the check passes `None` so `load_config`'s precedence (toml < env < flag) holds. Tests: toml wins with no flag or env, `FLEET_PROVIDER` beats the toml, the flag beats both | — (DB7) | — | done (PR #56); N29 |
-| SQ7 | claude-skills DB7 finding (iii), Juval's option D (board-knowledge `sessions/2026-10-27-juval-squadra-init-preflight-findings.md`): host-side git credentials are ADO-shaped (`repo._CREDENTIAL_HELPER` supplies `$AZURE_DEVOPS_EXT_PAT`), and the claim's own fetch (`worktree.py:107`) bypasses that helper, so the preflight and the claim auth differently. Put credential acquisition for host-side git ops behind one boundary, resolved from the target remote's host rather than the board provider (an ADO board over a GitHub repo is valid). The probe and every host-side clone, fetch and push go through it, so the "exact auth path" claim is true. Keep it fail-closed. The rejection message names the credential actually used. Rename the `_ado_*` probe symbols and sweep ADO assumptions outside `board.py` (e.g. the `scaffold.py` comment on the provider PAT). Not wanted: relabelling the log line, skipping the probe when the provider isn't ADO (silent broadening on the claim path), folding into SQ5f. Latent on Rich's Mac (SSH origin, N29); must land before the first live GitHub tick over an HTTPS origin | — (DB7) | SQ5f, for order only: no design dependency, but both edit `TickSeams` on this branch | todo; `handoffs/SQ7-host-git-credentials.md` |
+| SQ7 | claude-skills DB7 finding (iii), Juval's option D (board-knowledge `sessions/2026-10-27-juval-squadra-init-preflight-findings.md`): host-side git credentials are ADO-shaped (`repo._CREDENTIAL_HELPER` supplies `$AZURE_DEVOPS_EXT_PAT`), and the claim's own fetch (`worktree.py:107`) bypasses that helper, so the preflight and the claim auth differently. Put credential acquisition for host-side git ops behind one boundary, resolved from the target remote's host rather than the board provider (an ADO board over a GitHub repo is valid). The probe and every host-side clone, fetch and push go through it, so the "exact auth path" claim is true. Keep it fail-closed. The rejection message names the credential actually used. Rename the `_ado_*` probe symbols and sweep ADO assumptions outside `board.py` (e.g. the `scaffold.py` comment on the provider PAT). Not wanted: relabelling the log line, skipping the probe when the provider isn't ADO (silent broadening on the claim path), folding into SQ5f. Latent on Rich's Mac (SSH origin, N29); must land before the first live GitHub tick over an HTTPS origin | — (DB7) | SQ5f, for order only: no design dependency, but both edit `TickSeams` on this branch | done (PR #PRNUM); N37. No cut: the boundary, the worktree fetch through it, fail-closed, the renames and the sweep all built |
 | SQ8 | claude-skills DB-D13 (DB11; Rich's ruling of Juval's "A second break in the same rule", board-knowledge `sessions/2026-10-27-juval-first-run-parent-scope.md`): report partial items as data, in a fixed format, instead of only `squadra board origins`' one stderr line per partial item (N18), which is not contract. The case: a first run stops mid-create of a queue, leaving a partial item; the map is revised (a title changes); `increments_by_origin` leaves the partial item out, so design-to-board's re-run takes the first-run path, its checks pass, and `queue` is refused (`QueueRefusedError`, exit 3) with a fix that loops. Each entry carries at least the item id and the Origin, and enough for a caller to tell whether a `queue_increment` with given arguments would finish it or be refused under N14's retry rule; better, keep that judgment in squadra behind `check_queue_finishes`, as SQ5e did for scope. Verb or shape is this effort's to settle (`/ask-juval`, `/ask-eric` if wanted); not in `origins`' `{origin: …}` shape, for the reason DB-D12 kept scope out of it. Add it to `verb-contract.md`; the fake answers it too. Unblocks claude-skills DB11 (S9), which first probes the loop on the fake | — (DB11) | — (scheduled around SQ5f, Rich's call; never alongside another unit on this branch) | done (PR #62); N32 |
 | SQ9 | SQ8b's finding (N32): `squadra board queue --body-file PATH` read the file in text mode, whose universal newlines turned `\r\n` into `\n`, so a CRLF body was not passed exactly as given (N19) and a planner's own CRLF body would then meet an A3 or N14 refusal. Read the bytes and decode UTF-8 (shared with `partial-items --requests-file`); a body file that is not UTF-8 is exit 2 like any unreadable `--body-file`, not a traceback. Stdin already kept `\r\n` | — (SQ8b) | SQ8 | done (PR #63); N33 |
 
@@ -1118,6 +1118,87 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
   - Still out of reach: two hosts on one repository (Choice 4's shelved case),
     and a fleet whose remote is not GitHub- or ADO-shaped, which refuses
     whenever a second fleet is on the host.
+- N37 (SQ7, claude-skills DB7 (iii)): **one credential boundary for
+  host-side git, Juval's option D as Rich chose (N29).**
+  - **The boundary.** `squadra.remote_auth` (pure): `credential_for(url)`
+    returns a `RemoteCredential` (kind, host, the `-c` overrides) keyed on the
+    remote's host and transport only, never `[board].provider`;
+    `remote_git_argv(credential, *args, work_dir=)` wraps `host_git_argv`, so
+    the hooks guard comes first on every authenticated op. `repo.TargetRemote`
+    resolves `FLEET_HOME`'s remote once per call through `target_remote_url`
+    and serves both `probe()` (the supervisor's `ls-remote`) and
+    `credential()` (the claim's worktree fetch). `build_seams` builds one
+    `TargetRemote` for both, so the probe now runs the claim's auth path.
+    `GitWorktreeAccess` takes a required `credential` (no default), so a fetch
+    can't fall back to ambient credentials. The bootstrap clone and fetch
+    (`ensure_app_repo`) go through it too.
+  - **Per remote.** ADO HTTPS (`dev.azure.com`, `<org>.visualstudio.com`):
+    the `$AZURE_DEVOPS_EXT_PAT` helper, byte-for-byte (pinned by test).
+    github.com HTTPS: reset inherited helpers, then `!gh auth git-credential`.
+    SSH to `github.com`, `ssh.dev.azure.com` or `vs-ssh.visualstudio.com`: no
+    `-c` override, so the host's ssh key (ssh-agent / `~/.ssh`) answers, and
+    the probe passes on ssh-agent as N29 found on Rich's Mac. Anything else
+    has no credential and fails closed (probe not-OK without running git; no
+    fetch; no clone): another host, a local path, `file://`, and plain `http`
+    (a narrowing: an `http://` ADO remote used to get the PAT in clear).
+    An SSH remote to any other host also fails closed now, where it used to
+    pass on ssh. That is a narrowing too, and deliberate.
+  - **GitHub HTTPS credential source: `gh auth git-credential`, built without a
+    ruling, for Rich to confirm.** The handoff said to propose an existing
+    source, and put any new secret or env name to Rich first. The GitHub board
+    adapter already authenticates through gh (`GH_TOKEN`/`GITHUB_TOKEN`, else
+    the `gh auth login` session), so this adds no secret or env name; the git
+    credential and the board credential are now the same token. Both HTTPS
+    helpers reset inherited helpers first, so a keychain can't answer in their
+    place, and the probe tests exactly what the fetch will use. **Open, not
+    built:** the fleet-host's Key Vault bootstrap (`secrets.py`) fetches only
+    the ADO PAT and the Anthropic key. A GitHub fleet on the fleet-host needs gh
+    logged in for the unit's user or `GH_TOKEN` in its environment, which the
+    board adapter needs already. Bootstrapping a GitHub token from Key Vault
+    would be a new secret name: Rich's call, and its own row if wanted.
+  - **Rejection lines name the credential tried**, by host only, never the URL
+    (an HTTPS URL can carry a token; tested). ADO: the pre-SQ7 Key Vault
+    rotation line, unchanged byte for byte. github.com: "github.com token from
+    the gh CLI rejected …", pointing at `gh auth status` and `GH_TOKEN` / `gh
+    auth login`. SSH: "ssh key for <host> rejected …", pointing at `ssh -T`.
+    No credential: "no git credential for the target remote (host: <host>)",
+    naming the two supported hosts.
+  - **Renames.** `_ado_pat_ok` → `_remote_auth_probe`,
+    `_ado_pat_rejected_message()` → `_remote_auth_rejected_message(probe)`,
+    `TickSeams.pat_ok: () -> bool` → `TickSeams.remote_auth: () ->
+    RemoteAuthProbe`, `_dry_run_pat_ok` → `_dry_run_remote_auth`. The dry-run
+    line now reads "WOULD run the git remote auth preflight", which is
+    accurate now that the probe behind it changed (Juval's point: no relabel
+    on its own). `repo._CREDENTIAL_HELPER` → `remote_auth.ADO_PAT_HELPER`.
+    `tests/test_supervisor_pat_preflight.py` →
+    `tests/test_supervisor_remote_preflight.py`.
+  - **ADO behaviour otherwise kept.** The clone, fetch and `ls-remote` argv are
+    identical. One addition: `ensure_app_repo`'s fetch first reads `git remote
+    get-url origin` (local) to key the credential on `origin` rather than
+    assume the clone URL's. The claim's worktree fetch on an ADO HTTPS
+    remote now presents the PAT instead of ambient credentials. That is the
+    fix, and a dead PAT already failed the probe before any claim.
+  - **Sweep.** README Supervisor section (a per-remote credential table, the
+    remote preflight, per-host rejection lines), the env-only knobs line, the
+    #193 threat-model paragraph, the dry-run text; the `scaffold.py` toml
+    comment; `git_host`'s push contract now reads `remote_git_argv(credential,
+    "push", …)` with `TargetRemote.credential()`, the seam push uses when it
+    is wired; supervisor docstrings. Left as is, because they're accurate:
+    `secrets.py` and `cli.py` describe the Key Vault bootstrap, which does
+    fetch the ADO PAT. `git_host.with_hooks_guard` has no production caller
+    any more. I kept it, since its test is part of the hook-hardening suite.
+  - Tests: `tests/test_remote_auth.py` (resolution table by host and
+    transport; unknown host, `http`, local path, `file://` and unknown SSH host
+    have none; the ADO helper byte-for-byte; the probe and the worktree fetch
+    present the same `-c` overrides for ADO HTTPS, GitHub HTTPS and SSH;
+    unknown host and no remote fail closed with no git op; a rejected
+    credential is named; the URL never in the result; `build_seams` with a
+    GitHub board over an ADO origin and the reverse, real local git for
+    `origin`, picks the credential by remote). Per-host rejection lines in
+    the preflight tests; unknown-host clone and fetch fail closed in
+    `test_repo.py`. The #193 hook-hardening tests pass unchanged except that
+    the real-git worktree test now passes a stand-in credential (its origin
+    is a local bare repo). Not run: no live tick, no probe on Rich's Mac.
 
 ## Session log
 
@@ -1150,3 +1231,4 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
 | N34 ruling | 2026-10-28 | SQ5f2 | PR #66. At Rich's request after PR #65 merged. Branch fast-forwarded to `main` (`70d9908`). Rich ruled (A′), Eric's names and both additions, SQ5g then SQ5g2. Juval's blocking question 2 checked against GitHub's documentation by two subagents: numbers per repository (one-number-one-issue inferred, reuse undocumented), an issue on several Projects (the adapter already reads only its own project's item). Choice filled in both session files. N34, SQ5g row, new SQ5g2 row, SQ5g handoff narrowed to (A′). No code | `handoffs/SQ5g-boards.md` (gate: this PR merged) |
 | SQ5g | 2026-10-28 | SQ5g | PR #67. Gate checked (PR #66 merged; only dependabot PRs open). Branch fast-forwarded to `main` (`6c6d67c`). Built (A′) as ruled: required `[fleet] name`; units, compose project, default `tag_prefix` and tmux ticker derived from it; `install-units --fleet-name` refusing another fleet's unit; `fleet_root` stamp with the unstamped refusal; GitHub `validate_config()` checks `origin`. README Scoping, Eric's Fleet glossary entry, header and settled row. Juval's acceptance test, mutation-checked. N35. No cut. ruff, pyright, 1131 tests green | `handoffs/SQ5g2-one-fleet-per-repository.md` (gate: this PR merged) |
 | SQ5g2 | 2026-10-28 | SQ5g2 | PR #68. Gate checked (PR #67 merged). Branch fast-forwarded to `main` (`ce35dcd`). `install-units` refuses a fleet whose repository another fleet's service on the host serves, the unnamed pre-SQ5g unit included, failing closed when either repository is unresolvable; repositories compared by `repo.repository_identity` (ADO `org/project/repo`, GitHub `owner/name`). N35's residue closed: the service carries `FLEET_INSTALLED_NAME` and `fleet-tick` refuses a differing `[fleet] name`. goss / SMOKE templated on the name, with the upgrade steps. N36. No cut. ruff, pyright, tests green | `handoffs/SQ7-host-git-credentials.md` (existing; gate widened to SQ5g2) |
+| SQ7 | 2026-10-28 | SQ7 | PR #PRNUM. Gate checked (SQ5f PR #64, SQ5g PR #67, SQ5g2 PR #68 merged). Branch fast-forwarded to `main` (`6eb201f`). Built Juval's option D: `remote_auth.credential_for` keyed on the remote's host and transport, `repo.TargetRemote` behind both the probe and the claim's worktree fetch, fail-closed on any other remote, rejection lines per credential, the `_ado_pat_*` / `pat_ok` renames and the ADO-assumption sweep. GitHub HTTPS uses `gh auth git-credential` (no new secret or env name; for Rich to confirm). N37. No cut. ruff, pyright, 1199 tests green | — (no board-writes row left open; N37's fleet-host GitHub token is Rich's call) |
