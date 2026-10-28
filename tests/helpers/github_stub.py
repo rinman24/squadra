@@ -40,6 +40,8 @@ from squadra.github_board import (
 REPOSITORY: str = "acme/widgets"
 PROJECT_OWNER: str = "acme"
 PROJECT_NUMBER: int = 7
+# FLEET_HOME's origin in the tests: the board's own repository (N34).
+ORIGIN_URL: str = f"git@github.com:{REPOSITORY}.git"
 GITHUB_CONFIG: GitHubBoardConfig = GitHubBoardConfig(
     repository=REPOSITORY, project_owner=PROJECT_OWNER, project_number=PROJECT_NUMBER
 )
@@ -366,6 +368,7 @@ class StubbedGitHubBoard(GhApiGitHub):
             tags=tags,
             claim_scope=claim_scope,
             parent_scope_ids=parent_scope_ids,
+            read_origin=lambda: ORIGIN_URL,
         )
         self.state_writes: list[tuple[int, Lifecycle]] = []
 
