@@ -18,6 +18,7 @@ import pytest
 
 from squadra import cli
 import squadra.board as board_module
+from squadra.config import SquadraConfig
 import squadra.repo as repo_module
 import squadra.secrets as secrets_module
 import squadra.supervisor as real_supervisor
@@ -174,6 +175,58 @@ def test_init_check_reports_validation_failure(
     rc: int = cli.main(["init", "--fleet-home", str(tmp_path), "--check"])
     assert rc != 0
     assert "not found" in capsys.readouterr().err
+
+
+def _check_resolves_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, toml_provider: str, check_argv: list[str]
+) -> list[str]:
+    """Scaffold a ``toml_provider`` config, run ``init --check`` with ``check_argv``.
+
+    Returns the providers the board seam was built with (stubbed, no live board).
+    """
+    built: list[str] = []
+
+    class _OkBoard:
+        def validate_config(self) -> None:
+            pass
+
+    def _build(config: SquadraConfig) -> _OkBoard:
+        built.append(config.provider)
+        return _OkBoard()
+
+    monkeypatch.setattr(board_module, "build_board", _build)
+    cli.main(["init", "--fleet-home", str(tmp_path), "--provider", toml_provider])
+    _declare_scope(tmp_path)
+
+    rc: int = cli.main(["init", "--fleet-home", str(tmp_path), "--check", *check_argv])
+    assert rc == 0
+    return built
+
+
+def test_init_check_uses_the_toml_provider_without_a_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # DB5's finding: `--provider` defaulted to "ado" at the flag layer, so a
+    # github squadra.toml was validated as ADO until `--provider github` was passed.
+    monkeypatch.delenv("FLEET_PROVIDER", raising=False)
+    assert _check_resolves_provider(tmp_path, monkeypatch, "github", []) == ["github"]
+
+
+def test_init_check_env_provider_beats_the_toml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FLEET_PROVIDER", "fake")
+    assert _check_resolves_provider(tmp_path, monkeypatch, "github", []) == ["fake"]
+
+
+def test_init_check_provider_flag_beats_env_and_toml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FLEET_PROVIDER", "fake")
+    built: list[str] = _check_resolves_provider(
+        tmp_path, monkeypatch, "github", ["--provider", "ado"]
+    )
+    assert built == ["ado"]
 
 
 def test_increment_show_delegates_to_status_main(monkeypatch: pytest.MonkeyPatch) -> None:

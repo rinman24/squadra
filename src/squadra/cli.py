@@ -106,8 +106,11 @@ def _build_parser() -> tuple[argparse.ArgumentParser, frozenset[str]]:
     )
     init_parser.add_argument(
         "--provider",
-        default=DEFAULT_PROVIDER,
-        help=f"board provider to scaffold for (default: {DEFAULT_PROVIDER})",
+        default=None,
+        help=(
+            f"board provider to scaffold for (default: {DEFAULT_PROVIDER}); with --check, "
+            "overrides the provider squadra.toml / FLEET_PROVIDER resolve to"
+        ),
     )
     init_parser.add_argument(
         "--fleet-home",
@@ -199,11 +202,14 @@ def _cmd_init(args: argparse.Namespace) -> int:
     int
         ``0`` on success; non-zero only on a failed ``--check``.
     """
-    provider: str = args.provider
+    # ``--provider`` is the flag layer: ``None`` when not passed, so the check
+    # resolves the provider through ``load_config`` (toml < env < flag) rather
+    # than pinning the scaffold's default at the highest layer.
+    provider: str | None = args.provider
     fleet_home: Path = args.fleet_home if args.fleet_home is not None else Path.cwd()
 
     results: dict[str, bool] = scaffold.init_project(
-        fleet_home, provider=provider, force=args.force
+        fleet_home, provider=provider or DEFAULT_PROVIDER, force=args.force
     )
     for name, written in results.items():
         status_word: str = "wrote" if written else "skipped (exists; use --force)"
@@ -219,7 +225,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
-def _check_config(fleet_home: Path, provider: str) -> int:
+def _check_config(fleet_home: Path, provider: str | None) -> int:
     """Build the provider and validate the resolved config against the board."""
     # Imported here (not at module top) so this remains the only place that
     # pulls in the board adapter; keeps `squadra increment` / `init` lean and lets
