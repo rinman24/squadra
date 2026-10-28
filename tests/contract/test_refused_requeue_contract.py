@@ -56,7 +56,7 @@ def close(board: StubbedGitHubBoard, item_id: int, reason: str | None) -> None:
 
 def _seams(board: StubbedGitHubBoard, sandbox: FakeSandbox, **overrides: object) -> TickSeams:
     return TickSeams(
-        ado=board,
+        board=board,
         sandbox=sandbox,
         cleanup=FakeCleanup(),
         worktree=FakeWorktree(),

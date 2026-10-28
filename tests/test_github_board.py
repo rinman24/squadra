@@ -245,6 +245,8 @@ def test_validate_config_refuses_a_tag_prefix_covering_the_commit_marker() -> No
         run=InMemoryGitHub(),
         states=GH_STATES,
         tags=Tags("squadra:"),
+        claim_scope=ClaimScope.WHOLE_BOARD,
+        parent_scope_ids=(),
     )
     with pytest.raises(BoardValidationError, match="commit marker"):
         board.validate_config()
@@ -252,7 +254,11 @@ def test_validate_config_refuses_a_tag_prefix_covering_the_commit_marker() -> No
 
 def test_validate_config_fails_on_a_missing_project() -> None:
     board = GhApiGitHub(
-        GitHubBoardConfig(REPOSITORY, "acme", 99), run=InMemoryGitHub(), states=GH_STATES
+        GitHubBoardConfig(REPOSITORY, "acme", 99),
+        run=InMemoryGitHub(),
+        states=GH_STATES,
+        claim_scope=ClaimScope.WHOLE_BOARD,
+        parent_scope_ids=(),
     )
     with pytest.raises(BoardValidationError, match="no project 99"):
         board.validate_config()
@@ -416,7 +422,13 @@ def test_a_workflow_moving_the_status_before_the_read_back_raises_after_the_comm
             github.issues[max(github.issues)].status = "In Progress"
         return out
 
-    board = GhApiGitHub(GITHUB_CONFIG, run=item_added_workflow, states=GH_STATES)
+    board = GhApiGitHub(
+        GITHUB_CONFIG,
+        run=item_added_workflow,
+        states=GH_STATES,
+        claim_scope=ClaimScope.WHOLE_BOARD,
+        parent_scope_ids=(),
+    )
     with pytest.raises(BoardValidationError, match="did not land queued.*Item added to project"):
         board.create_increment(IncrementRequest("A:I1", EPIC, (), "I1", ""))
     assert github.writes[-1][0] == "label"
@@ -528,5 +540,9 @@ def test_the_scaffolded_github_map_validates_against_a_default_project(tmp_path:
     config: SquadraConfig = load_config(config_path=path, fleet_home=tmp_path)
     github = InMemoryGitHub(status_options=("Todo", "In Progress", "Done"))
     GhApiGitHub(
-        GitHubBoardConfig(REPOSITORY, "acme", 7), run=github, states=config.states
+        GitHubBoardConfig(REPOSITORY, "acme", 7),
+        run=github,
+        states=config.states,
+        claim_scope=ClaimScope.WHOLE_BOARD,
+        parent_scope_ids=(),
     ).validate_config()

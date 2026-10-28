@@ -163,14 +163,14 @@ def test_build_seams_wraps_every_mutating_seam_in_dry_run(
 ) -> None:
     config: SquadraConfig = make_config()
     real: TickSeams = build_seams(config)
-    assert isinstance(real.ado, AzCliAdo)
+    assert isinstance(real.board, AzCliAdo)
     assert isinstance(real.sandbox, ComposeSandbox)
     assert isinstance(real.cleanup, DeterministicCleanup)
     assert isinstance(real.worktree, GitWorktreeAccess)
 
     dry: TickSeams = build_seams(config, dry_run=True)
     # Every mutating seam is wrapped by its write-blocking decorator.
-    assert isinstance(dry.ado, ReadOnlyBoard)
+    assert isinstance(dry.board, ReadOnlyBoard)
     assert isinstance(dry.sandbox, DryRunSandbox)
     assert isinstance(dry.cleanup, DryRunCleanup)
     assert isinstance(dry.worktree, DryRunWorktree)

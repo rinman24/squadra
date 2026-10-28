@@ -11,7 +11,16 @@ from pathlib import Path
 
 import pytest
 
-from squadra.config import CONFIG_FILENAME, ClaimScope, ConfigError, SquadraConfig, load_config
+from squadra import engines
+from squadra.config import (
+    CONFIG_FILENAME,
+    ClaimScope,
+    ConfigError,
+    SquadraConfig,
+    item_in_claim_scope,
+    load_config,
+    parent_in_claim_scope,
+)
 from squadra.domain import Lifecycle
 
 
@@ -109,3 +118,39 @@ def test_a_native_state_in_two_buckets_fails(tmp_path: Path) -> None:
             _WHOLE_BOARD + "[board.states]\n"
             'queued = ["New"]\nactive = ["Active"]\ndone = ["Closed"]\nwithdrawn = ["Closed"]\n',
         )
+
+
+# --- the one claim-scope predicate (SQ5f) -----------------------------------------
+
+
+def test_engines_re_exports_the_one_predicate() -> None:
+    """The adapters (via config) and the engines (via re-export) share one function."""
+    assert engines.parent_in_claim_scope is parent_in_claim_scope
+
+
+@pytest.mark.parametrize(
+    ("scope", "ids", "parent", "expected"),
+    [
+        (ClaimScope.PARENTS, (200,), 200, True),
+        (ClaimScope.PARENTS, (200,), 201, False),
+        (ClaimScope.PARENTS, (200,), None, False),
+    ],
+)
+def test_item_in_claim_scope_under_parents_reads_the_parent(
+    scope: ClaimScope, ids: tuple[int, ...], parent: int | None, expected: bool
+) -> None:
+    reads: list[int | None] = []
+
+    def read_parent() -> int | None:
+        reads.append(parent)
+        return parent
+
+    assert item_in_claim_scope(read_parent, scope, ids) is expected
+    assert reads == [parent]
+
+
+def test_item_in_claim_scope_under_whole_board_never_reads_the_parent() -> None:
+    def read_parent() -> int | None:
+        raise AssertionError("whole-board scope does not depend on the parent")
+
+    assert item_in_claim_scope(read_parent, ClaimScope.WHOLE_BOARD, ()) is True

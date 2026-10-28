@@ -25,6 +25,8 @@ The partial-items read (SQ8, ledger N31) is checked against ``queue`` itself:
 it says ``"refuses"`` exactly when ``queue`` raises, with the same message.
 """
 
+from pathlib import Path
+
 import pytest
 
 from squadra.board import BoardAccess, BoardValidationError
@@ -51,7 +53,9 @@ from tests.contract.conftest import (
     LINKED_ID,
     PARENT_ID,
     QUEUED_ID,
+    SHAPES,
     WITHDRAWN_ID,
+    seed_fake,
 )
 from tests.helpers.board_fakes import AdoShapedFakeBoard, SeedableFakeBoard
 
@@ -172,6 +176,36 @@ def test_parent_in_claim_scope_agrees_with_queue_and_the_reported_scope(
         with pytest.raises(ClaimScopeRefusedError):
             verbs.queue_increment("A:NEW", parent, (), "N", "")
     assert _origin_count(board) == before + int(answer)
+
+
+@pytest.mark.parametrize("shape", SHAPES)
+@pytest.mark.parametrize("whole_board", [True, False], ids=["whole-board", "parents"])
+@pytest.mark.parametrize("parent", [P, OUT, None], ids=["in", "out", "none"])
+def test_the_adapters_in_claim_scope_agrees_with_parent_in_claim_scope(
+    shape: str, whole_board: bool, parent: int | None, tmp_path: Path
+) -> None:
+    """SQ5f: the tick's gate (the adapter's answer) and the verbs' predicate agree.
+
+    The adapter is scoped at construction as ``build_board`` scopes it from
+    ``[board]``; ``IncrementBoard`` is built from the same scope, as ``squadra
+    board`` builds it. On every shape the adapter's ``in_claim_scope`` for an
+    item equals ``parent_in_claim_scope`` of its parent and the
+    ``Increment.in_claim_scope`` reported for it.
+    """
+    scope: ClaimScope = ClaimScope.WHOLE_BOARD if whole_board else ClaimScope.PARENTS
+    ids: tuple[int, ...] = () if whole_board else (P,)
+    board: SeedableFakeBoard = seed_fake(shape, tmp_path, claim_scope=scope, parent_scope_ids=ids)
+    verbs: IncrementBoard = IncrementBoard(board, scope, ids)
+    item_id: int = QUEUED_ID  # seeded with no parent
+    if parent is not None:
+        item_id = _whole_board(board).queue_increment("A:SEEDED", parent, (), "S", "")
+
+    answer: bool = verbs.parent_in_claim_scope(parent)
+
+    assert answer is (whole_board or parent == P)
+    assert board.in_claim_scope(item_id) is answer
+    if parent is not None:
+        assert verbs.increments_by_origin()["A:SEEDED"].in_claim_scope is answer
 
 
 def test_queue_increment_retried_with_identical_arguments_returns_the_same_item(

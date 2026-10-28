@@ -125,7 +125,7 @@ def make_seams(
 
     def _factory(**overrides: object) -> TickSeams:
         base = TickSeams(
-            ado=fake_board,
+            board=fake_board,
             sandbox=fake_sandbox,
             cleanup=fake_cleanup,
             worktree=fake_worktree,

@@ -24,7 +24,7 @@ import re
 import subprocess
 from urllib.parse import unquote
 
-from squadra.config import GitHubBoardConfig
+from squadra.config import ClaimScope, GitHubBoardConfig
 from squadra.domain import Lifecycle, Tags
 from squadra.fake_board import InjectedCrashError
 from squadra.github_board import (
@@ -354,10 +354,19 @@ class StubbedGitHubBoard(GhApiGitHub):
         *,
         states: Mapping[Lifecycle, tuple[str, ...]] = GH_STATES,
         tags: Tags = Tags(),
+        claim_scope: ClaimScope = ClaimScope.WHOLE_BOARD,
+        parent_scope_ids: tuple[int, ...] = (),
     ) -> None:
         """Wire the adapter to ``github`` (a fresh, empty stub when omitted)."""
         self.github: InMemoryGitHub = github if github is not None else InMemoryGitHub()
-        super().__init__(GITHUB_CONFIG, run=self.github, states=states, tags=tags)
+        super().__init__(
+            GITHUB_CONFIG,
+            run=self.github,
+            states=states,
+            tags=tags,
+            claim_scope=claim_scope,
+            parent_scope_ids=parent_scope_ids,
+        )
         self.state_writes: list[tuple[int, Lifecycle]] = []
 
     def set_state(self, item_id: int, state: Lifecycle) -> None:

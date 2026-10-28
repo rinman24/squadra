@@ -24,6 +24,7 @@ import pytest
 
 from squadra.board import BoardAccess
 from squadra.cleanup import CleanupAccess, DeterministicCleanup
+from squadra.config import ClaimScope
 from squadra.domain import Lifecycle, SandboxSpec, Tags
 from squadra.worktree import GitWorktreeAccess, WorktreeAccess
 from tests.helpers.board_fakes import (
@@ -62,9 +63,16 @@ PR_BRANCH: str = "feat/increment-103-done"
 PR_URL: str = "https://example.invalid/pr/42"
 
 
-def _seed_ado() -> AdoShapedFakeBoard:
+def _seed_ado(
+    claim_scope: ClaimScope = ClaimScope.WHOLE_BOARD, parent_scope_ids: tuple[int, ...] = ()
+) -> AdoShapedFakeBoard:
     """Build a correctly-configured ADO-shaped board under the shared seed."""
-    board = AdoShapedFakeBoard(states=ADO_STATES_WITH_WITHDRAWN, tags=TAGS)
+    board = AdoShapedFakeBoard(
+        states=ADO_STATES_WITH_WITHDRAWN,
+        tags=TAGS,
+        claim_scope=claim_scope,
+        parent_scope_ids=parent_scope_ids,
+    )
     board.add(QUEUED_ID, "queued increment", Lifecycle.QUEUED)
     board.add(ACTIVE_ID, "active increment", Lifecycle.ACTIVE, tags=(TAGS.claimed,))
     board.add(DONE_ID, "done increment", Lifecycle.DONE)
@@ -80,12 +88,16 @@ def _seed_ado() -> AdoShapedFakeBoard:
     return board
 
 
-def _seed_github() -> GitHubShapedFakeBoard:
+def _seed_github(
+    claim_scope: ClaimScope = ClaimScope.WHOLE_BOARD, parent_scope_ids: tuple[int, ...] = ()
+) -> GitHubShapedFakeBoard:
     """Build a correctly-configured GitHub-shaped board under the shared seed.
 
     The DONE item is seeded under the SECONDARY native done-name on purpose.
     """
-    board = GitHubShapedFakeBoard(tags=TAGS)
+    board = GitHubShapedFakeBoard(
+        tags=TAGS, claim_scope=claim_scope, parent_scope_ids=parent_scope_ids
+    )
     board.add(QUEUED_ID, "queued increment", Lifecycle.QUEUED)
     board.add(ACTIVE_ID, "active increment", Lifecycle.ACTIVE, tags=(TAGS.claimed,))
     board.add(DONE_ID, "done increment", Lifecycle.DONE, native_status="Closed-merged")
@@ -101,7 +113,9 @@ def _seed_github() -> GitHubShapedFakeBoard:
     return board
 
 
-def seed_stubbed_github() -> StubbedGitHubBoard:
+def seed_stubbed_github(
+    claim_scope: ClaimScope = ClaimScope.WHOLE_BOARD, parent_scope_ids: tuple[int, ...] = ()
+) -> StubbedGitHubBoard:
     """Build the real GitHub adapter over an in-memory GitHub under the shared seed.
 
     The DONE item is closed as completed with its Status left at "Done" (as the
@@ -143,12 +157,23 @@ def seed_stubbed_github() -> StubbedGitHubBoard:
     owner: str = REPOSITORY.split("/")[0]
     github.pulls.append(StubPull(f"{owner}:{PR_BRANCH}", "main", PR_URL, merged=True))
     github.pulls.append(StubPull(f"{owner}:feat/closed-unmerged", "main", "x", merged=False))
-    return StubbedGitHubBoard(github, tags=TAGS)
+    return StubbedGitHubBoard(
+        github, tags=TAGS, claim_scope=claim_scope, parent_scope_ids=parent_scope_ids
+    )
 
 
-def seed_file_board(tmp_path: Path) -> RecordingFileBoard:
+def seed_file_board(
+    tmp_path: Path,
+    claim_scope: ClaimScope = ClaimScope.WHOLE_BOARD,
+    parent_scope_ids: tuple[int, ...] = (),
+) -> RecordingFileBoard:
     """Build the registered fake provider under the shared seed, in a fresh file."""
-    board = RecordingFileBoard(tmp_path / ".squadra" / "fake-board.json", tags=TAGS)
+    board = RecordingFileBoard(
+        tmp_path / ".squadra" / "fake-board.json",
+        tags=TAGS,
+        claim_scope=claim_scope,
+        parent_scope_ids=parent_scope_ids,
+    )
     board.add(QUEUED_ID, "queued increment", Lifecycle.QUEUED)
     board.add(ACTIVE_ID, "active increment", Lifecycle.ACTIVE, tags=(TAGS.claimed,))
     board.add(DONE_ID, "done increment", Lifecycle.DONE)
@@ -165,15 +190,20 @@ def seed_file_board(tmp_path: Path) -> RecordingFileBoard:
     return board
 
 
-def seed_fake(shape: str, tmp_path: Path) -> SeedableFakeBoard:
-    """One of the four seedable shapes under the shared seed."""
+def seed_fake(
+    shape: str,
+    tmp_path: Path,
+    claim_scope: ClaimScope = ClaimScope.WHOLE_BOARD,
+    parent_scope_ids: tuple[int, ...] = (),
+) -> SeedableFakeBoard:
+    """One of the four seedable shapes under the shared seed, scoped as given (SQ5f)."""
     if shape == "gh":
-        return seed_stubbed_github()
+        return seed_stubbed_github(claim_scope=claim_scope, parent_scope_ids=parent_scope_ids)
     if shape == "ado":
-        return _seed_ado()
+        return _seed_ado(claim_scope=claim_scope, parent_scope_ids=parent_scope_ids)
     if shape == "github":
-        return _seed_github()
-    return seed_file_board(tmp_path)
+        return _seed_github(claim_scope=claim_scope, parent_scope_ids=parent_scope_ids)
+    return seed_file_board(tmp_path, claim_scope=claim_scope, parent_scope_ids=parent_scope_ids)
 
 
 # The three fakes and the real GitHub adapter over the in-memory GitHub.

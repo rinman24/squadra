@@ -14,6 +14,7 @@ seams have their own fakes in ``sandbox_fakes`` / ``cleanup_fakes`` /
 
 from dataclasses import dataclass, field
 
+from squadra.config import ClaimScope, item_in_claim_scope
 from squadra.domain import (
     CommentEvent,
     IncrementRequest,
@@ -45,13 +46,24 @@ class FakeBoard:
     ``Lifecycle`` for ``items_in_state`` (with a sentinel item id of 0).
     """
 
-    def __init__(self) -> None:
-        """Start with an empty board."""
+    def __init__(
+        self,
+        claim_scope: ClaimScope = ClaimScope.WHOLE_BOARD,
+        parent_scope_ids: tuple[int, ...] = (),
+    ) -> None:
+        """Start with an empty board under ``claim_scope`` (``make_config``'s default)."""
+        self._claim_scope = claim_scope
+        self._parent_scope_ids = parent_scope_ids
         self.issues: dict[int, FakeIssue] = {}
         self.comments: dict[int, list[CommentEvent]] = {}
         self.calls: list[tuple[str, int, object]] = []
         self.completed_prs: dict[str, str] = {}  # branch -> completed PR url
         self.validated: bool = False
+
+    def set_claim_scope(self, claim_scope: ClaimScope, parent_scope_ids: tuple[int, ...]) -> None:
+        """Re-scope the board, as ``build_board`` scopes an adapter from ``[board]``."""
+        self._claim_scope = claim_scope
+        self._parent_scope_ids = parent_scope_ids
 
     def add_issue(self, issue: FakeIssue) -> None:
         """Seed the board with one work item."""
@@ -70,6 +82,12 @@ class FakeBoard:
         """Return the seeded parent / predecessor links."""
         issue: FakeIssue = self.issues[item_id]
         return WorkItemLinks(parent_id=issue.parent_id, predecessor_ids=issue.predecessor_ids)
+
+    def in_claim_scope(self, item_id: int) -> bool:
+        """Answer from the construction-time scope, by the seeded parent link."""
+        return item_in_claim_scope(
+            lambda: self.item_links(item_id).parent_id, self._claim_scope, self._parent_scope_ids
+        )
 
     def completed_pr_url(self, branch: str) -> str | None:
         """Return the seeded completed-PR url for ``branch``, if any."""

@@ -58,6 +58,7 @@ import tempfile
 from typing import Final, TypeVar, cast
 
 from squadra.board import BoardValidationError
+from squadra.config import ClaimScope, item_in_claim_scope
 from squadra.domain import (
     CommentEvent,
     IncrementRequest,
@@ -129,15 +130,20 @@ class JsonFileBoard:
         *,
         states: Mapping[Lifecycle, tuple[str, ...]],
         tags: Tags = Tags(),
+        claim_scope: ClaimScope,
+        parent_scope_ids: tuple[int, ...],
     ) -> None:
         """Open the board at ``path`` under the ``[board.states]`` map ``states``.
 
-        Nothing is read or written until the first call; a missing file is an
-        empty board, created on the first write.
+        ``claim_scope`` and ``parent_scope_ids`` are ``[board]``'s, with no
+        default (WSQ1). Nothing is read or written until the first call; a
+        missing file is an empty board, created on the first write.
         """
         self._path = path
         self._states = states
         self._tags = tags
+        self._claim_scope = claim_scope
+        self._parent_scope_ids = parent_scope_ids
 
     # --- BoardAccess: reads ---------------------------------------------------
 
@@ -158,6 +164,12 @@ class JsonFileBoard:
         """Return the item's parent and predecessor links."""
         item: _Item = self._item(self._read(), item_id)
         return WorkItemLinks(parent_id=item.parent, predecessor_ids=tuple(item.predecessors))
+
+    def in_claim_scope(self, item_id: int) -> bool:
+        """Whether the claim scope covers the item, by its parent link (read only under parents)."""
+        return item_in_claim_scope(
+            lambda: self.item_links(item_id).parent_id, self._claim_scope, self._parent_scope_ids
+        )
 
     def item_state(self, item_id: int) -> Lifecycle:
         """Map the item's native state to its bucket; a partial or unmapped one raises."""

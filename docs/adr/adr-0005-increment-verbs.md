@@ -57,7 +57,10 @@ definition of scope.
 2. `squadra.increments.IncrementBoard` holds **the contract**, the three verbs in
    DB-D4's shape as amended by Rich's N7 and N8 ruling, and applies every rule
    once, using pure functions in `squadra.engines`: `parent_in_claim_scope`
-   (now also the tick's claim gate), `check_transition`, `index_by_origin`
+   (defined beside `ClaimScope` in `squadra.config` since SQ5f and
+   re-exported, so the board adapters' `BoardAccess.in_claim_scope`, the
+   tick's claim gate, use the same function without calling up into the
+   engines), `check_transition`, `index_by_origin`
    (A2), `check_queue_matches` (A3) and `check_queue_finishes` (N8).
    Every refusal raises before any write.
    - `withdraw_increment(origin) -> item_id` goes by Origin, not item id

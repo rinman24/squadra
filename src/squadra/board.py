@@ -24,7 +24,13 @@ import subprocess
 import tempfile
 from typing import Final, Protocol, cast
 
-from squadra.config import ADO_BASIC_STATES, ConfigError, SquadraConfig
+from squadra.config import (
+    ADO_BASIC_STATES,
+    ClaimScope,
+    ConfigError,
+    SquadraConfig,
+    item_in_claim_scope,
+)
 from squadra.domain import (
     Claimed,
     CommentEvent,
@@ -75,6 +81,17 @@ class BoardAccess(Protocol):
 
     def item_links(self, item_id: int) -> WorkItemLinks:
         """Return parent / predecessor links of one work item."""
+        ...
+
+    def in_claim_scope(self, item_id: int) -> bool:
+        """Whether ``[board].claim_scope`` lets the fleet claim this work item.
+
+        The adapter answers from its own construction-time scope, so the
+        supervisor never interprets how a provider expresses scope (WSQ1, SQ5f).
+        Every adapter today answers :func:`~squadra.config.item_in_claim_scope`
+        on the item's parent link, the predicate ``squadra board scope`` and
+        ``queue_increment`` use.
+        """
         ...
 
     def item_state(self, item_id: int) -> Lifecycle:
@@ -262,6 +279,8 @@ class AzCliAdo:
         states: Mapping[Lifecycle, tuple[str, ...]] = ADO_BASIC_STATES,
         base_branch: str = "main",
         tags: Tags = Tags(),
+        claim_scope: ClaimScope,
+        parent_scope_ids: tuple[int, ...],
     ) -> None:
         """Wire the adapter to its command runners and board configuration.
 
@@ -272,7 +291,8 @@ class AzCliAdo:
         the az CLI cannot route — see :meth:`_write_tags`). ``states`` is the
         Lifecycle→native-state map (set writes use the first native name of a
         bucket); ``base_branch`` is the PR target; ``tags`` is the fleet tag
-        vocabulary used when rendering comments.
+        vocabulary used when rendering comments. ``claim_scope`` and
+        ``parent_scope_ids`` are ``[board]``'s, with no default (WSQ1).
         """
         self._run = run
         self._http_run = http_run
@@ -281,6 +301,8 @@ class AzCliAdo:
         self._states = states
         self._base_branch = base_branch
         self._tags = tags
+        self._claim_scope = claim_scope
+        self._parent_scope_ids = parent_scope_ids
 
     def items_in_state(self, state: Lifecycle) -> tuple[WorkItem, ...]:
         """Return work items whose native state maps to ``state``, via WIQL REST.
@@ -397,6 +419,12 @@ class AzCliAdo:
             ]
         )
         return _parse_item_links(out)
+
+    def in_claim_scope(self, item_id: int) -> bool:
+        """Whether the claim scope covers the item, by its parent link (read only under parents)."""
+        return item_in_claim_scope(
+            lambda: self.item_links(item_id).parent_id, self._claim_scope, self._parent_scope_ids
+        )
 
     def completed_pr_url(self, branch: str) -> str | None:
         """Find a completed PR from ``branch`` into the base branch, if one exists."""
@@ -629,7 +657,13 @@ ProviderFactory = Callable[[SquadraConfig], BoardAccess]
 
 def _build_ado(config: SquadraConfig) -> BoardAccess:
     """Construct the ADO adapter from the resolved configuration."""
-    return AzCliAdo(states=config.states, base_branch=config.base_branch, tags=config.tags)
+    return AzCliAdo(
+        states=config.states,
+        base_branch=config.base_branch,
+        tags=config.tags,
+        claim_scope=config.claim_scope,
+        parent_scope_ids=config.parent_scope_ids,
+    )
 
 
 def _build_github(config: SquadraConfig) -> BoardAccess:
@@ -639,7 +673,12 @@ def _build_github(config: SquadraConfig) -> BoardAccess:
     if config.github is None:
         raise ConfigError('[board.github] is required for provider "github"')
     return GhApiGitHub(
-        config.github, states=config.states, base_branch=config.base_branch, tags=config.tags
+        config.github,
+        states=config.states,
+        base_branch=config.base_branch,
+        tags=config.tags,
+        claim_scope=config.claim_scope,
+        parent_scope_ids=config.parent_scope_ids,
     )
 
 
@@ -647,7 +686,13 @@ def _build_fake(config: SquadraConfig) -> BoardAccess:
     """Construct the fake provider over ``<FLEET_HOME>/.squadra/fake-board.json``."""
     from squadra.fake_board import JsonFileBoard, fake_board_path  # noqa: PLC0415 - import cycle
 
-    return JsonFileBoard(fake_board_path(config.fleet_home), states=config.states, tags=config.tags)
+    return JsonFileBoard(
+        fake_board_path(config.fleet_home),
+        states=config.states,
+        tags=config.tags,
+        claim_scope=config.claim_scope,
+        parent_scope_ids=config.parent_scope_ids,
+    )
 
 
 # Hardcoded name → adapter factory. New providers register here; out-of-tree

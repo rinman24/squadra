@@ -37,7 +37,7 @@ from typing import Final, cast
 from urllib.parse import quote
 
 from squadra.board import BoardValidationError, StateWriteRefusedError, render_github_markdown
-from squadra.config import GitHubBoardConfig
+from squadra.config import ClaimScope, GitHubBoardConfig, item_in_claim_scope
 from squadra.domain import (
     CommentEvent,
     IncrementRequest,
@@ -275,7 +275,7 @@ _SET_STATUS_MUTATION: Final[str] = (
 class GhApiGitHub:
     """``BoardAccess`` over one repository's issues and one Projects v2 board, via ``gh``."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - Constructor is a DI seam
         self,
         board: GitHubBoardConfig,
         *,
@@ -283,6 +283,8 @@ class GhApiGitHub:
         states: Mapping[Lifecycle, tuple[str, ...]],
         base_branch: str = "main",
         tags: Tags = Tags(),
+        claim_scope: ClaimScope,
+        parent_scope_ids: tuple[int, ...],
     ) -> None:
         """Wire the adapter to ``[board.github]``, its ``gh`` runner and the state map.
 
@@ -291,12 +293,16 @@ class GhApiGitHub:
         The project listing is memoized until this instance's next write, so a
         tick's gather of every bucket costs one listing (the supervisor builds
         its seams once per tick); a write by anyone else is not seen until then.
+        ``claim_scope`` and ``parent_scope_ids`` are ``[board]``'s, with no
+        default (WSQ1).
         """
         self._board = board
         self._run = run
         self._states = states
         self._base_branch = base_branch
         self._tags = tags
+        self._claim_scope = claim_scope
+        self._parent_scope_ids = parent_scope_ids
         self._project_cache: _Project | None = None
         self._listing: list[_Issue] | None = None
 
@@ -329,6 +335,12 @@ class GhApiGitHub:
         make its successor claimable early.
         """
         return self._links_of(self._fetch_issue(item_id), item_id)
+
+    def in_claim_scope(self, item_id: int) -> bool:
+        """Whether the claim scope covers the item, by its parent link (read only under parents)."""
+        return item_in_claim_scope(
+            lambda: self.item_links(item_id).parent_id, self._claim_scope, self._parent_scope_ids
+        )
 
     def completed_pr_url(self, branch: str) -> str | None:
         """Return the URL of a merged PR from ``branch`` into the base branch, if any."""

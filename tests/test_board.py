@@ -24,6 +24,7 @@ from squadra.board import (
     TagWriteError,
     render_ado_html,
 )
+from squadra.config import ClaimScope
 from squadra.domain import (
     Claimed,
     Escalated,
@@ -143,6 +144,8 @@ def _adapter(  # noqa: PLR0913 - mirrors the adapter's DI seam
         organization=organization,
         states=states,
         base_branch=base_branch,
+        claim_scope=ClaimScope.WHOLE_BOARD,
+        parent_scope_ids=(),
         tags=_TAGS,
     )
 

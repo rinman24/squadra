@@ -109,7 +109,7 @@ class Fleet:
     def seams(self, board: BoardAccess) -> TickSeams:
         """The tick's seams over ``board``, with both auth probes passing."""
         return TickSeams(
-            ado=board,
+            board=board,
             sandbox=self.sandbox,
             cleanup=self.cleanup,
             worktree=self.worktree,
@@ -249,7 +249,7 @@ def test_a_claim_racing_a_withdrawal_is_relinquished_next_tick(
 
     def tick(board: BoardAccess) -> None:
         seams = TickSeams(
-            ado=board,
+            board=board,
             sandbox=sandbox,
             cleanup=FakeCleanup(),
             worktree=worktree,

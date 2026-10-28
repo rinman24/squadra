@@ -115,7 +115,7 @@ from squadra.domain import (
     WorkItemLinks,
 )
 from squadra.dry_run import DryRunCleanup, DryRunWorktree
-from squadra.engines import LifecycleEngine, increment_branch, parent_in_claim_scope
+from squadra.engines import LifecycleEngine, increment_branch
 from squadra.git_host import host_git_argv
 from squadra.manifest import ManifestRead, read_manifest, write_increment_context
 from squadra.repo import remote_auth_ok, target_remote_url
@@ -268,7 +268,7 @@ class TickSeams:
     """The tick's seams, injectable for tests.
 
     The **mutating** seams are what ``dry_run_seams`` must wrap so a dry-run tick
-    physically cannot write: board writes via ``ado``; sandbox launch/teardown/
+    physically cannot write: board writes via ``board``; sandbox launch/teardown/
     exec via ``sandbox``; deterministic cleanup via ``cleanup``; worktree create/
     archive/prune via ``worktree``; the PAT probe via ``pat_ok`` and the claude
     auth probe via ``auth_ok`` (each spawns a process and so is itself a side
@@ -284,7 +284,7 @@ class TickSeams:
     meaningless without them, exactly as ``pid_alive`` was).
     """
 
-    ado: BoardAccess
+    board: BoardAccess
     sandbox: SandboxAccess
     cleanup: CleanupAccess
     worktree: WorktreeAccess
@@ -389,9 +389,9 @@ def _gather(
     """
     items: dict[int, tuple[WorkItem, Lifecycle]] = {}
     for bucket in (Lifecycle.DONE, Lifecycle.ACTIVE, Lifecycle.QUEUED):
-        for item in seams.ado.items_in_state(bucket):
+        for item in seams.board.items_in_state(bucket):
             items[item.item_id] = (item, bucket)
-    for item in seams.ado.items_in_state(Lifecycle.WITHDRAWN):
+    for item in seams.board.items_in_state(Lifecycle.WITHDRAWN):
         if config.tags.claimed in item.tags:
             items[item.item_id] = (item, Lifecycle.WITHDRAWN)
     views: list[IncrementView] = []
@@ -424,7 +424,7 @@ def _build_facts(
     branch: str = _branch_for(item, status, config)
     spec: SandboxSpec = _spec_for(item.item_id, branch, config)
     worktree: Path = _worktree_for(branch, config)
-    gates: _QueuedGates = _queued_gates(seams, config, item, lifecycle)
+    gates: _QueuedGates = _queued_gates(seams, item, lifecycle)
 
     # Container liveness/exit — meaningful for a fleet-claimed increment in
     # flight, or in the done bucket (a hand-closed item whose sandbox may still
@@ -466,7 +466,7 @@ def _build_facts(
         manifest_needs_decision=manifest.needs_decision,
         commits_present=commits,
         completed_pr_url=(
-            seams.ado.completed_pr_url(branch)
+            seams.board.completed_pr_url(branch)
             if lifecycle is Lifecycle.DONE and is_claimed
             else None
         ),
@@ -506,24 +506,24 @@ _UNGATED: _QueuedGates = _QueuedGates(
 )
 
 
-def _queued_gates(
-    seams: TickSeams, config: SquadraConfig, item: WorkItem, lifecycle: Lifecycle
-) -> _QueuedGates:
-    """Read the claim gates for a queued candidate, from one link read.
+def _queued_gates(seams: TickSeams, item: WorkItem, lifecycle: Lifecycle) -> _QueuedGates:
+    """Read the claim gates for a queued candidate.
 
     Only the queued bucket gates on these; for any other bucket they are moot
-    (the engine ignores them) and no link is read, so an in-flight item reparented
-    out of scope still finalizes or reaps. An out-of-scope item's predecessors are
-    moot too (the engine reports it out of scope first), so they are not read.
-    Each predecessor's state is read once: a withdrawn predecessor is never done,
-    and is reported apart from one still in flight.
+    (the engine ignores them) and nothing is read, so an in-flight item reparented
+    out of scope still finalizes or reaps. Scope is the adapter's answer: the
+    supervisor never reads how a provider expresses it (WSQ1, SQ5f). An
+    out-of-scope item's predecessors are moot too (the engine reports it out of
+    scope first), so they are not read. Each predecessor's state is read once: a
+    withdrawn predecessor is never done, and is reported apart from one still in
+    flight.
     """
     if lifecycle is not Lifecycle.QUEUED:
         return _UNGATED
-    links: WorkItemLinks = seams.ado.item_links(item.item_id)
-    if not parent_in_claim_scope(links.parent_id, config.claim_scope, config.parent_scope_ids):
+    if not seams.board.in_claim_scope(item.item_id):
         return replace(_UNGATED, in_claim_scope=False)
-    states: list[Lifecycle] = [seams.ado.item_state(pred) for pred in links.predecessor_ids]
+    links: WorkItemLinks = seams.board.item_links(item.item_id)
+    states: list[Lifecycle] = [seams.board.item_state(pred) for pred in links.predecessor_ids]
     return _QueuedGates(
         in_claim_scope=True,
         predecessors_done=all(state is Lifecycle.DONE for state in states),
@@ -660,8 +660,8 @@ def _finalize(seams: TickSeams, config: SquadraConfig, view: IncrementView, pr_u
         return
     for tag in view.item.tags:
         if config.tags.is_fleet_tag(tag):
-            seams.ado.remove_tag(view.item.item_id, tag)
-    seams.ado.add_comment(view.item.item_id, Finalized(pr_url=pr_url, branch=branch))
+            seams.board.remove_tag(view.item.item_id, tag)
+    seams.board.add_comment(view.item.item_id, Finalized(pr_url=pr_url, branch=branch))
     if view.status is not None:
         seams.update_status(
             view.item.item_id,
@@ -680,7 +680,7 @@ def _handoff(seams: TickSeams, config: SquadraConfig, view: IncrementView) -> No
     PR title/body travel in the manifest); F4 wires the park + teardown that
     bracket them so the increment lifecycle is correct end-to-end.
     """
-    seams.ado.add_tag(view.item.item_id, config.tags.awaiting_pr_approval)
+    seams.board.add_tag(view.item.item_id, config.tags.awaiting_pr_approval)
     if view.status is not None:
         seams.update_status(
             view.item.item_id,
@@ -692,7 +692,7 @@ def _handoff(seams: TickSeams, config: SquadraConfig, view: IncrementView) -> No
 
 def _park_needs_decision(seams: TickSeams, config: SquadraConfig, view: IncrementView) -> None:
     """Park a ``needs-decision`` run for a human: tag it, no PR, tear the sandbox down."""
-    seams.ado.add_tag(view.item.item_id, config.tags.needs_decision)
+    seams.board.add_tag(view.item.item_id, config.tags.needs_decision)
     if view.status is not None:
         seams.update_status(
             view.item.item_id,
@@ -728,10 +728,10 @@ def _retry(seams: TickSeams, config: SquadraConfig, view: IncrementView, attempt
             config.fleet_root,
         )
     seams.sandbox.teardown(spec)
-    seams.ado.remove_tag(view.item.item_id, config.tags.claimed)
+    seams.board.remove_tag(view.item.item_id, config.tags.claimed)
     if not _set_state_or_report(seams, view.item.item_id, Lifecycle.QUEUED, "requeue"):
         return
-    seams.ado.add_comment(
+    seams.board.add_comment(
         view.item.item_id, Reaped(evidence="agent failed and container exited", attempt=attempt)
     )
 
@@ -751,9 +751,9 @@ def _escalate(
         seams.worktree.archive(str(spec.worktree), archive_root, attempt - 1)
         seams.worktree.prune()
     seams.sandbox.teardown(spec)
-    seams.ado.add_tag(view.item.item_id, config.tags.failed)
-    seams.ado.add_comment(view.item.item_id, Escalated(attempt=attempt, cap=cap))
-    seams.ado.remove_tag(view.item.item_id, config.tags.claimed)
+    seams.board.add_tag(view.item.item_id, config.tags.failed)
+    seams.board.add_comment(view.item.item_id, Escalated(attempt=attempt, cap=cap))
+    seams.board.remove_tag(view.item.item_id, config.tags.claimed)
 
 
 def _escalate_egress(
@@ -767,12 +767,12 @@ def _escalate_egress(
     fleet-owned in flight.
     """
     seams.sandbox.teardown(_spec(view, config))
-    seams.ado.add_tag(view.item.item_id, config.tags.failed)
-    seams.ado.add_comment(
+    seams.board.add_tag(view.item.item_id, config.tags.failed)
+    seams.board.add_comment(
         view.item.item_id,
         Escalated(attempt=view.facts.attempt, cap=config.max_attempts),
     )
-    seams.ado.remove_tag(view.item.item_id, config.tags.claimed)
+    seams.board.remove_tag(view.item.item_id, config.tags.claimed)
     _log(f"escalate: #{view.item.item_id} egress-denied to {host} — security signal, not retried")
 
 
@@ -803,11 +803,11 @@ def _relinquish(seams: TickSeams, config: SquadraConfig, view: IncrementView) ->
         )
     for tag in view.item.tags:
         if config.tags.is_fleet_tag(tag) and tag != config.tags.claimed:
-            seams.ado.remove_tag(item_id, tag)
+            seams.board.remove_tag(item_id, tag)
     branch: str = view.branch(config)
     attempt: int = view.facts.attempt
-    seams.ado.add_comment(item_id, Relinquished(attempt=attempt, branch=branch))
-    seams.ado.remove_tag(item_id, config.tags.claimed)
+    seams.board.add_comment(item_id, Relinquished(attempt=attempt, branch=branch))
+    seams.board.remove_tag(item_id, config.tags.claimed)
     _log(
         f"relinquish: #{item_id} withdrawn in flight (attempt {attempt}) — sandbox torn down, "
         f"worktree archived; branch {branch} and any open PR left as they are"
@@ -860,8 +860,8 @@ def _escalate_at_claim(
     terminal and never claimable), so this fires only for a manually-requeued
     over-cap increment — it must never silently claim past the budget.
     """
-    seams.ado.add_tag(view.item.item_id, config.tags.failed)
-    seams.ado.add_comment(view.item.item_id, Escalated(attempt=attempt, cap=config.max_attempts))
+    seams.board.add_tag(view.item.item_id, config.tags.failed)
+    seams.board.add_comment(view.item.item_id, Escalated(attempt=attempt, cap=config.max_attempts))
 
 
 def _claim_and_launch(
@@ -893,14 +893,14 @@ def _claim_and_launch(
 
     if not _set_state_or_report(seams, item.item_id, Lifecycle.ACTIVE, "claim"):
         return False
-    seams.ado.add_tag(item.item_id, config.tags.claimed)
-    seams.ado.add_comment(item.item_id, Claimed(runner_id=runner_id, branch=branch, when=now))
+    seams.board.add_tag(item.item_id, config.tags.claimed)
+    seams.board.add_comment(item.item_id, Claimed(runner_id=runner_id, branch=branch, when=now))
     seams.write_claimed_at(item.item_id, config.fleet_root, now)
     if seams.sandbox.launch(spec):
         return True
-    seams.ado.remove_tag(item.item_id, config.tags.claimed)
+    seams.board.remove_tag(item.item_id, config.tags.claimed)
     if _set_state_or_report(seams, item.item_id, Lifecycle.QUEUED, "rollback"):
-        seams.ado.add_comment(item.item_id, RolledBack(reason="sandbox launch failed"))
+        seams.board.add_comment(item.item_id, RolledBack(reason="sandbox launch failed"))
     return False
 
 
@@ -912,7 +912,7 @@ def _set_state_or_report(seams: TickSeams, item_id: int, state: Lifecycle, what:
     tick reports it for the item and goes on; every other board error ends it.
     """
     try:
-        seams.ado.set_state(item_id, state)
+        seams.board.set_state(item_id, state)
     except StateWriteRefusedError as exc:
         _log(f"{what} refused for #{item_id}: {exc}; left as the board has it")
         return False
@@ -927,9 +927,9 @@ def _increment_context(seams: TickSeams, item: WorkItem) -> IncrementContext:
     here — the board seam exposes links, not per-Task detail; G2's runner consumes
     the Issue + predecessor states, and the Task detail is a later seam extension.
     """
-    links: WorkItemLinks = seams.ado.item_links(item.item_id)
+    links: WorkItemLinks = seams.board.item_links(item.item_id)
     predecessor_states: dict[int, str] = {
-        predecessor: seams.ado.item_state(predecessor).value
+        predecessor: seams.board.item_state(predecessor).value
         for predecessor in links.predecessor_ids
     }
     return IncrementContext(
@@ -989,7 +989,7 @@ class ReadOnlyBoard:
     Reads delegate to the wrapped client; every write logs the action a real tick
     WOULD have performed and does nothing. Dry-run safety is this boundary, not a
     flag threaded through the tick — an execution path (present or future) that
-    reaches ``seams.ado`` with a write cannot mutate while dry-run is active.
+    reaches ``seams.board`` with a write cannot mutate while dry-run is active.
     """
 
     def __init__(self, inner: BoardAccess) -> None:
@@ -1007,6 +1007,10 @@ class ReadOnlyBoard:
     def item_links(self, item_id: int) -> WorkItemLinks:
         """Pass the read through to the wrapped client."""
         return self._inner.item_links(item_id)
+
+    def in_claim_scope(self, item_id: int) -> bool:
+        """Pass the read through to the wrapped client."""
+        return self._inner.in_claim_scope(item_id)
 
     def item_state(self, item_id: int) -> Lifecycle:
         """Pass the read through to the wrapped client."""
@@ -1090,7 +1094,7 @@ def dry_run_seams(seams: TickSeams) -> TickSeams:
     """
     return replace(
         seams,
-        ado=ReadOnlyBoard(seams.ado),
+        board=ReadOnlyBoard(seams.board),
         sandbox=DryRunSandbox(seams.sandbox),
         cleanup=DryRunCleanup(seams.cleanup),
         worktree=DryRunWorktree(seams.worktree),
@@ -1105,7 +1109,7 @@ def dry_run_seams(seams: TickSeams) -> TickSeams:
 def build_seams(config: SquadraConfig, *, dry_run: bool = False) -> TickSeams:
     """Build the production seams; with ``dry_run``, wrap them so nothing can mutate."""
     seams = TickSeams(
-        ado=build_board(config),
+        board=build_board(config),
         sandbox=ComposeSandbox(),
         cleanup=DeterministicCleanup(config.fleet_home),
         worktree=GitWorktreeAccess(config.fleet_home),
@@ -1149,7 +1153,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     dry_run: bool = bool(args.dry_run) or FLEET_DRY_RUN
     seams: TickSeams = build_seams(config, dry_run=dry_run)
     try:
-        seams.ado.validate_config()
+        seams.board.validate_config()
         return run_tick(seams, config)
     except BoardValidationError as exc:
         print(f"supervisor: board configuration invalid: {exc}", file=sys.stderr)

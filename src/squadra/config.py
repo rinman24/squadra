@@ -27,7 +27,7 @@ fails loud — see :mod:`squadra.board`. Operational/secret knobs
 env-only with today's defaults (resolved in :mod:`squadra.constants`).
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 import os
@@ -90,6 +90,35 @@ class ClaimScope(Enum):
 
     PARENTS = "parents"
     WHOLE_BOARD = "whole-board"
+
+
+def parent_in_claim_scope(
+    parent: int | None, claim_scope: ClaimScope, parent_scope_ids: tuple[int, ...]
+) -> bool:
+    """Whether an item under ``parent`` is inside ``[board].claim_scope``.
+
+    The one definition of claim scope: the adapters' ``in_claim_scope`` (the
+    tick's claim gate), the increment query and the increment writes all use
+    it, so they cannot disagree. It lives beside :class:`ClaimScope` so the
+    board adapters reach it without calling up into :mod:`squadra.engines`,
+    which re-exports it (SQ5f).
+    """
+    return claim_scope is ClaimScope.WHOLE_BOARD or parent in parent_scope_ids
+
+
+def item_in_claim_scope(
+    read_parent: Callable[[], int | None],
+    claim_scope: ClaimScope,
+    parent_scope_ids: tuple[int, ...],
+) -> bool:
+    """:func:`parent_in_claim_scope` for an item, reading its parent only when the answer needs it.
+
+    The adapters' ``BoardAccess.in_claim_scope`` (SQ5f). Under ``"whole-board"``
+    the answer does not depend on the parent, so ``read_parent`` (a board read)
+    is not called.
+    """
+    parent: int | None = None if claim_scope is ClaimScope.WHOLE_BOARD else read_parent()
+    return parent_in_claim_scope(parent, claim_scope, parent_scope_ids)
 
 
 @dataclass(frozen=True, slots=True)

@@ -115,7 +115,9 @@ def test_tick_dry_run_claims_exactly_the_in_scope_unblocked_items(
     write(make_status(phase="tdd", last_heartbeat=_ANCIENT), fleet_root)
     fake_sandbox.seed("squadra-increment-41", SandboxExited(exit_code=1))
 
-    def _build_board(_config: SquadraConfig) -> FakeBoard:
+    def _build_board(config: SquadraConfig) -> FakeBoard:
+        # As the registry does: the adapter answers scope from squadra.toml's [board].
+        fake_board.set_claim_scope(config.claim_scope, config.parent_scope_ids)
         return fake_board
 
     def _build_sandbox() -> FakeSandbox:
@@ -199,7 +201,10 @@ def test_tick_dry_run_claims_nothing_new_after_a_crashed_create(
     monkeypatch.setattr(supervisor, "ComposeSandbox", lambda: fake_sandbox)
 
     board: JsonFileBoard = JsonFileBoard(
-        fake_board_path(fleet_home), states=load_config(fleet_home=fleet_home).states
+        fake_board_path(fleet_home),
+        states=load_config(fleet_home=fleet_home).states,
+        claim_scope=ClaimScope.WHOLE_BOARD,
+        parent_scope_ids=(),
     )
     board.add(4, "feat: delivered", Lifecycle.DONE, parent_id=_IN_SCOPE_PARENT)
     board.add(
