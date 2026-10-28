@@ -32,7 +32,8 @@ Under ~100K tokens per session, hard ceiling 120K, one unit per session.
 | SQ5c | From SQ5b's cut, first: the tick reports a refused requeue of a closed issue per item and goes on (N20 ruling 6; settle N24's open question before building), and the first live run of the adapter's writes on the sandbox (N23, N24's unverified facts). Then WSQ1's deferred parts: `[[boards]]` with `claim_scope` per entry (the check fires wherever a board is added), adapter-owned `in_claim_scope(item_id)` (the supervisor stops reading parent links for scope), rename `seams.ado`; N10's compare-and-set if GitHub offers one, else record that it doesn't. Not needed by DB5 | D | SQ5b | done (PR #54); N25, N26. Cut taken: the release rule (N25), `[[boards]]`, `in_claim_scope`, the rename and N10 to SQ5d |
 | SQ5d | From SQ5c's cut: relinquishing a fleet-claimed WITHDRAWN item and the hand-DONE sandbox stop (N25, once Rich rules on Juval's answer and Eric names the state and action); then WSQ1's deferred parts: `[[boards]]` with `claim_scope` per entry, adapter-owned `in_claim_scope(item_id)`, rename `seams.ado`; N10 closes by the relinquish rule if ruled, else GitHub's compare-and-set is checked | D | SQ5c; Rich's N25 choice | done (PR #55); N27. N10 closed. Cut taken: `[[boards]]`, `in_claim_scope` and the rename to SQ5f (after SQ5e) |
 | SQ5e | claude-skills DB-D12 (Rich's Choice in board-knowledge `sessions/2026-10-27-juval-first-run-parent-scope.md`): the read verb `squadra board scope --parent ID` → `{"parent": N, "in_claim_scope": bool}`; exit 0 either way, 2 for config, 1 for provider; `validate_config()` first; never writes. Behind the one predicate `queue_increment`'s `ClaimScopeRefusedError` and `Increment.in_claim_scope` use (today `engines.parent_in_claim_scope`). Agreement test: scope ∈ {whole-board, parents [1]} × parent ∈ {1, 2}: `scope` says in scope exactly when `queue` is not refused for scope, and leaves the board unchanged. Added to `verb-contract.md`. Not wanted: exposing `claim_scope` itself, scope in `origins`, a `queue --check` flag. Requested by Rich mid-SQ5d; ordered before `[[boards]]` because design-to-board's first-run check waits on it | D | SQ5d | done (PR #57); N30 |
-| SQ5f | From SQ5d's cut, WSQ1's deferred parts: `[[boards]]` with `claim_scope` per entry (the check fires wherever a board is added), adapter-owned `in_claim_scope(item_id)` (the supervisor stops reading parent links for scope), rename `seams.ado`. Keep SQ5e's `scope` verb, `queue_increment`'s scope refusal and `Increment.in_claim_scope` on one predicate through the rework | D | SQ5e | todo |
+| SQ5f | From SQ5d's cut, WSQ1's deferred parts: `[[boards]]` with `claim_scope` per entry (the check fires wherever a board is added), adapter-owned `in_claim_scope(item_id)` (the supervisor stops reading parent links for scope), rename `seams.ado`. Keep SQ5e's `scope` verb, `queue_increment`'s scope refusal and `Increment.in_claim_scope` on one predicate through the rework | D | SQ5e | done (PR pending); N34. Cut taken: `[[boards]]` to SQ5g, its shape put to Rich (N34) |
+| SQ5g | From SQ5f's cut: `[[boards]]`, once Rich rules N34's question (one squadra instance per board, or several boards in one, with a board selector on the `board` verbs and every local artifact namespaced by board). Under the recommended ruling (one instance per board) it is a ledger-only close; under the other, a verb-contract change and a tick rework | D | SQ5f; Rich's N34 ruling | todo; `handoffs/SQ5g-boards.md` |
 | SQ6 | claude-skills DB7 finding (i): `squadra init --check` validated with `--provider`'s default `ado`, not the toml's provider. `--provider` now defaults to `None`; the scaffold falls back to `ado`, and the check passes `None` so `load_config`'s precedence (toml < env < flag) holds. Tests: toml wins with no flag or env, `FLEET_PROVIDER` beats the toml, the flag beats both | — (DB7) | — | done (PR #56); N29 |
 | SQ7 | claude-skills DB7 finding (iii), Juval's option D (board-knowledge `sessions/2026-10-27-juval-squadra-init-preflight-findings.md`): host-side git credentials are ADO-shaped (`repo._CREDENTIAL_HELPER` supplies `$AZURE_DEVOPS_EXT_PAT`), and the claim's own fetch (`worktree.py:107`) bypasses that helper, so the preflight and the claim auth differently. Put credential acquisition for host-side git ops behind one boundary, resolved from the target remote's host rather than the board provider (an ADO board over a GitHub repo is valid). The probe and every host-side clone, fetch and push go through it, so the "exact auth path" claim is true. Keep it fail-closed. The rejection message names the credential actually used. Rename the `_ado_*` probe symbols and sweep ADO assumptions outside `board.py` (e.g. the `scaffold.py` comment on the provider PAT). Not wanted: relabelling the log line, skipping the probe when the provider isn't ADO (silent broadening on the claim path), folding into SQ5f. Latent on Rich's Mac (SSH origin, N29); must land before the first live GitHub tick over an HTTPS origin | — (DB7) | SQ5f, for order only: no design dependency, but both edit `TickSeams` on this branch | todo; `handoffs/SQ7-host-git-credentials.md` |
 | SQ8 | claude-skills DB-D13 (DB11; Rich's ruling of Juval's "A second break in the same rule", board-knowledge `sessions/2026-10-27-juval-first-run-parent-scope.md`): report partial items as data, in a fixed format, instead of only `squadra board origins`' one stderr line per partial item (N18), which is not contract. The case: a first run stops mid-create of a queue, leaving a partial item; the map is revised (a title changes); `increments_by_origin` leaves the partial item out, so design-to-board's re-run takes the first-run path, its checks pass, and `queue` is refused (`QueueRefusedError`, exit 3) with a fix that loops. Each entry carries at least the item id and the Origin, and enough for a caller to tell whether a `queue_increment` with given arguments would finish it or be refused under N14's retry rule; better, keep that judgment in squadra behind `check_queue_finishes`, as SQ5e did for scope. Verb or shape is this effort's to settle (`/ask-juval`, `/ask-eric` if wanted); not in `origins`' `{origin: …}` shape, for the reason DB-D12 kept scope out of it. Add it to `verb-contract.md`; the fake answers it too. Unblocks claude-skills DB11 (S9), which first probes the loop on the fake | — (DB11) | — (scheduled around SQ5f, Rich's call; never alongside another unit on this branch) | done (PR #62); N32 |
@@ -762,6 +763,73 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
   old read. No contract change: `verb-contract.md` already says the body is
   passed exactly. Shipped with the SQ5f handoff refresh (five verbs, N32's
   per-board id assumption, SQ8b's guard tests).
+- N34 (SQ5f): **adapter-owned claim scope built; `[[boards]]` cut to SQ5g
+  with a question for Rich.**
+  - `BoardAccess.in_claim_scope(item_id) -> bool` (WSQ1 Answer item 5). Each
+    adapter (`AzCliAdo`, `GhApiGitHub`, `JsonFileBoard`) takes
+    `claim_scope` and `parent_scope_ids` as required keyword arguments, no
+    default (a default would be a silent broadening), and `build_board`
+    passes `[board]`'s. `_queued_gates` asks the adapter and no longer takes
+    the config; it still reads `item_links` for the predecessors of an
+    in-scope item. Cost: under `"parents"` an in-scope queued candidate now
+    has two link reads (scope, then predecessors); under `"whole-board"` the
+    adapter reads nothing for scope, so the count is unchanged. Not memoized:
+    no test or tick relies on it, and GitHub's project memo (N27) is a
+    separate listing.
+  - One predicate: `parent_in_claim_scope` moved from `engines` to
+    `config`, beside `ClaimScope`, and `engines` re-exports the same function
+    object (a unit test asserts `is`). Reason: the adapters are Access, and
+    Access calling up into an Engine breaks the closed layering. The
+    adapters call `config.item_in_claim_scope(read_parent, …)`, which reads
+    the parent only under `"parents"` and then calls the predicate.
+    `IncrementBoard` keeps its own `(claim_scope, parent_scope_ids)`
+    arguments: SQ5e's guard test runs one board object under two
+    `IncrementBoard` scopes, so `IncrementBoard` cannot read the scope from
+    the adapter without changing that test. `_cmd_board` and `build_board`
+    take both from one `SquadraConfig`.
+  - Tests: the four named guard tests pass with their files unchanged. New:
+    the adapter's `in_claim_scope` agrees with `parent_in_claim_scope` and
+    the reported `Increment.in_claim_scope` on all four shapes × both scopes
+    × parent ∈ {in, out, none}, checked by mutation (a file adapter that
+    always says in scope fails); `item_in_claim_scope` reads the parent only
+    under `"parents"`. Test fakes default to `"whole-board"`, as
+    `make_config` does; two tests that inject a pre-seeded `FakeBoard` past
+    `build_board` now scope it from their config (`FakeBoard.set_claim_scope`),
+    as the registry would.
+  - `TickSeams.ado` is `TickSeams.board` (every `seams.ado` in `supervisor.py`
+    and the tests). `pat_ok`, `_ado_pat_ok` and `_dry_run_pat_ok` are
+    unchanged (SQ7's).
+  - **For Rich: the `[[boards]]` shape (cut to SQ5g).** Two facts settle
+    most of it. First, every local artifact of the tick is keyed by the bare
+    item id: `fleet_root/<id>/` (status, claimed-at marker, archive), the
+    sandbox project `squadra-increment-<id>`, and the branch template
+    `feat/increment-{id}-{slug}`. ADO item 105 and GitHub issue 105 would
+    share all of them, so several boards in one instance is not a config
+    shape: it means namespacing every artifact by board. Second, design-to-board
+    never reads `squadra.toml` (DB-D5), so it cannot discover board names; a
+    selector would have to come from its own caller. The options:
+    - **(A) One squadra instance per board (recommended).** Keep the single
+      `[board]` table. A second board is a second `FLEET_HOME` with its own
+      `squadra.toml`, `fleet_root` and `tag_prefix` (WSQ1 Choice 4: fleets
+      split by board, name each fleet and derive its prefix). The rule "the
+      scope check fires wherever a board is added" holds already: adding a
+      board means adding a `squadra.toml`, whose `claim_scope` is required.
+      The contract stays per board (2026-10-09 session) with no selector, and
+      N32's id assumption never crosses boards. No CLI change. SQ5g closes in
+      the ledger, with WSQ1 Choice 3 recorded as answered by (A). One
+      residue: two fleets delivering into one repository could push the same
+      branch name for equal item ids and equal slugs; the branch template is
+      per `squadra.toml`, so give each fleet its own prefix if that ever
+      happens.
+    - **(B) `[[boards]]` in one instance.** Each entry has a `name`,
+      provider, states, scope and provider table. Every `squadra board` verb
+      takes `--board NAME` (required when there is more than one entry): a
+      verb-contract change, and design-to-board grows a matching argument.
+      The tick iterates boards, and status, markers, archives, sandbox
+      projects, worktrees and branches gain the board name, with `cap`
+      shared or per board to decide. Roughly a unit for the config and verbs
+      and another for the tick.
+    Asked of Rich in the SQ5f report; `/ask-juval` first if he wants.
 
 ## Session log
 
@@ -788,3 +856,4 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
 | SQ8 (ruling) | 2026-10-27 | SQ8 | Rich ruled N31: Juval's shape, exit 3 on a board-level duplicate, all of Eric's names, partial item into `GLOSSARY.md` and `GLOSSARY-SETTLED.md` (added). Choices recorded in both session files. `handoffs/SQ8b-build-partial-items.md` rewritten with the merged build spec. No code | `handoffs/SQ8b-build-partial-items.md` (gate: this PR merged) |
 | SQ8b | 2026-10-27 | SQ8 | PR #62. Gate checked (PR #61 merged; no other board-writes PR open). Branch fast-forwarded to `main` (`42778e8`). Built the ruled spec: `RequestField`, `ProposedRequest`, `PartialItemReport` (domain); `partial_item_disagreements`, `refusal_to_finish`, `item_ids_carrying`, `check_queue_finishes` as their wrapper (engines); `IncrementBoard.partial_items`; `squadra board partial-items --requests-file PATH\|-` (exit 0 for any verdicts, 2 usage/config, 3 only on a board-level duplicate, 1 provider). Agreement test on the fake file through the CLI (7 plans × j < 5) and on four shapes in the contract suite, fence test, exit tests, engine unit tests; checked by mutation. `verb-contract.md`, README rows, ADR-0005 note. N32. ruff, pyright, 1063 tests green | — (claude-skills S9's gate is this merge) |
 | SQ9 + handoff (SQ5f) | 2026-10-27 | SQ9 | PR #63. At Rich's request after PR #62 merged. Branch fast-forwarded to `main` (`1ec3918`). SQ9: `--body-file` read as bytes, so CRLF bodies pass exactly; non-UTF-8 body file exit 2 (N33). Refreshed `handoffs/SQ5f-boards-scope.md`: gate is this PR, five `board` verbs, `partial-items` per board (N32's assumption), SQ8b's agreement tests as guards, SQ8's later step out of scope. claude-skills S9 (DB11) handoff written in claude-skills, not here. ruff, pyright, tests green | `handoffs/SQ5f-boards-scope.md` (gate: this PR merged) |
+| SQ5f | 2026-10-27 | SQ5f | PR pending. Gate checked (SQ9 merged, PR #63; no board-writes PR open). Branch fast-forwarded to `main` (`e89d938`). Built `BoardAccess.in_claim_scope` on the three adapters, scoped at construction from `[board]` with no default; the tick asks the adapter, not the parent link; `parent_in_claim_scope` moved to `config` and re-exported (closed layering); `seams.ado` renamed `seams.board`. Agreement contract test on four shapes, mutation-checked; SQ5e and SQ8b guard tests unchanged and green. README, ADR-0005. Cut: `[[boards]]` to SQ5g, shape put to Rich with (A) one instance per board recommended (N34). ruff, pyright, tests green | `handoffs/SQ5g-boards.md` (gate: SQ5f merged + Rich's N34 ruling) |
