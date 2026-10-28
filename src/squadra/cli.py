@@ -311,10 +311,41 @@ def _cmd_fleet_tick(extra: Sequence[str]) -> int:
     if synced is False:
         print("squadra fleet-tick: failed to sync the app repo (FLEET_HOME)", file=sys.stderr)
         return 1
+    refusal: str | None = _installed_name_refusal()
+    if refusal is not None:
+        print(f"squadra fleet-tick: {refusal}", file=sys.stderr)
+        return 2
 
     from squadra import supervisor  # noqa: PLC0415
 
     return supervisor.main(list(extra))
+
+
+def _installed_name_refusal() -> str | None:
+    """Why the checkout's ``[fleet] name`` contradicts the unit's, or ``None`` if it agrees.
+
+    ``install-units`` runs before the first tick clones ``FLEET_HOME``, so its
+    ``--fleet-name`` can disagree with the ``squadra.toml`` cloned later. The
+    service carries the name it was installed for as ``FLEET_INSTALLED_NAME``;
+    this checks it after the sync and never sets the name (N35). Unset (a tick
+    outside the installed unit) checks nothing.
+    """
+    installed: str = os.environ.get("FLEET_INSTALLED_NAME", "").strip()
+    if not installed:
+        return None
+    raw_home: str = os.environ.get("FLEET_HOME", "").strip()
+    fleet_home: Path = Path(raw_home) if raw_home else Path.cwd()
+    try:
+        configured: str = load_fleet_name(fleet_home)
+    except ConfigError as exc:
+        return str(exc)
+    if configured == installed:
+        return None
+    return (
+        f"the units were installed for fleet {installed!r} but {fleet_home}'s squadra.toml "
+        f"names [fleet] name {configured!r}; re-run install-units with --fleet-name "
+        f"{configured!r} and remove the {installed!r} units"
+    )
 
 
 def _cmd_install_units(args: argparse.Namespace) -> int:

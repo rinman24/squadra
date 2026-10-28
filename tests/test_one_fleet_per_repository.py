@@ -3,14 +3,23 @@
 Issue numbers are per repository, so two fleets on one repository would be two
 fleets working one issue. ``install-units`` refuses the second fleet, writing
 nothing, when another fleet's service on the host serves the same repository,
-and fails closed when either repository can't be resolved.
+and fails closed when either repository can't be resolved. The service carries
+the name it was installed for, and ``fleet-tick`` refuses a checkout whose
+``squadra.toml`` names another fleet (N35's residue).
 """
 
+from collections.abc import Sequence
 from pathlib import Path
 import subprocess
 
 import pytest
 
+from squadra import (
+    cli,
+    repo as repo_module,
+    secrets as secrets_module,
+    supervisor as real_supervisor,
+)
 from squadra.github_board import github_repository_of
 from squadra.repo import fleet_repository, repository_identity
 from squadra.units import UnitConflictError, UnitContext, install_units, render_unit
@@ -239,3 +248,61 @@ def test_ado_and_github_repositories_never_collide() -> None:
 )
 def test_an_unrecognised_remote_has_no_identity(url: str) -> None:
     assert repository_identity(url) is None
+
+
+# --- the installed name (N35's residue) ---------------------------------------------------
+
+
+def test_the_service_carries_the_name_it_was_installed_for() -> None:
+    service: str = render_unit("squadra.service", _ctx("alpha", Path("/srv/alpha")))
+    assert "Environment=FLEET_INSTALLED_NAME=alpha" in service
+
+
+def _stub_fleet_tick(monkeypatch: pytest.MonkeyPatch, home: Path, name: str) -> list[list[str]]:
+    monkeypatch.setenv("FLEET_KEY_VAULT", "the-vault")
+    monkeypatch.setenv("FLEET_HOME", str(home))
+    monkeypatch.setenv("FLEET_INSTALLED_NAME", "alpha")
+    (home / "squadra.toml").write_text(f'[fleet]\nname = "{name}"\n', encoding="utf-8")
+    fleet_secrets = secrets_module.FleetSecrets(anthropic_api_key="k", ado_pat="p")
+
+    def _load(_access: object, _names: object = None) -> secrets_module.FleetSecrets:
+        return fleet_secrets
+
+    def _apply(_secrets: secrets_module.FleetSecrets) -> None:
+        return None
+
+    def _sync(*, mutate: bool = True) -> bool:
+        return True
+
+    ticked: list[list[str]] = []
+
+    def _fake_main(argv: Sequence[str] | None = None) -> int:
+        ticked.append(list(argv or []))
+        return 0
+
+    monkeypatch.setattr(secrets_module, "load_fleet_secrets", _load)
+    monkeypatch.setattr(secrets_module, "apply_supervisor_environ", _apply)
+    monkeypatch.setattr(repo_module, "ensure_app_repo_from_env", _sync)
+    monkeypatch.setattr(real_supervisor, "main", _fake_main)
+    return ticked
+
+
+def test_fleet_tick_refuses_a_checkout_naming_another_fleet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ticked: list[list[str]] = _stub_fleet_tick(monkeypatch, tmp_path, "beta")
+
+    assert cli.main(["fleet-tick", "--dry-run"]) == 2
+    assert ticked == []
+    err: str = capsys.readouterr().err
+    assert "installed for fleet 'alpha'" in err
+    assert "'beta'" in err
+
+
+def test_fleet_tick_ticks_when_the_checkout_names_the_installed_fleet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ticked: list[list[str]] = _stub_fleet_tick(monkeypatch, tmp_path, "alpha")
+
+    assert cli.main(["fleet-tick", "--dry-run"]) == 0
+    assert ticked == [["--dry-run"]]

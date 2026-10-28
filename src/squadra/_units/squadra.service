@@ -16,6 +16,9 @@ WorkingDirectory=${fleet_home}
 # from Key Vault via the VM managed identity at runtime and applies them
 # in-process (ADR-0002 §11) — nothing secret is written to this file or disk.
 Environment=FLEET_HOME=${fleet_home}
+# The [fleet] name these units were installed for. `fleet-tick` refuses a checkout
+# whose squadra.toml names another fleet; it never sets the name (N35).
+Environment=FLEET_INSTALLED_NAME=${fleet_name}
 Environment=FLEET_ROOT=${fleet_root}
 Environment=FLEET_PYTHON=${venv_bin}/python
 Environment=FLEET_KEY_VAULT=${key_vault}
