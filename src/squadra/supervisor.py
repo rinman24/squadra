@@ -98,6 +98,8 @@ from squadra.domain import (
     OriginRecord,
     ParkNeedsDecision,
     Reaped,
+    RelinquishClaim,
+    Relinquished,
     RetryIncrement,
     RolledBack,
     SandboxAbsent,
@@ -378,14 +380,20 @@ def _gather(
     """Build the per-increment fact set + decision for every fleet-relevant increment.
 
     The fleet-relevant set is the union of the ACTIVE and DONE buckets (in-flight
-    and finalize-eligible) and the QUEUED bucket (claim candidates). Each item is
-    projected to facts host-side, then the engine decides. Items are sorted by id
-    for deterministic ordering (the legacy passes' ordering).
+    and finalize-eligible), the QUEUED bucket (claim candidates) and the
+    WITHDRAWN items still carrying the fleet's ``claimed`` tag (someone else
+    withdrew them in flight; the engine relinquishes them, ADR-0004 decision 1). An unclaimed
+    withdrawn item is not the fleet's and is left out. Each item is projected to
+    facts host-side, then the engine decides. Items are sorted by id for
+    deterministic ordering (the legacy passes' ordering).
     """
     items: dict[int, tuple[WorkItem, Lifecycle]] = {}
     for bucket in (Lifecycle.DONE, Lifecycle.ACTIVE, Lifecycle.QUEUED):
         for item in seams.ado.items_in_state(bucket):
             items[item.item_id] = (item, bucket)
+    for item in seams.ado.items_in_state(Lifecycle.WITHDRAWN):
+        if config.tags.claimed in item.tags:
+            items[item.item_id] = (item, Lifecycle.WITHDRAWN)
     views: list[IncrementView] = []
     for item_id in sorted(items):
         item, bucket = items[item_id]
@@ -418,22 +426,24 @@ def _build_facts(
     worktree: Path = _worktree_for(branch, config)
     gates: _QueuedGates = _queued_gates(seams, config, item, lifecycle)
 
-    # Container liveness/exit — only meaningful for an in-flight, fleet-claimed
-    # increment; gathering it for the queued/done buckets is pointless I/O.
+    # Container liveness/exit — meaningful for a fleet-claimed increment in
+    # flight, or in the done bucket (a hand-closed item whose sandbox may still
+    # run). The egress log, manifest and commits matter in flight only; reading
+    # them for any other bucket, or the container for queued, is pointless I/O.
+    inflight: bool = lifecycle is Lifecycle.ACTIVE and is_claimed
     sandbox_status: SandboxStatus = (
         seams.sandbox.inspect(spec)
-        if lifecycle is Lifecycle.ACTIVE and is_claimed
+        if is_claimed and lifecycle in (Lifecycle.ACTIVE, Lifecycle.DONE)
         else SandboxAbsent()
     )
     present, running, exit_code = _container_facts(sandbox_status)
-    egress_denied: str | None = _read_egress_denied_host(seams.sandbox, spec) if present else None
-    manifest: ManifestRead = (
-        seams.read_manifest(worktree) if present and not running else _absent_manifest()
+    egress_denied: str | None = (
+        _read_egress_denied_host(seams.sandbox, spec) if inflight and present else None
     )
+    exited: bool = inflight and present and not running
+    manifest: ManifestRead = seams.read_manifest(worktree) if exited else _absent_manifest()
     commits: bool = (
-        seams.commits_present(worktree, f"origin/{config.base_branch}")
-        if present and not running
-        else False
+        seams.commits_present(worktree, f"origin/{config.base_branch}") if exited else False
     )
 
     return LifecycleFacts(
@@ -626,6 +636,8 @@ def _run_action(
             _escalate_egress(seams, config, view, host)
         case SweepLeak():
             seams.sandbox.teardown(_spec(view, config))
+        case RelinquishClaim():
+            _relinquish(seams, config, view)
         case SignalClaimable() | LaunchSandbox():
             return  # claim/launch handled in the budget pass
 
@@ -762,6 +774,44 @@ def _escalate_egress(
     )
     seams.ado.remove_tag(view.item.item_id, config.tags.claimed)
     _log(f"escalate: #{view.item.item_id} egress-denied to {host} — security signal, not retried")
+
+
+def _relinquish(seams: TickSeams, config: SquadraConfig, view: IncrementView) -> None:
+    """Relinquish the claim on an increment someone else withdrew in flight.
+
+    Writes no lifecycle state: squadra never moves an item out of WITHDRAWN, nor
+    into it from ACTIVE (ADR-0004). It tears the sandbox down, archives the
+    worktree and prunes, parks the status as ``withdrawn``, drops the other fleet
+    tags, posts one ``Relinquished`` comment, and drops ``claimed`` last. Each
+    step is idempotent and ``claimed`` is the commit: a tick that ends partway
+    leaves the item claimed, and the next tick relinquishes it again (at worst a
+    second comment); an unclaimed withdrawn item is not gathered, so it runs
+    once. The branch and any PR stay (finalize's, gated on a merge),
+    and so does the status file, whose attempt count holds the retry cap should
+    the item be reopened.
+    """
+    item_id: int = view.item.item_id
+    spec: SandboxSpec = _spec(view, config)
+    seams.sandbox.teardown(spec)
+    if spec.worktree.is_dir():
+        archive_root: str = str(config.fleet_root / str(item_id) / "archive")
+        seams.worktree.archive(str(spec.worktree), archive_root, view.facts.attempt)
+        seams.worktree.prune()
+    if view.status is not None:
+        seams.update_status(
+            item_id, StatusUpdate(phase="parked", parked_state="withdrawn"), config.fleet_root
+        )
+    for tag in view.item.tags:
+        if config.tags.is_fleet_tag(tag) and tag != config.tags.claimed:
+            seams.ado.remove_tag(item_id, tag)
+    branch: str = view.branch(config)
+    attempt: int = view.facts.attempt
+    seams.ado.add_comment(item_id, Relinquished(attempt=attempt, branch=branch))
+    seams.ado.remove_tag(item_id, config.tags.claimed)
+    _log(
+        f"relinquish: #{item_id} withdrawn in flight (attempt {attempt}) — sandbox torn down, "
+        f"worktree archived; branch {branch} and any open PR left as they are"
+    )
 
 
 def _claim_up_to_budget(

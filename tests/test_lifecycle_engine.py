@@ -35,6 +35,7 @@ from squadra.domain import (
     LifecycleFacts,
     NoAction,
     ParkNeedsDecision,
+    RelinquishClaim,
     RetryIncrement,
     SignalClaimable,
     State,
@@ -65,8 +66,8 @@ def _decide(engine: LifecycleEngine, facts: LifecycleFacts) -> LifecycleDecision
 
 def test_state_enum_has_the_full_derived_table() -> None:
     # The 13 derived states from ADR-0002 decision 3 / plan §4, plus out-of-scope
-    # (WSQ1, mandatory claim scope), withdrawn and predecessor-withdrawn
-    # (ADR-0004) — guarding against an accidental rename or
+    # (WSQ1, mandatory claim scope), withdrawn, predecessor-withdrawn and
+    # withdrawn-in-flight (ADR-0004) — guarding against an accidental rename or
     # drop that would silently change a transition target.
     assert {state.value for state in State} == {
         "blocked",
@@ -83,6 +84,7 @@ def test_state_enum_has_the_full_derived_table() -> None:
         "finalizing",
         "done",
         "withdrawn",
+        "withdrawn-in-flight",
         "escalated",
         "parked-decision",
     }
@@ -162,22 +164,52 @@ def test_out_of_scope_outranks_a_withdrawn_predecessor(
 def test_withdrawn_is_terminal_and_never_claimed(
     engine: LifecycleEngine, make_facts: MakeFacts
 ) -> None:
-    # Whatever the queued-bucket gates say, a withdrawn increment is never
-    # claimable, never finalized, never reaped.
-    for claimed in (True, False):
-        for pr in (None, "https://pr/1"):
-            facts = make_facts(
-                lifecycle=Lifecycle.WITHDRAWN,
-                is_fleet_claimed=claimed,
-                predecessors_done=True,
-                in_claim_scope=True,
-                container_running=False,
-                container_exit_code=1,
-                completed_pr_url=pr,
-            )
-            decision = _decide(engine, facts)
-            assert decision.state is State.WITHDRAWN
-            assert decision.actions == (NoAction(),)
+    # Whatever the queued-bucket gates say, a withdrawn increment the fleet does
+    # not hold is never claimable, never finalized, never reaped.
+    for pr in (None, "https://pr/1"):
+        facts = make_facts(
+            lifecycle=Lifecycle.WITHDRAWN,
+            is_fleet_claimed=False,
+            predecessors_done=True,
+            in_claim_scope=True,
+            container_running=False,
+            container_exit_code=1,
+            completed_pr_url=pr,
+        )
+        decision = _decide(engine, facts)
+        assert decision.state is State.WITHDRAWN
+        assert decision.actions == (NoAction(),)
+
+
+@pytest.mark.parametrize("failed", [True, False])
+@pytest.mark.parametrize("needs_decision", [True, False])
+@pytest.mark.parametrize(
+    ("parked_tagged", "phase", "parked_state"),
+    [(False, None, None), (True, "parked", "awaiting-pr-approval"), (False, "parked", "failed")],
+)
+def test_a_withdrawn_in_flight_item_is_relinquished_whatever_its_parks(
+    engine: LifecycleEngine,
+    make_facts: MakeFacts,
+    failed: bool,
+    needs_decision: bool,
+    parked_tagged: bool,
+    phase: str | None,
+    parked_state: str | None,
+) -> None:
+    # Guard step 0 (ADR-0004 decision 1): closure wins over the fleet's own
+    # tags and parks, so a decision park the human closes is relinquished too.
+    facts = make_facts(
+        lifecycle=Lifecycle.WITHDRAWN,
+        is_fleet_claimed=True,
+        failed_tagged=failed,
+        needs_decision_tagged=needs_decision,
+        parked_tagged=parked_tagged,
+        phase=phase,
+        parked_state=parked_state,
+    )
+    decision = _decide(engine, facts)
+    assert decision.state is State.WITHDRAWN_IN_FLIGHT
+    assert decision.actions == (RelinquishClaim(),)
 
 
 def test_scope_gates_the_queued_bucket_only(engine: LifecycleEngine, make_facts: MakeFacts) -> None:
@@ -266,10 +298,26 @@ def test_done_bucket_fleet_claimed_pr_completed_finalizes(
 def test_done_bucket_fleet_claimed_pr_not_completed_awaits_pr(
     engine: LifecycleEngine, make_facts: MakeFacts
 ) -> None:
-    facts = make_facts(lifecycle=Lifecycle.DONE, completed_pr_url=None)
+    facts = make_facts(
+        lifecycle=Lifecycle.DONE,
+        completed_pr_url=None,
+        container_present=False,
+        container_running=False,
+    )
     decision = _decide(engine, facts)
     assert decision.state is State.AWAITING_PR
     assert decision.actions == (NoAction(),)
+
+
+def test_done_by_hand_with_a_running_sandbox_awaits_pr_and_stops_it(
+    engine: LifecycleEngine, make_facts: MakeFacts
+) -> None:
+    # A human moved a fleet-claimed item to done while its agent ran: stop what
+    # is burning, keep the tag, worktree and status finalize needs.
+    facts = make_facts(lifecycle=Lifecycle.DONE, completed_pr_url=None, container_running=True)
+    decision = _decide(engine, facts)
+    assert decision.state is State.AWAITING_PR
+    assert decision.actions == (StopContainer(),)
 
 
 def test_done_bucket_not_fleet_claimed_is_terminal_done(
@@ -574,7 +622,8 @@ def test_every_state_is_reachable_by_some_fact_combination(
         State.PREDECESSOR_WITHDRAWN: make_facts(
             lifecycle=Lifecycle.QUEUED, predecessors_done=False, predecessor_withdrawn=True
         ),
-        State.WITHDRAWN: make_facts(lifecycle=Lifecycle.WITHDRAWN),
+        State.WITHDRAWN: make_facts(lifecycle=Lifecycle.WITHDRAWN, is_fleet_claimed=False),
+        State.WITHDRAWN_IN_FLIGHT: make_facts(lifecycle=Lifecycle.WITHDRAWN),
         State.CLAIMABLE: make_facts(lifecycle=Lifecycle.QUEUED, predecessors_done=True),
         State.PROVISIONING: make_facts(container_present=False, container_running=False),
         State.RUNNING: make_facts(),
@@ -625,6 +674,7 @@ _ALLOWED_ACTIONS = (
     EscalateEgressDenied,
     SweepLeak,
     FinalizeCleanup,
+    RelinquishClaim,
     NoAction,
 )
 
@@ -639,6 +689,7 @@ _PARKED_STATES: tuple[str | None, ...] = (
     "qa-ready",
     "awaiting-pr-approval",
     "failed",
+    "withdrawn",
 )
 _EXIT_CODES: tuple[int | None, ...] = (None, 0, 1, 137)
 _HOSTS: tuple[str | None, ...] = (None, "evil.example.com")

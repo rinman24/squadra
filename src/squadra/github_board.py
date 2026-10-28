@@ -288,6 +288,9 @@ class GhApiGitHub:
 
         ``run`` receives ``gh``'s arguments (without ``gh``) and returns stdout.
         The project's ids and Status options are resolved once, on first use.
+        The project listing is memoized until this instance's next write, so a
+        tick's gather of every bucket costs one listing (the supervisor builds
+        its seams once per tick); a write by anyone else is not seen until then.
         """
         self._board = board
         self._run = run
@@ -295,6 +298,7 @@ class GhApiGitHub:
         self._base_branch = base_branch
         self._tags = tags
         self._project_cache: _Project | None = None
+        self._listing: list[_Issue] | None = None
 
     # --- reads ---------------------------------------------------------------
 
@@ -415,6 +419,7 @@ class GhApiGitHub:
         reports per item. Any write onto a partial item, whose create commits
         it, raises ``BoardValidationError``.
         """
+        self._listing = None
         issue: _Issue = self._issue(self._fetch_issue(item_id))
         if issue.partial:
             raise BoardValidationError(_partial_message(item_id))
@@ -442,10 +447,12 @@ class GhApiGitHub:
 
     def add_tag(self, item_id: int, tag: str) -> None:
         """Add ``tag`` as a label (GitHub's add is idempotent, and creates the label)."""
+        self._listing = None
         self._add_label(item_id, tag)
 
     def remove_tag(self, item_id: int, tag: str) -> None:
         """Remove the ``tag`` label; a no-op when the issue does not carry it."""
+        self._listing = None
         out: str = self._run(
             [
                 "api",
@@ -470,6 +477,7 @@ class GhApiGitHub:
 
     def add_comment(self, item_id: int, event: CommentEvent) -> None:
         """Render ``event`` to Markdown and add it as an issue comment."""
+        self._listing = None
         self._run(
             [
                 "api",
@@ -502,6 +510,7 @@ class GhApiGitHub:
         the commit (ADR-0006 decision 7): an "Item added to project" workflow
         that sets a non-queued Status raises here. Detection, not a guarantee.
         """
+        self._listing = None
         links: WorkItemLinks
         if partial_item is None:
             issue: _Issue = self._create_issue(request)
@@ -744,7 +753,16 @@ class GhApiGitHub:
         return self._project_cache
 
     def _project_issues(self) -> list[_Issue]:
-        """Every unarchived project item that is an issue in this board's repository."""
+        """Every unarchived project item that is an issue in this board's repository.
+
+        Memoized until this instance's next write (see :meth:`__init__`).
+        """
+        if self._listing is None:
+            self._listing = self._list_project_issues()
+        return self._listing
+
+    def _list_project_issues(self) -> list[_Issue]:
+        """List the project's issues in this board's repository, page by page."""
         issues: list[_Issue] = []
         after: str | None = None
         while True:

@@ -34,6 +34,7 @@ from squadra.domain import (
     Lifecycle,
     OriginRecord,
     Reaped,
+    Relinquished,
     RolledBack,
     Tags,
     WorkItem,
@@ -177,6 +178,12 @@ def render_ado_html(event: CommentEvent, tags: Tags) -> str:
                 f"<p>fleet: reaped — {evidence} (attempt {attempt}); "
                 f"worktree archived, requeued for retry.</p>"
             )
+        case Relinquished(attempt=attempt, branch=branch):
+            return (
+                f"<p>fleet: relinquished — withdrawn in flight (attempt {attempt}); sandbox "
+                f"stopped, worktree archived. <code>{branch}</code> and any open PR are left "
+                f"as they are.</p>"
+            )
         case Escalated(attempt=attempt, cap=cap):
             return (
                 f"<p>fleet: retry cap exhausted (next attempt would be {attempt}, cap {cap}) "
@@ -201,6 +208,11 @@ def render_github_markdown(event: CommentEvent, tags: Tags) -> str:
             return f"**fleet: finalized** — PR [{pr_url}]({pr_url}), `{branch}` cleaned up."
         case Reaped(evidence=evidence, attempt=attempt):
             return f"**fleet: reaped** — {evidence} (attempt {attempt}); requeued."
+        case Relinquished(attempt=attempt, branch=branch):
+            return (
+                f"**fleet: relinquished** — withdrawn in flight (attempt {attempt}); sandbox "
+                f"stopped, worktree archived. `{branch}` and any open PR are left as they are."
+            )
         case Escalated(attempt=attempt, cap=cap):
             return (
                 f"**fleet:** retry cap exhausted ({attempt}/{cap}) — escalated to `{tags.failed}`."
