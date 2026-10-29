@@ -40,8 +40,9 @@ Under ~100K tokens per session, hard ceiling 120K, one unit per session.
 | SQ7 | claude-skills DB7 finding (iii), Juval's option D (board-knowledge `sessions/2026-10-27-juval-squadra-init-preflight-findings.md`): host-side git credentials are ADO-shaped (`repo._CREDENTIAL_HELPER` supplies `$AZURE_DEVOPS_EXT_PAT`), and the claim's own fetch (`worktree.py:107`) bypasses that helper, so the preflight and the claim auth differently. Put credential acquisition for host-side git ops behind one boundary, resolved from the target remote's host rather than the board provider (an ADO board over a GitHub repo is valid). The probe and every host-side clone, fetch and push go through it, so the "exact auth path" claim is true. Keep it fail-closed. The rejection message names the credential actually used. Rename the `_ado_*` probe symbols and sweep ADO assumptions outside `board.py` (e.g. the `scaffold.py` comment on the provider PAT). Not wanted: relabelling the log line, skipping the probe when the provider isn't ADO (silent broadening on the claim path), folding into SQ5f. Latent on Rich's Mac (SSH origin, N29); must land before the first live GitHub tick over an HTTPS origin | — (DB7) | SQ5f, for order only: no design dependency, but both edit `TickSeams` on this branch | done (PR #69); N37. No cut: the boundary, the worktree fetch through it, fail-closed, the renames and the sweep all built |
 | SQ7b | Before Rich rules N37's three open points: `/ask-juval` on (1) the GitHub HTTPS credential source SQ7 built (`gh auth git-credential`, one token for board and git), (2) where a GitHub fleet's token comes from on the fleet-host (Key Vault bootstraps only the ADO PAT; cloud-init installs no `gh`), (3) the two narrowings (SSH to other hosts, plain `http`). Consult and record only, no code | — (N37) | SQ7, for order only: Juval reads the merged code | done (PR #70); N37 (SQ7b), N38. Ruled by Rich 2026-10-28 |
 | SQ7c | Juval's (b2) (Juval called it "SQ8"; renamed, SQ8 is taken): the fleet-host's Key Vault secret set is derived per fleet, not hardwired as the ADO pair. Fetch the ADO PAT for an ADO HTTPS remote or an `ado` board, a GitHub token into `GH_TOKEN` for a github.com HTTPS remote or a `github` board, nothing for SSH, always the Anthropic key; fail closed on any missing, fetch nothing else. Two phases in `fleet-tick`: remote's credential before the clone (from `FLEET_APP_REPO_URL`), board's after it. Pin app-backend's `az` calls as identical. Install gh in cloud-init and `fleet-host-activate.sh`; `GH_TOKEN`/`GITHUB_TOKEN` in the agent-env negative test and goss; ADR-0002 addendum; README. Secret name and knob named by `/ask-eric` when the handoff is written. ~1.5–2 d | — (N37) | Trigger: a decision to run a GitHub board or a github.com HTTPS remote on the fleet-host (app-backend moving either to GitHub included; only Rich can). Start on the trigger; first tick no sooner than about one working week after it. Not after SQ7d (false dependency); if both triggers share a window, one fleet-host smoke verifies both | todo; (b2) ruled 2026-10-28; float to the trigger. No handoff until the trigger |
-| SQ7d | Juval's S3, scoped by a test first: in a contained run, can the agent rewrite `FLEET_HOME`'s `remote.origin.url` / `core.sshCommand`? Then split "is this a supported remote" out of `remote_auth.credential_for` into one check shared by the probe and `install-units` (closing the N36 disagreement), with an origin-must-match-`FLEET_APP_REPO_URL` check if origin proved writable. ~1–2 h test + ~1–2 d build | — (N37) | Before the push is wired (no float against it; Rich, 2026-10-28). Triggered by SQ7e's merge | todo; `handoffs/SQ7d-remote-support-check.md` |
+| SQ7d | Juval's S3, scoped by a test first: in a contained run, can the agent rewrite `FLEET_HOME`'s `remote.origin.url` / `core.sshCommand`? Then split "is this a supported remote" out of `remote_auth.credential_for` into one check shared by the probe and `install-units` (closing the N36 disagreement), with an origin-must-match-`FLEET_APP_REPO_URL` check if origin proved writable. ~1–2 h test + ~1–2 d build | — (N37) | Before the push is wired (no float against it; Rich, 2026-10-28). Triggered by SQ7e's merge | done, test only (PR #74); N41. Stop branch: the push as specified reads the agent's git dir, so S3 moved to SQ7f and the push contract went to Juval. Rich rules N41 |
 | SQ7e | The small items from Rich's N37 rulings, one PR: the README upgrade line on SQ7's narrowings (wording in the SQ7b session file, Juval's point 3); a fleet-host docs line that a GitHub board or github.com HTTPS remote there needs SQ7c first (Juval, when-to-build session); Juval's gh `erase` check: probe with a bad `GH_TOKEN`, then confirm `gh auth status` still holds the stored session (dev hosts only; a fix, if needed, is for dev hosts, not SQ7c). Also the stale push-contract line in README § Host-side git hardening (`host_git_argv(*credential_helper, …)`; `git_host.py` already reads `remote_git_argv(credential, …)`). ~1.5 h | — (N37) | — | done (PR #72); N40. gh `erase` a no-op at v2.101.0; no dev-host row needed. Once SQ7e merges, Rich asks for SQ7d's handoff |
+| SQ7f | SQ7d's S3, after Rich rules N41: one "is this a supported remote" check (host and transport, the set SQ7 built and Rich ruled, no broadening) shared by `TargetRemote.probe` and `install-units` (closing N36's disagreement), `credential_for` left answering only "which credential"; messages name the host; README upgrade line for the `install-units` narrowing. Juval: drop the declared-remote check, ~1 d | — (N37) | Rich's N41 ruling. Juval: after the workspace row he proposes (standalone repo + quarantine import + push from `FLEET_HOME`), with float; Rich's "before the push" order to be re-ruled | todo; waits on N41's ruling. No handoff yet |
 | SQ8 | claude-skills DB-D13 (DB11; Rich's ruling of Juval's "A second break in the same rule", board-knowledge `sessions/2026-10-27-juval-first-run-parent-scope.md`): report partial items as data, in a fixed format, instead of only `squadra board origins`' one stderr line per partial item (N18), which is not contract. The case: a first run stops mid-create of a queue, leaving a partial item; the map is revised (a title changes); `increments_by_origin` leaves the partial item out, so design-to-board's re-run takes the first-run path, its checks pass, and `queue` is refused (`QueueRefusedError`, exit 3) with a fix that loops. Each entry carries at least the item id and the Origin, and enough for a caller to tell whether a `queue_increment` with given arguments would finish it or be refused under N14's retry rule; better, keep that judgment in squadra behind `check_queue_finishes`, as SQ5e did for scope. Verb or shape is this effort's to settle (`/ask-juval`, `/ask-eric` if wanted); not in `origins`' `{origin: …}` shape, for the reason DB-D12 kept scope out of it. Add it to `verb-contract.md`; the fake answers it too. Unblocks claude-skills DB11 (S9), which first probes the loop on the fake | — (DB11) | — (scheduled around SQ5f, Rich's call; never alongside another unit on this branch) | done (PR #62); N32 |
 | SQ9 | SQ8b's finding (N32): `squadra board queue --body-file PATH` read the file in text mode, whose universal newlines turned `\r\n` into `\n`, so a CRLF body was not passed exactly as given (N19) and a planner's own CRLF body would then meet an A3 or N14 refusal. Read the bytes and decode UTF-8 (shared with `partial-items --requests-file`); a body file that is not UTF-8 is exit 2 like any unreadable `--body-file`, not a traceback. Stdin already kept `\r\n` | — (SQ8b) | SQ8 | done (PR #63); N33 |
 
@@ -1357,6 +1358,127 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
     `host_git_argv("push", …)`. That is the layer `remote_git_argv` wraps, and
     `test_remote_auth.py` pins the guard coming first, so it's consistent and
     was left as is (no change outside docs).
+- N41 (SQ7d, the origin-writability test): **`FLEET_HOME`'s origin is out of
+  the agent's reach, but the push as specified is not: it reads the
+  worktree's git dir, which the agent owns.** S3 not built; put to Juval.
+  - **How it was tested.** `tests/test_worktree_git_dir.py`, hermetic: real
+    git, a temp `FLEET_HOME` whose origin is a local bare repo, the increment
+    worktree made by `GitWorktreeAccess.create` at the path `_worktree_for`
+    derives. The "agent" touches only files under the worktree directory, as
+    the bind mount allows. Then the host-side op runs as the supervisor builds
+    it. Local bare repos and one loopback HTTP listener (dummy PAT); no
+    network, no container (no Docker on the Mac), so 1(c), the fleet-host
+    contained run, was not needed for (a).
+  - **The mount (handoff fact 1, confirmed).** `ComposeSandbox` runs `docker
+    compose -p … -f <worktree>/.squadra/compose.yaml` with no
+    `FLEET_WORKTREE` (nothing in `src/` sets it), so app-backend's
+    `${FLEET_WORKTREE:-..}:/work` mounts the worktree, read-write, and
+    nothing else.
+  - **(a) `FLEET_HOME`'s config: not writable under that mount.** The
+    worktree's `.git` is a file, `gitdir: <FLEET_HOME>/.git/worktrees/<name>`,
+    absolute. With that path absent (as in the container), every git command
+    in the worktree fails: "gitfile does not point to a valid repository".
+    `git config remote.origin.url …` and `core.sshCommand` fail with it, and
+    `target_remote_url` still reads the original origin. The agent's own
+    repo in the worktree (below) doesn't touch `FLEET_HOME` either.
+    Control: with the git dir reachable, one `git config remote.origin.url`
+    in the worktree rewrites `FLEET_HOME`'s origin, since linked worktrees
+    share the main repo's config. So (a) rests on the mount alone: a
+    consumer compose file that mounts `FLEET_HOME` (or its `.git`) makes
+    origin agent-writable.
+  - **Fact 2 is a defect, separate from SQ7d: under app-backend's compose the
+    agent can't commit.** The same failure covers `git commit` and `git
+    status` in `/work`. ADR-0002 §2's commit-only agent has no working git.
+    An agent that recovers with `git init` commits into a repo of its own
+    that `FLEET_HOME` never sees. For Rich; no row, no fix here (the
+    handoff's instruction). Not checked: whether the fleet-host has ever run
+    a live increment to the commit step.
+  - **(b) The worktree's git dir: the agent's, so the push is the agent's.**
+    The "agent" replaces `.git` with its own repo (`git init`), or keeps
+    `.git` a file and points `gitdir:` at a directory inside the worktree
+    (relative, so it resolves the same on the host). Either way, a host-side
+    op run with `work_dir=<worktree>` reads the agent's config. The push the
+    README and `git_host.py` specify, `remote_git_argv(credential, "push",
+    "origin", branch, work_dir=worktree)` with the ADO credential:
+    - lands in an agent-chosen bare repo, not origin (both redirects);
+    - follows the agent's `url.<base>.insteadOf`: an origin reading
+      `https://dev.azure.com/org/proj/_git/repo` pushes to the agent's repo;
+    - runs the agent's `core.sshCommand` on the host (ssh origin to
+      `127.0.0.1:1`), and the agent's `remote.origin.receivepack` (local
+      origin). `core.hooksPath=/dev/null` stops hooks, not these;
+    - sends the ADO PAT to an agent-chosen host: the loopback listener got
+      `pat:<dummy PAT>`, because the ADO helper ignores the host it's asked
+      about (Juval's SQ7b note). The credential comes from `TargetRemote`
+      (`FLEET_HOME`'s origin); the destination from the worktree.
+    - Other ops with `work_dir=<worktree>`: only `_read_commits_present`
+      (`rev-list --count base..HEAD`). It ran no command with
+      `core.fsmonitor` set, but its answer is the agent's (fake
+      `refs/remotes/origin/main`, then one commit, reads as 1). `cleanup`'s
+      `worktree remove --force` runs from `FLEET_HOME` and fails (rc 128,
+      "does not point back") on a replaced `.git`, leaving the directory:
+      a cleanup that fails, not an escape. All other host-side ops use
+      `work_dir=FLEET_HOME`.
+    - Nothing here runs today: the push is unwired (G2). The tests pin the
+      contract as specified, so the contract change flips them.
+  - **Outcome: the handoff's stop branch.** (b) shows the agent can choose the
+    push destination and run a command through the worktree's git dir, so
+    the push contract changes before S3, and that isn't SQ7d's to decide.
+    S3 (the shared "supported remote" check, and whether the
+    declared-remote check is needed) waits for Rich's ruling, as SQ7f.
+    Under the current mount (a) says origin is unwritable, so the
+    declared-remote check isn't needed, unless the ruling widens the mount.
+  - **Checked after the note, for the consult.** A host-side `git -C
+    FLEET_HOME fetch <worktree> <branch>:refs/<quarantine>/<branch>` from
+    the agent's repo, with `core.fsmonitor`, `core.sshCommand`,
+    `uploadpack.packObjectsHook`, `core.pager` and `diff.external` set to a
+    marker, ran none of them; the same over `file://` and from an
+    agent-written bundle (git 2.56.0, macOS, one-off script, not in the
+    suite). And no contained agent has ever run claude:
+    `ComposeSandbox.launch` is `up -d --build` with no command, nothing in
+    `src/` calls `sandbox.exec`, and app-backend's agent defaults to `sleep
+    infinity` (its comment says squadra overrides it, as it says squadra
+    sets `FLEET_WORKTREE`; neither is true). So fact 2 can't have shown up
+    live. Juval found it; confirmed here by grep.
+  - **Juval (board-knowledge
+    `sessions/2026-10-28-juval-sq7d-push-contract.md`, method mode, Choice
+    blank for Rich).** Options 3 + 2 as one row: each increment gets a
+    standalone repo (a host-side clone of `FLEET_HOME` at the base SHA,
+    remotes stripped), not a linked worktree, which fixes fact 2. The host
+    imports the agent's branch into `refs/squadra/quarantine/<item>` in
+    `FLEET_HOME`, checks there that it descends from the base SHA the
+    claim recorded and that `base..tip` is non-empty, and pushes that ref
+    from `FLEET_HOME` to the URL and credential one `TargetRemote.resolve()`
+    returns. No host-side git op runs with `work_dir` in the workspace;
+    `commits_present` is counted in `FLEET_HOME`; cleanup removes the
+    directory (no symlink follow) and the quarantine ref. A distinct type
+    for host-owned `work_dir` so pyright rejects a workspace path.
+    Optional, Rich's call: the ADO helper answers only for its own `host=`.
+    Rejected: 1 (dead either way: pushes the base, or mounting the git dir
+    reopens (a)) and 4 (a denylist over keys the agent names). Transport:
+    fetch from the path (2a) now, an agent-written bundle (2b) if a ~2 h
+    test fails (cross-user import, which needs a berth or the fleet-host;
+    alternates; nested repo; no shared inodes). ~3.5 d (3–4.5), before G2
+    and before the in-container runner is wired, whichever is first.
+    - **S3 shrinks to the shared supported-remote check** (probe,
+      `resolve`, `install-units`), ~1 d, and gets float after that row.
+      **The declared-remote check is dropped**: origin isn't writable, the
+      new push never reads the workspace, and a mount that exposed
+      `FLEET_HOME/.git` would need a mount guard, not a check on one key.
+      That also drops the handoff's question about an unset
+      `FLEET_APP_REPO_URL`. Rich asked to re-rule the order: the workspace
+      row takes S3's slot before G2.
+    - **A compose-boundary row with float** (~0.75–1.25 d): fail closed
+      before launch if the resolved binds include `FLEET_HOME` or its
+      `.git`, and run post-launch compose calls from a host-held copy of the
+      compose file (today they re-read the agent-writable one).
+    - **Blocking question for Rich:** does `squadra.service`'s `User=` render
+      to the uid of app-backend's `AGENT_UID` (1000) on the fleet-host? If
+      yes, 2a holds (the import refuses to run as root). If not, the
+      cross-user test is on the critical path and likely sends it to 2b
+      (+~0.5 d and a claude-skills change).
+  - **No rows added for the workspace or compose-boundary work** until Rich
+    rules; SQ7f (S3) added as the handoff says, its scope and order
+    pending the same ruling.
 
 ## Session log
 
@@ -1397,3 +1519,4 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
 | Note (N39) | 2026-10-28 | — | Recorded from a claude-skills session at Rich's request: claude-skills DB-D18–DB-D21 (Löwy's decomposition enforced upstream; Engine→ResourceAccess; build by layers with pulse milestones) and what they mean for squadra. No code, no row | none |
 | SQ7e | 2026-10-28 | SQ7e | PR #72. Gate checked (PR #71 merged, `bddeab8`; no other board-writes PR open). Branch fast-forwarded to `main`. Found N39 uncommitted in the worktree (from the claude-skills session); committed it on its own, so this unit's note is N40. Juval's two session files weren't in board-knowledge's working tree; read from its branch `docs/sq7-credential-sessions` (`026dafd`), not written. README upgrade line, SMOKE.md precondition line, README push contract. gh `erase` a no-op in v2.101.0's source; one junk-`GH_TOKEN` probe confirmed it (`erase` ran; login kept). No `src/` change. ruff, pyright, 1199 tests green | none written. Once SQ7e merges, Rich asks for SQ7d's handoff (nothing tracks the deferred push, so SQ7e's merge is SQ7d's trigger). SQ7c on its trigger |
 | Handoff (SQ7d) | 2026-10-28 | — | At Rich's request, after PR #72 merged (`f90407d`). Wrote `handoffs/SQ7d-remote-support-check.md`: the origin-writability test first, then S3 scoped by it. Found while writing it, for SQ7d to verify: app-backend's compose mounts only the worktree at `/work` (`FLEET_HOME/.git` unreachable); the linked worktree's `.git` points at a host path not in the container, so how in-container git works in `/work` is unrecorded; the worktree's `.git` is agent-writable, so a push built with `work_dir=<worktree>` and remote name `origin` would read the agent's config (test (b); if it holds, stop and consult Juval, since it changes the push contract). No Docker on Rich's Mac, so a contained run is fleet-host only. No code | `handoffs/SQ7d-remote-support-check.md` (gate: this PR merged) |
+| SQ7d | 2026-10-28 | SQ7d | PR #74. Gate checked (PR #73 merged, `1008988`; no other board-writes PR open). Branch fast-forwarded to `main`. The test, hermetic (`tests/test_worktree_git_dir.py`, 11 tests): (a) `FLEET_HOME`'s origin is not agent-writable under app-backend's mount, because git in `/work` can't find its git dir at all, so the agent can't commit either (fact 2, a defect for Rich); (b) the push as specified reads the worktree's git dir, so the agent picks its destination, runs `core.sshCommand`/`receivepack` on the host, and gets the ADO PAT sent to its host. Stop branch: S3 not built. `/ask-juval` with facts and options: options 3 + 2 (standalone repo, quarantine import, push from `FLEET_HOME` via one `resolve()`), S3 shrunk with float, declared-remote check dropped, a compose-boundary row. Session file in board-knowledge worktree `.claude/worktrees/sq7d-session` (branch `docs/sq7d-push-contract-session`, uncommitted), Choice blank. N41; row SQ7f added. ruff, pyright, tests green | none written. Rich rules N41 (Juval's session Choice and blocking question: the fleet-host `User=` uid); then the workspace row's handoff |
