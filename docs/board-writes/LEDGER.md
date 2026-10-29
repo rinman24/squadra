@@ -38,7 +38,10 @@ Under ~100K tokens per session, hard ceiling 120K, one unit per session.
 | SQ5g2 | From Rich's N34 ruling: `install-units` refuses a second fleet on the host whose board repository matches an existing fleet's (Juval's first branch: issue numbers are per repository, so two fleets on one repository would be two fleets on one issue). No `{fleet}` in the branch template | D | SQ5g | done (PR #68); N36. No cut: all three items built (the repository refusal, the installed-name check, the fleet-host acceptance and upgrade steps) |
 | SQ6 | claude-skills DB7 finding (i): `squadra init --check` validated with `--provider`'s default `ado`, not the toml's provider. `--provider` now defaults to `None`; the scaffold falls back to `ado`, and the check passes `None` so `load_config`'s precedence (toml < env < flag) holds. Tests: toml wins with no flag or env, `FLEET_PROVIDER` beats the toml, the flag beats both | — (DB7) | — | done (PR #56); N29 |
 | SQ7 | claude-skills DB7 finding (iii), Juval's option D (board-knowledge `sessions/2026-10-27-juval-squadra-init-preflight-findings.md`): host-side git credentials are ADO-shaped (`repo._CREDENTIAL_HELPER` supplies `$AZURE_DEVOPS_EXT_PAT`), and the claim's own fetch (`worktree.py:107`) bypasses that helper, so the preflight and the claim auth differently. Put credential acquisition for host-side git ops behind one boundary, resolved from the target remote's host rather than the board provider (an ADO board over a GitHub repo is valid). The probe and every host-side clone, fetch and push go through it, so the "exact auth path" claim is true. Keep it fail-closed. The rejection message names the credential actually used. Rename the `_ado_*` probe symbols and sweep ADO assumptions outside `board.py` (e.g. the `scaffold.py` comment on the provider PAT). Not wanted: relabelling the log line, skipping the probe when the provider isn't ADO (silent broadening on the claim path), folding into SQ5f. Latent on Rich's Mac (SSH origin, N29); must land before the first live GitHub tick over an HTTPS origin | — (DB7) | SQ5f, for order only: no design dependency, but both edit `TickSeams` on this branch | done (PR #69); N37. No cut: the boundary, the worktree fetch through it, fail-closed, the renames and the sweep all built |
-| SQ7b | Before Rich rules N37's three open points: `/ask-juval` on (1) the GitHub HTTPS credential source SQ7 built (`gh auth git-credential`, one token for board and git), (2) where a GitHub fleet's token comes from on the fleet-host (Key Vault bootstraps only the ADO PAT; cloud-init installs no `gh`), (3) the two narrowings (SSH to other hosts, plain `http`). Consult and record only, no code | — (N37) | SQ7, for order only: Juval reads the merged code | todo; `handoffs/SQ7b-consult-credentials.md` |
+| SQ7b | Before Rich rules N37's three open points: `/ask-juval` on (1) the GitHub HTTPS credential source SQ7 built (`gh auth git-credential`, one token for board and git), (2) where a GitHub fleet's token comes from on the fleet-host (Key Vault bootstraps only the ADO PAT; cloud-init installs no `gh`), (3) the two narrowings (SSH to other hosts, plain `http`). Consult and record only, no code | — (N37) | SQ7, for order only: Juval reads the merged code | done (PR #70); N37 (SQ7b), N38. Ruled by Rich 2026-10-28 |
+| SQ7c | Juval's (b2) (Juval called it "SQ8"; renamed, SQ8 is taken): the fleet-host's Key Vault secret set is derived per fleet, not hardwired as the ADO pair. Fetch the ADO PAT for an ADO HTTPS remote or an `ado` board, a GitHub token into `GH_TOKEN` for a github.com HTTPS remote or a `github` board, nothing for SSH, always the Anthropic key; fail closed on any missing, fetch nothing else. Two phases in `fleet-tick`: remote's credential before the clone (from `FLEET_APP_REPO_URL`), board's after it. Pin app-backend's `az` calls as identical. Install gh in cloud-init and `fleet-host-activate.sh`; `GH_TOKEN`/`GITHUB_TOKEN` in the agent-env negative test and goss; ADR-0002 addendum; README. Secret name and knob named by `/ask-eric` when the handoff is written. ~1.5–2 d | — (N37) | Trigger: a decision to run a GitHub board or a github.com HTTPS remote on the fleet-host (app-backend moving either to GitHub included; only Rich can). Start on the trigger; first tick no sooner than about one working week after it. Not after SQ7d (false dependency); if both triggers share a window, one fleet-host smoke verifies both | todo; (b2) ruled 2026-10-28; float to the trigger. No handoff until the trigger |
+| SQ7d | Juval's S3, scoped by a test first: in a contained run, can the agent rewrite `FLEET_HOME`'s `remote.origin.url` / `core.sshCommand`? Then split "is this a supported remote" out of `remote_auth.credential_for` into one check shared by the probe and `install-units` (closing the N36 disagreement), with an origin-must-match-`FLEET_APP_REPO_URL` check if origin proved writable. ~1–2 h test + ~1–2 d build | — (N37) | Before the push is wired (no float against it; Rich, 2026-10-28) | todo; scheduled, handoff not written |
+| SQ7e | The small items from Rich's N37 rulings, one PR: the README upgrade line on SQ7's narrowings (wording in the SQ7b session file, Juval's point 3); a fleet-host docs line that a GitHub board or github.com HTTPS remote there needs SQ7c first (Juval, when-to-build session); Juval's gh `erase` check: probe with a bad `GH_TOKEN`, then confirm `gh auth status` still holds the stored session (dev hosts only; a fix, if needed, is for dev hosts, not SQ7c). ~1.5 h | — (N37) | — | todo; handoff not written |
 | SQ8 | claude-skills DB-D13 (DB11; Rich's ruling of Juval's "A second break in the same rule", board-knowledge `sessions/2026-10-27-juval-first-run-parent-scope.md`): report partial items as data, in a fixed format, instead of only `squadra board origins`' one stderr line per partial item (N18), which is not contract. The case: a first run stops mid-create of a queue, leaving a partial item; the map is revised (a title changes); `increments_by_origin` leaves the partial item out, so design-to-board's re-run takes the first-run path, its checks pass, and `queue` is refused (`QueueRefusedError`, exit 3) with a fix that loops. Each entry carries at least the item id and the Origin, and enough for a caller to tell whether a `queue_increment` with given arguments would finish it or be refused under N14's retry rule; better, keep that judgment in squadra behind `check_queue_finishes`, as SQ5e did for scope. Verb or shape is this effort's to settle (`/ask-juval`, `/ask-eric` if wanted); not in `origins`' `{origin: …}` shape, for the reason DB-D12 kept scope out of it. Add it to `verb-contract.md`; the fake answers it too. Unblocks claude-skills DB11 (S9), which first probes the loop on the fake | — (DB11) | — (scheduled around SQ5f, Rich's call; never alongside another unit on this branch) | done (PR #62); N32 |
 | SQ9 | SQ8b's finding (N32): `squadra board queue --body-file PATH` read the file in text mode, whose universal newlines turned `\r\n` into `\n`, so a CRLF body was not passed exactly as given (N19) and a planner's own CRLF body would then meet an A3 or N14 refusal. Read the bytes and decode UTF-8 (shared with `partial-items --requests-file`); a body file that is not UTF-8 is exit 2 like any unreadable `--body-file`, not a traceback. Stdin already kept `\r\n` | — (SQ8b) | SQ8 | done (PR #63); N33 |
 
@@ -1203,6 +1206,97 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
     `test_repo.py`. The #193 hook-hardening tests pass unchanged except that
     the real-git worktree test now passes a stand-in credential (its origin
     is a local bare repo). Not run: no live tick, no probe on Rich's Mac.
+  - **SQ7b: Juval's answer on points 1–3** (board-knowledge
+    `sessions/2026-10-28-juval-sq7-credential-open-points.md`, method mode,
+    read the merged code himself; Choice blank for Rich). He keeps what SQ7
+    built on points 1 and 3, and disagrees with it in four places, below.
+    - **Two facts the handoff missed, both checked against `main`
+      `4a80ed5`.** (i) `fleet-tick` always fetches the ADO PAT
+      (`secrets.load_fleet_secrets`); if `fleet-ado-pat` is missing it exits
+      1 before the clone, so a GitHub-only fleet on the fleet-host fails at
+      startup without a dummy PAT. His read: SQ7's defect one layer up, the
+      secret set hardwired ADO-shaped. (ii) `agent_environ` has no caller in
+      `src/`; `ComposeSandbox` runs `docker compose` with the supervisor's
+      whole environment (no `env=`). What keeps the PAT off the agent is the
+      consumer's compose file naming only `ANTHROPIC_API_KEY`. ADR-0002 §11
+      calls `agent_environ` "the enforced projection", which claims more than
+      the code does. Not SQ7's; pre-existing.
+    - **Point 1, keep gh.** Board and git sharing a token is two access
+      components on one resource, not coupling: `credential_for` never reads
+      the provider. Splitting is a one-constant change if git and the board
+      ever need different identities; that is the trigger. Priced and set
+      aside: env-var helper (~0.5 d, only on the trigger), GitHub App token
+      (≥3–5 d, high risk, defer), SSH deploy key (reject: git only, and a key
+      on disk breaks §11). The probe proves the path, not the token's value
+      over time (an ADO PAT can be revoked between probe and fetch too); a
+      changed value fails closed at the fetch, before the ACTIVE write. One
+      amendment, ~1 h: confirm a rejected `GH_TOKEN` doesn't make gh drop its
+      stored session on git's credential `erase` (in SQ7c). He also notes the
+      ADO helper never reads stdin, so it answers for any host git asks
+      about; the HTTPS host gate is its only protection.
+    - **Point 2, (b2): derive the secret set per fleet.** (a), operator-managed,
+      rejected: `Environment=GH_TOKEN=`, an `EnvironmentFile` and a persisted
+      gh login all put a secret on disk, against §11. (b1), a third secret
+      behind a knob, ~0.5 d, acceptable only if Rich accepts the dummy
+      `fleet-ado-pat` as a documented trap. (b2), ~1.5–2 d, medium delivery
+      risk (it reorders startup for the one live fleet), lowest exposure.
+      (c), a GitHub App via the managed identity, is (b) plus minting, defer.
+      Must land before the first fleet-host GitHub fleet (without it that
+      fleet fails closed every tick), not earlier. One SQ row (SQ7c) plus
+      Rich's own step: create the secret and grant the identity `get`. The
+      token stays off the agent the same way the PAT does today. Making §11's
+      projection real in code (a scrubbed `docker compose` env) is a separate
+      decision, as a note against ADR-0002, not in SQ7c.
+    - **Point 3, keep both narrowings, but SQ7 put the SSH gate in the wrong
+      place.** `http` stays refused (PAT in clear, no integrity for the base
+      commit; no case for a credential-less public mirror). For SSH,
+      `credential_for` returns empty overrides for every host it passes, so
+      its host check isn't choosing a credential; it decides which remotes
+      squadra talks to, and it disagrees with N36 (`install-units` accepts
+      `git@gitlab.com:o/r` or an ssh-config alias, then every tick refuses at
+      the probe). What the gate is depends on whether the agent can rewrite
+      `FLEET_HOME`'s `remote.origin.url` (the #193 threat model assumes it can
+      write git config): if yes, it is an egress control and must stay; if
+      no, it is a support decision to merge with N36. Keep as built now (S1),
+      test, then split (S3, SQ7d) before the push is wired. S2 (any SSH host
+      passes) only inside S3 and only if origin proves unwritable.
+    - **The narrowing was deliberate, not ruled.** He disagrees with N37
+      treating it as settled: an operator on an SSH alias or GHE remote
+      upgrades and stops claiming (loudly: the line names the host). Closing
+      it takes Rich's ruling plus one README upgrade line (~30 min, wording
+      in the session file), which can ride the next PR on this branch.
+  - **Rich's rulings, 2026-10-28** (both session files' Choice):
+    1. **Keep gh** as the GitHub HTTPS source. No fleet is expected to need
+       separate git and board identities.
+    2. **(b2)** for the fleet-host GitHub token. The secret name and knob
+       are left for `/ask-eric` when SQ7c's handoff is written. When to
+       build went back to Juval (board-knowledge
+       `sessions/2026-10-28-juval-when-to-build-sq7c.md`): not now, since no
+       date and one builder make building early speculative, and it carries
+       medium risk to app-backend's startup; not after SQ7d, a false
+       dependency (SSH maps to no secret whatever SQ7d allows). Rich: no one
+       can move app-backend to GitHub without him, so SQ7c is todo on the
+       trigger, with about a week's lead time. Juval moved the gh `erase`
+       check out of SQ7c (it matters only where gh keeps a session, the dev
+       hosts) and added a fleet-host precondition line; Rich took both, into
+       SQ7e.
+    3. **Both narrowings kept** as ruled behaviour, with the README upgrade
+       line (SQ7e). **SQ7d scheduled** before the push is wired: the
+       origin-writability test, then S3 scoped by it.
+    4. **The `agent_environ` gap** is logged as a note against ADR-0002:
+       N38. No row.
+- N38 (SQ7b, Rich's ruling 4): **ADR-0002 §11 overstates what enforces the
+  agent's environment.** §11 calls `secrets.agent_environ` "the enforced
+  projection", but nothing in `src/` calls it (only `tests/test_secrets.py`).
+  `ComposeSandbox` runs `docker compose` through `sandbox._run_docker`, which
+  passes no `env=`, so compose inherits the supervisor's whole environment,
+  `AZURE_DEVOPS_EXT_PAT` included (and `GH_TOKEN` once SQ7c lands). What
+  actually keeps the credentials off the agent is the consumer's `.squadra/`
+  compose file naming only `ANTHROPIC_API_KEY`, which goss checks. Not a leak
+  while that file is right. Making the projection real in code (hand
+  `docker compose` a scrubbed environment built from `agent_environ`) is a
+  separate decision; no row until Rich asks for one. Found by Juval in SQ7b,
+  checked on `main` `4a80ed5`.
 
 ## Session log
 
@@ -1237,3 +1331,5 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
 | SQ5g2 | 2026-10-28 | SQ5g2 | PR #68. Gate checked (PR #67 merged). Branch fast-forwarded to `main` (`ce35dcd`). `install-units` refuses a fleet whose repository another fleet's service on the host serves, the unnamed pre-SQ5g unit included, failing closed when either repository is unresolvable; repositories compared by `repo.repository_identity` (ADO `org/project/repo`, GitHub `owner/name`). N35's residue closed: the service carries `FLEET_INSTALLED_NAME` and `fleet-tick` refuses a differing `[fleet] name`. goss / SMOKE templated on the name, with the upgrade steps. N36. No cut. ruff, pyright, tests green | `handoffs/SQ7-host-git-credentials.md` (existing; gate widened to SQ5g2) |
 | SQ7 | 2026-10-28 | SQ7 | PR #69. Gate checked (SQ5f PR #64, SQ5g PR #67, SQ5g2 PR #68 merged). Branch fast-forwarded to `main` (`6eb201f`). Built Juval's option D: `remote_auth.credential_for` keyed on the remote's host and transport, `repo.TargetRemote` behind both the probe and the claim's worktree fetch, fail-closed on any other remote, rejection lines per credential, the `_ado_pat_*` / `pat_ok` renames and the ADO-assumption sweep. GitHub HTTPS uses `gh auth git-credential` (no new secret or env name; for Rich to confirm). N37. No cut. ruff, pyright, 1199 tests green | `handoffs/SQ7b-consult-credentials.md` (added after the PR opened; gate: PR #69 merged) |
 | Handoff (SQ7b) | 2026-10-28 | — | At Rich's request, on PR #69's branch. Wrote `handoffs/SQ7b-consult-credentials.md`: `/ask-juval` on N37's three open points, given facts and options without SQ7's reasoning, priced per option; Choice left blank for Rich. Row SQ7b added. Merging #69 doesn't wait on the ruling: every N37 point is either fail-closed, unbuilt, or a one-constant swap. No code | `handoffs/SQ7b-consult-credentials.md` (gate: PR #69 merged) |
+| SQ7b | 2026-10-28 | SQ7b | PR #70. Gate checked (PR #69 merged, `4a80ed5`; no other board-writes PR open). Branch fast-forwarded to `main`. `/ask-juval` on N37's three points, given the facts and options without SQ7's reasoning; he read the code himself. Keep gh; (b2), a secret set derived per fleet, for the fleet-host GitHub token; keep both narrowings but rule them, and split the SSH host gate out of `credential_for` after an origin-writability test. Two facts surfaced and checked: `fleet-tick` always fetches the ADO PAT; `agent_environ` has no production caller. Rows SQ7c, SQ7d added (Juval's "SQ8" renamed). Session file Choice blank. No code | none until Rich rules N37's four questions (session file's Choice) |
+| SQ7b (ruling) | 2026-10-28 | SQ7b | Rich ruled N37's four points one at a time, recorded in the session file's Choice: keep gh; (b2), secret name left for `/ask-eric`; both narrowings kept with a README line, SQ7d before the push; the `agent_environ` gap as a note (N38). Timing of SQ7c put back to Juval (`sessions/2026-10-28-juval-when-to-build-sq7c.md`): todo on the trigger, not after SQ7d; Rich confirmed no one else can move app-backend to GitHub. Juval's gh `erase` check and a fleet-host precondition line moved into a new row, SQ7e. No code | none written. Next: SQ7e (small, unblocked); SQ7d before the push; SQ7c on the trigger |
