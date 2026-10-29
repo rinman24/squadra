@@ -16,6 +16,11 @@ on-host half that pytest cannot reach.
 - The VM's managed identity has a Key Vault **`get`** grant on `fleet-kv`
   for `anthropic-api-key` and `fleet-ado-pat` (both fetched at tick time). squadra
   itself installs from public PyPI, so activation needs no Key Vault secret.
+- A GitHub board or a github.com HTTPS remote on the fleet-host needs SQ7c
+  first: `fleet-tick` fetches only `anthropic-api-key` and `fleet-ado-pat`, and
+  the host has no `gh`. Start SQ7c when you decide to run that fleet, about a
+  working week before its first tick
+  ([ledger row SQ7c](../board-writes/LEDGER.md#work-items)).
 - The timer is **not** enabled yet (it shouldn't be — activation is the last step).
 - `/opt/squadra/fleet-host.env` sets `FLEET_NAME`, the fleet's `[fleet] name`.
   The units are `squadra-<name>.service` / `.timer` (N34); the acceptance below
