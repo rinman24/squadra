@@ -1297,6 +1297,32 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
   `docker compose` a scrubbed environment built from `agent_environ`) is a
   separate decision; no row until Rich asks for one. Found by Juval in SQ7b,
   checked on `main` `4a80ed5`.
+- N39 (claude-skills DB-D18–DB-D21, rulings after T1): **squadra builds
+  structure; it doesn't design it.** Rich ruled four of Juval's answers on
+  Löwy's decomposition (board-knowledge `sessions/2026-10-28-juval-where-enforce-service-decomposition.md`,
+  `…-engine-calls-resourceaccess.md`, `…-layers-vs-dependencies-agents.md`).
+  What they mean for squadra:
+  - **Naive about structure (DB-D18).** The design document fixes services,
+    layers, contracts, call edges and increment order; squadra never
+    chooses any of them. It may split an increment that touches two services
+    into one PR per service plus an integration PR, since the split follows
+    from the document. A runner asking "which layer does this go in?" is a
+    defect in the document and goes back to wayfinder, not a call squadra
+    makes.
+  - **Layer pulses (DB-D21).** Maps arrive ordered by layers (Utilities and
+    build infrastructure, Resources, ResourceAccess, Engines, Managers,
+    Clients), one service per increment within a pulse, and each pulse
+    closes with a milestone increment for integration and regression that
+    the next pulse depends on. To squadra these are ordinary increments with
+    Predecessors; the milestone is the one kind with no new service in it.
+  - **Engine→ResourceAccess allowed (DB-D20)**; the Manager owns the unit
+    of work.
+  - **Verification (DB-D19).** A reconciliation diff after each map (built
+    modules, import edges and contract operations against the document),
+    run in sandbox acceptance, plus an import-direction check in each target
+    repo's CI. Who runs the diff isn't ruled.
+  No row: the build is unscheduled (claude-skills ledger, Rich's queue,
+  "Added S16").
 
 ## Session log
 
@@ -1334,3 +1360,4 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
 | SQ7b | 2026-10-28 | SQ7b | PR #70. Gate checked (PR #69 merged, `4a80ed5`; no other board-writes PR open). Branch fast-forwarded to `main`. `/ask-juval` on N37's three points, given the facts and options without SQ7's reasoning; he read the code himself. Keep gh; (b2), a secret set derived per fleet, for the fleet-host GitHub token; keep both narrowings but rule them, and split the SSH host gate out of `credential_for` after an origin-writability test. Two facts surfaced and checked: `fleet-tick` always fetches the ADO PAT; `agent_environ` has no production caller. Rows SQ7c, SQ7d added (Juval's "SQ8" renamed). Session file Choice blank. No code | none until Rich rules N37's four questions (session file's Choice) |
 | SQ7b (ruling) | 2026-10-28 | SQ7b | Rich ruled N37's four points one at a time, recorded in the session file's Choice: keep gh; (b2), secret name left for `/ask-eric`; both narrowings kept with a README line, SQ7d before the push; the `agent_environ` gap as a note (N38). Timing of SQ7c put back to Juval (`sessions/2026-10-28-juval-when-to-build-sq7c.md`): todo on the trigger, not after SQ7d; Rich confirmed no one else can move app-backend to GitHub. Juval's gh `erase` check and a fleet-host precondition line moved into a new row, SQ7e. No code | none written. Next: SQ7e (small, unblocked); SQ7d before the push; SQ7c on the trigger |
 | Handoff (SQ7e) | 2026-10-28 | — | At Rich's request, after PR #70 merged (`3a91218`). Wrote `handoffs/SQ7e-narrowings-docs-and-gh-erase.md`: the README upgrade line, the fleet-host precondition line in SMOKE.md, the gh `erase` check (source first at the installed gh tag, then one junk-`GH_TOKEN` probe only if `erase` is a no-op, so Rich's gh login is never at risk). Found while writing it: README's hardening section still names the pre-SQ7 push contract; `git_host.py` is current. Added to SQ7e. No code | `handoffs/SQ7e-narrowings-docs-and-gh-erase.md` (gate: this PR merged) |
+| Note (N39) | 2026-10-28 | — | Recorded from a claude-skills session at Rich's request: claude-skills DB-D18–DB-D21 (Löwy's decomposition enforced upstream; Engine→ResourceAccess; build by layers with pulse milestones) and what they mean for squadra. No code, no row | none |
