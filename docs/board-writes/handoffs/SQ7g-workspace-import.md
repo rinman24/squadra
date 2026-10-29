@@ -148,14 +148,16 @@ writing it in.
   after SQ7g2 merges), and it settles 2a or 2b.
 - **Eric's blocking question** (N42), for Rich: when an Attempt fails or is
   relinquished, is its workspace archived or removed, and does its quarantine
-  ref survive? Proposed default, which SQ7g2 builds unless Rich rules otherwise
-  before it starts: archive the workspace (as today) and delete the ref. The
+  ref survive? Rich rules it in SQ7g0 (`handoffs/SQ7g0-rule-n42.md`) before
+  SQ7g2; N42 records the ruling. The default on the table: archive the
+  workspace (as today) and delete the ref. The
   unpushed commits then live in the archived workspace, and Relinquish says so.
   The quarantine ref stays out of the glossary.
 - **Where workspaces live** (N42, Juval's call per Eric): Eric says the default
   `.claude/worktrees` must go, since it's Claude Code's own worktree directory.
-  Until Rich (or Juval) names a location, `workspace_dir` keeps the current
-  default value. Juval's nested-repo test runs wherever it points.
+  Ruled in SQ7g0 too. If SQ7g1 runs first, `workspace_dir` keeps the current
+  default value and SQ7g2 moves it. Juval's nested-repo test runs wherever it
+  points.
 
 ## The units
 
@@ -220,8 +222,9 @@ SQ7g2 builds on them.
 
 ### SQ7g2 · the import and its verification (~1.25 d; Juval's C, A for §3, E's discriminating test)
 
-Gate addition: Rich has ruled Eric's question (N42), or the proposed default
-stands.
+Gate addition: SQ7g0 done (N42's rulings recorded). Build its rulings: the
+retry and relinquish handling of the workspace and the quarantine ref, and the
+location if SQ7g1 didn't.
 
 Code: `workspace.py`, `engines.py`, `supervisor.py` (`_build_facts`,
 `_read_commits_present`, `_retry`, the relinquish path, `TickSeams`,
