@@ -366,6 +366,16 @@ push) goes through:
 | SSH to `github.com`, `ssh.dev.azure.com`, `vs-ssh.visualstudio.com` | the host's ssh key (ssh-agent / `~/.ssh`); credential helpers do not apply to SSH |
 | anything else (another host, plain `http`, a local path) | none: fail closed |
 
+**Upgrading from before SQ7:** as of SQ7, squadra refuses SSH remotes to any host
+other than `github.com`, `ssh.dev.azure.com` and `vs-ssh.visualstudio.com`
+(including ssh-config aliases such as `git@github-work:o/r`), and plain `http`
+remotes. Before SQ7 an SSH remote to any host passed on the host's ssh key, and a
+plain `http` ADO remote got the PAT in clear. A fleet on one of those remotes
+stops claiming on upgrade: every tick with claim work logs
+`no git credential for the target remote (host: <host>)`, makes no claims and
+runs the reap pass only. Point `origin` (or `FLEET_APP_REPO_URL`) at a supported
+remote.
+
 Both HTTPS credentials reset inherited helpers first, so a keychain cannot answer
 in their place. A tick with claim work pending runs **two preflights** first, in
 order, and short-circuits on the first failure:
@@ -563,10 +573,12 @@ agent cannot strip them. The worktree create/archive/prune, branch delete, the
 by going through the builder. The host-side **push** of an increment's commits — the
 credential-holding op the agent does not perform — is not yet wired in code (the
 deferred write-tail in the supervisor's `_handoff`); when it is, it must be built as
-`host_git_argv(*credential_helper, "push", "origin", branch, work_dir=worktree)`, and
-`tests/test_git_host.py` already proves that contract neutralizes a planted `pre-push`
-hook (with a bare-push control), so a push that bypasses the builder is a reviewable
-regression rather than a silent escape.
+`remote_git_argv(credential, "push", "origin", branch, work_dir=worktree)`
+(`squadra.remote_auth`, which wraps `host_git_argv`), with the credential from
+`TargetRemote.credential()`. `tests/test_git_host.py` already proves the builder
+neutralizes a planted `pre-push` hook (with a bare-push control), and
+`tests/test_remote_auth.py` that `remote_git_argv` keeps the hooks guard first, so a
+push that bypasses the builder is a reviewable regression rather than a silent escape.
 
 **Manual operator pushes** against a fleet worktree must carry the same guard —
 run e.g. `git -c core.hooksPath=/dev/null -c safe.directory="$PWD" push …` (or

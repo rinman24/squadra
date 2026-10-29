@@ -41,7 +41,7 @@ Under ~100K tokens per session, hard ceiling 120K, one unit per session.
 | SQ7b | Before Rich rules N37's three open points: `/ask-juval` on (1) the GitHub HTTPS credential source SQ7 built (`gh auth git-credential`, one token for board and git), (2) where a GitHub fleet's token comes from on the fleet-host (Key Vault bootstraps only the ADO PAT; cloud-init installs no `gh`), (3) the two narrowings (SSH to other hosts, plain `http`). Consult and record only, no code | — (N37) | SQ7, for order only: Juval reads the merged code | done (PR #70); N37 (SQ7b), N38. Ruled by Rich 2026-10-28 |
 | SQ7c | Juval's (b2) (Juval called it "SQ8"; renamed, SQ8 is taken): the fleet-host's Key Vault secret set is derived per fleet, not hardwired as the ADO pair. Fetch the ADO PAT for an ADO HTTPS remote or an `ado` board, a GitHub token into `GH_TOKEN` for a github.com HTTPS remote or a `github` board, nothing for SSH, always the Anthropic key; fail closed on any missing, fetch nothing else. Two phases in `fleet-tick`: remote's credential before the clone (from `FLEET_APP_REPO_URL`), board's after it. Pin app-backend's `az` calls as identical. Install gh in cloud-init and `fleet-host-activate.sh`; `GH_TOKEN`/`GITHUB_TOKEN` in the agent-env negative test and goss; ADR-0002 addendum; README. Secret name and knob named by `/ask-eric` when the handoff is written. ~1.5–2 d | — (N37) | Trigger: a decision to run a GitHub board or a github.com HTTPS remote on the fleet-host (app-backend moving either to GitHub included; only Rich can). Start on the trigger; first tick no sooner than about one working week after it. Not after SQ7d (false dependency); if both triggers share a window, one fleet-host smoke verifies both | todo; (b2) ruled 2026-10-28; float to the trigger. No handoff until the trigger |
 | SQ7d | Juval's S3, scoped by a test first: in a contained run, can the agent rewrite `FLEET_HOME`'s `remote.origin.url` / `core.sshCommand`? Then split "is this a supported remote" out of `remote_auth.credential_for` into one check shared by the probe and `install-units` (closing the N36 disagreement), with an origin-must-match-`FLEET_APP_REPO_URL` check if origin proved writable. ~1–2 h test + ~1–2 d build | — (N37) | Before the push is wired (no float against it; Rich, 2026-10-28) | todo; scheduled, handoff not written |
-| SQ7e | The small items from Rich's N37 rulings, one PR: the README upgrade line on SQ7's narrowings (wording in the SQ7b session file, Juval's point 3); a fleet-host docs line that a GitHub board or github.com HTTPS remote there needs SQ7c first (Juval, when-to-build session); Juval's gh `erase` check: probe with a bad `GH_TOKEN`, then confirm `gh auth status` still holds the stored session (dev hosts only; a fix, if needed, is for dev hosts, not SQ7c). Also the stale push-contract line in README § Host-side git hardening (`host_git_argv(*credential_helper, …)`; `git_host.py` already reads `remote_git_argv(credential, …)`). ~1.5 h | — (N37) | — | todo; `handoffs/SQ7e-narrowings-docs-and-gh-erase.md` |
+| SQ7e | The small items from Rich's N37 rulings, one PR: the README upgrade line on SQ7's narrowings (wording in the SQ7b session file, Juval's point 3); a fleet-host docs line that a GitHub board or github.com HTTPS remote there needs SQ7c first (Juval, when-to-build session); Juval's gh `erase` check: probe with a bad `GH_TOKEN`, then confirm `gh auth status` still holds the stored session (dev hosts only; a fix, if needed, is for dev hosts, not SQ7c). Also the stale push-contract line in README § Host-side git hardening (`host_git_argv(*credential_helper, …)`; `git_host.py` already reads `remote_git_argv(credential, …)`). ~1.5 h | — (N37) | — | done (PR #72); N40. gh `erase` a no-op at v2.101.0; no dev-host row needed. Once SQ7e merges, Rich asks for SQ7d's handoff |
 | SQ8 | claude-skills DB-D13 (DB11; Rich's ruling of Juval's "A second break in the same rule", board-knowledge `sessions/2026-10-27-juval-first-run-parent-scope.md`): report partial items as data, in a fixed format, instead of only `squadra board origins`' one stderr line per partial item (N18), which is not contract. The case: a first run stops mid-create of a queue, leaving a partial item; the map is revised (a title changes); `increments_by_origin` leaves the partial item out, so design-to-board's re-run takes the first-run path, its checks pass, and `queue` is refused (`QueueRefusedError`, exit 3) with a fix that loops. Each entry carries at least the item id and the Origin, and enough for a caller to tell whether a `queue_increment` with given arguments would finish it or be refused under N14's retry rule; better, keep that judgment in squadra behind `check_queue_finishes`, as SQ5e did for scope. Verb or shape is this effort's to settle (`/ask-juval`, `/ask-eric` if wanted); not in `origins`' `{origin: …}` shape, for the reason DB-D12 kept scope out of it. Add it to `verb-contract.md`; the fake answers it too. Unblocks claude-skills DB11 (S9), which first probes the loop on the fake | — (DB11) | — (scheduled around SQ5f, Rich's call; never alongside another unit on this branch) | done (PR #62); N32 |
 | SQ9 | SQ8b's finding (N32): `squadra board queue --body-file PATH` read the file in text mode, whose universal newlines turned `\r\n` into `\n`, so a CRLF body was not passed exactly as given (N19) and a planner's own CRLF body would then meet an A3 or N14 refusal. Read the bytes and decode UTF-8 (shared with `partial-items --requests-file`); a body file that is not UTF-8 is exit 2 like any unreadable `--body-file`, not a traceback. Stdin already kept `\r\n` | — (SQ8b) | SQ8 | done (PR #63); N33 |
 
@@ -1297,6 +1297,66 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
   `docker compose` a scrubbed environment built from `agent_environ`) is a
   separate decision; no row until Rich asks for one. Found by Juval in SQ7b,
   checked on `main` `4a80ed5`.
+- N39 (claude-skills DB-D18–DB-D21, rulings after T1): **squadra builds
+  structure; it doesn't design it.** Rich ruled four of Juval's answers on
+  Löwy's decomposition (board-knowledge `sessions/2026-10-28-juval-where-enforce-service-decomposition.md`,
+  `…-engine-calls-resourceaccess.md`, `…-layers-vs-dependencies-agents.md`).
+  What they mean for squadra:
+  - **Naive about structure (DB-D18).** The design document fixes services,
+    layers, contracts, call edges and increment order; squadra never
+    chooses any of them. It may split an increment that touches two services
+    into one PR per service plus an integration PR, since the split follows
+    from the document. A runner asking "which layer does this go in?" is a
+    defect in the document and goes back to wayfinder, not a call squadra
+    makes.
+  - **Layer pulses (DB-D21).** Maps arrive ordered by layers (Utilities and
+    build infrastructure, Resources, ResourceAccess, Engines, Managers,
+    Clients), one service per increment within a pulse, and each pulse
+    closes with a milestone increment for integration and regression that
+    the next pulse depends on. To squadra these are ordinary increments with
+    Predecessors; the milestone is the one kind with no new service in it.
+  - **Engine→ResourceAccess allowed (DB-D20)**; the Manager owns the unit
+    of work.
+  - **Verification (DB-D19).** A reconciliation diff after each map (built
+    modules, import edges and contract operations against the document),
+    run in sandbox acceptance, plus an import-direction check in each target
+    repo's CI. Who runs the diff isn't ruled.
+  No row: the build is unscheduled (claude-skills ledger, Rich's queue,
+  "Added S16").
+- N40 (SQ7e, Juval's gh `erase` check and Rich's N37 rulings 2–3): **a
+  rejected `GH_TOKEN` doesn't log gh out.**
+  - **Source.** gh 2.101.0 (Rich's Mac; tag `v2.101.0`, commit `0cf1092`),
+    `pkg/cmd/auth/gitcredential/helper.go`, `helperRun`: `store` and `erase`
+    both `return nil` before reading stdin or config. The `erase` comment:
+    "We pretend to implement the "erase" operation, but do nothing since we
+    don't want git to cause user to be logged out." Only `get` does anything,
+    and it only reads (`ActiveToken`, `ActiveUser`). So git's `erase` after a
+    failed fill can't drop the stored login, on any host. A later gh could
+    change this; the check holds at that tag.
+  - **Confirmed through squadra's path, once.** A temp `FLEET_HOME` (`git
+    init`, `origin` =
+    `https://github.com/rinman24/squadra-sandbox.git`, the sandbox's SSH
+    remote rewritten to HTTPS), then `TargetRemote(home).probe()` with a junk
+    `GH_TOKEN` and `GIT_TRACE` to a file. Result: `ok=False`, host
+    `github.com`, kind `github-gh`. The trace shows git ran `gh auth
+    git-credential get`, then `gh auth git-credential erase`, so the
+    `erase` path really was exercised. Afterwards, with `GH_TOKEN` and
+    `GITHUB_TOKEN` unset, `gh auth status` still showed the `rinman24`
+    keyring login, with the same scopes as before the probe. One `ls-remote`;
+    nothing written to the sandbox repo.
+  - **No dev-host fix row.** Juval's worry (N37, SQ7b point 1) is closed for
+    the Mac and the berths.
+  - **Docs (one commit).** README § Supervisor: the upgrade line under the
+    per-remote credential table (Juval's wording, plus the preflight's "no git
+    credential for the target remote (host: …)" line and no claims). SMOKE.md
+    § Prerequisites: a GitHub board or github.com HTTPS remote on the
+    fleet-host needs SQ7c first, pointing at the row. README § Host-side git
+    hardening: the push contract now reads `remote_git_argv(credential,
+    "push", …)` with `TargetRemote.credential()`. `git_host.py`'s docstring
+    already agreed with N37. `tests/test_git_host.py`'s comment still names
+    `host_git_argv("push", …)`. That is the layer `remote_git_argv` wraps, and
+    `test_remote_auth.py` pins the guard coming first, so it's consistent and
+    was left as is (no change outside docs).
 
 ## Session log
 
@@ -1334,3 +1394,5 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
 | SQ7b | 2026-10-28 | SQ7b | PR #70. Gate checked (PR #69 merged, `4a80ed5`; no other board-writes PR open). Branch fast-forwarded to `main`. `/ask-juval` on N37's three points, given the facts and options without SQ7's reasoning; he read the code himself. Keep gh; (b2), a secret set derived per fleet, for the fleet-host GitHub token; keep both narrowings but rule them, and split the SSH host gate out of `credential_for` after an origin-writability test. Two facts surfaced and checked: `fleet-tick` always fetches the ADO PAT; `agent_environ` has no production caller. Rows SQ7c, SQ7d added (Juval's "SQ8" renamed). Session file Choice blank. No code | none until Rich rules N37's four questions (session file's Choice) |
 | SQ7b (ruling) | 2026-10-28 | SQ7b | Rich ruled N37's four points one at a time, recorded in the session file's Choice: keep gh; (b2), secret name left for `/ask-eric`; both narrowings kept with a README line, SQ7d before the push; the `agent_environ` gap as a note (N38). Timing of SQ7c put back to Juval (`sessions/2026-10-28-juval-when-to-build-sq7c.md`): todo on the trigger, not after SQ7d; Rich confirmed no one else can move app-backend to GitHub. Juval's gh `erase` check and a fleet-host precondition line moved into a new row, SQ7e. No code | none written. Next: SQ7e (small, unblocked); SQ7d before the push; SQ7c on the trigger |
 | Handoff (SQ7e) | 2026-10-28 | — | At Rich's request, after PR #70 merged (`3a91218`). Wrote `handoffs/SQ7e-narrowings-docs-and-gh-erase.md`: the README upgrade line, the fleet-host precondition line in SMOKE.md, the gh `erase` check (source first at the installed gh tag, then one junk-`GH_TOKEN` probe only if `erase` is a no-op, so Rich's gh login is never at risk). Found while writing it: README's hardening section still names the pre-SQ7 push contract; `git_host.py` is current. Added to SQ7e. No code | `handoffs/SQ7e-narrowings-docs-and-gh-erase.md` (gate: this PR merged) |
+| Note (N39) | 2026-10-28 | — | Recorded from a claude-skills session at Rich's request: claude-skills DB-D18–DB-D21 (Löwy's decomposition enforced upstream; Engine→ResourceAccess; build by layers with pulse milestones) and what they mean for squadra. No code, no row | none |
+| SQ7e | 2026-10-28 | SQ7e | PR #72. Gate checked (PR #71 merged, `bddeab8`; no other board-writes PR open). Branch fast-forwarded to `main`. Found N39 uncommitted in the worktree (from the claude-skills session); committed it on its own, so this unit's note is N40. Juval's two session files weren't in board-knowledge's working tree; read from its branch `docs/sq7-credential-sessions` (`026dafd`), not written. README upgrade line, SMOKE.md precondition line, README push contract. gh `erase` a no-op in v2.101.0's source; one junk-`GH_TOKEN` probe confirmed it (`erase` ran; login kept). No `src/` change. ruff, pyright, 1199 tests green | none written. Once SQ7e merges, Rich asks for SQ7d's handoff (nothing tracks the deferred push, so SQ7e's merge is SQ7d's trigger). SQ7c on its trigger |
