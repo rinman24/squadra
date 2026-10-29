@@ -1357,6 +1357,75 @@ DB-D sense; ADR-0004 and ADR-0005 record the model and contract changes.
     `host_git_argv("push", …)`. That is the layer `remote_git_argv` wraps, and
     `test_remote_auth.py` pins the guard coming first, so it's consistent and
     was left as is (no change outside docs).
+- N41 (SQ7d, the origin-writability test): **`FLEET_HOME`'s origin is out of
+  the agent's reach, but the push as specified is not: it reads the
+  worktree's git dir, which the agent owns.** S3 not built; put to Juval.
+  - **How it was tested.** `tests/test_worktree_git_dir.py`, hermetic: real
+    git, a temp `FLEET_HOME` whose origin is a local bare repo, the increment
+    worktree made by `GitWorktreeAccess.create` at the path `_worktree_for`
+    derives. The "agent" touches only files under the worktree directory, as
+    the bind mount allows. Then the host-side op runs as the supervisor builds
+    it. Local bare repos and one loopback HTTP listener (dummy PAT); no
+    network, no container (no Docker on the Mac), so 1(c), the fleet-host
+    contained run, was not needed for (a).
+  - **The mount (handoff fact 1, confirmed).** `ComposeSandbox` runs `docker
+    compose -p … -f <worktree>/.squadra/compose.yaml` with no
+    `FLEET_WORKTREE` (nothing in `src/` sets it), so app-backend's
+    `${FLEET_WORKTREE:-..}:/work` mounts the worktree, read-write, and
+    nothing else.
+  - **(a) `FLEET_HOME`'s config: not writable under that mount.** The
+    worktree's `.git` is a file, `gitdir: <FLEET_HOME>/.git/worktrees/<name>`,
+    absolute. With that path absent (as in the container), every git command
+    in the worktree fails: "gitfile does not point to a valid repository".
+    `git config remote.origin.url …` and `core.sshCommand` fail with it, and
+    `target_remote_url` still reads the original origin. The agent's own
+    repo in the worktree (below) doesn't touch `FLEET_HOME` either.
+    Control: with the git dir reachable, one `git config remote.origin.url`
+    in the worktree rewrites `FLEET_HOME`'s origin, since linked worktrees
+    share the main repo's config. So (a) rests on the mount alone: a
+    consumer compose file that mounts `FLEET_HOME` (or its `.git`) makes
+    origin agent-writable.
+  - **Fact 2 is a defect, separate from SQ7d: under app-backend's compose the
+    agent can't commit.** The same failure covers `git commit` and `git
+    status` in `/work`. ADR-0002 §2's commit-only agent has no working git.
+    An agent that recovers with `git init` commits into a repo of its own
+    that `FLEET_HOME` never sees. For Rich; no row, no fix here (the
+    handoff's instruction). Not checked: whether the fleet-host has ever run
+    a live increment to the commit step.
+  - **(b) The worktree's git dir: the agent's, so the push is the agent's.**
+    The "agent" replaces `.git` with its own repo (`git init`), or keeps
+    `.git` a file and points `gitdir:` at a directory inside the worktree
+    (relative, so it resolves the same on the host). Either way, a host-side
+    op run with `work_dir=<worktree>` reads the agent's config. The push the
+    README and `git_host.py` specify, `remote_git_argv(credential, "push",
+    "origin", branch, work_dir=worktree)` with the ADO credential:
+    - lands in an agent-chosen bare repo, not origin (both redirects);
+    - follows the agent's `url.<base>.insteadOf`: an origin reading
+      `https://dev.azure.com/org/proj/_git/repo` pushes to the agent's repo;
+    - runs the agent's `core.sshCommand` on the host (ssh origin to
+      `127.0.0.1:1`), and the agent's `remote.origin.receivepack` (local
+      origin). `core.hooksPath=/dev/null` stops hooks, not these;
+    - sends the ADO PAT to an agent-chosen host: the loopback listener got
+      `pat:<dummy PAT>`, because the ADO helper ignores the host it's asked
+      about (Juval's SQ7b note). The credential comes from `TargetRemote`
+      (`FLEET_HOME`'s origin); the destination from the worktree.
+    - Other ops with `work_dir=<worktree>`: only `_read_commits_present`
+      (`rev-list --count base..HEAD`). It ran no command with
+      `core.fsmonitor` set, but its answer is the agent's (fake
+      `refs/remotes/origin/main`, then one commit, reads as 1). `cleanup`'s
+      `worktree remove --force` runs from `FLEET_HOME` and fails (rc 128,
+      "does not point back") on a replaced `.git`, leaving the directory:
+      a cleanup that fails, not an escape. All other host-side ops use
+      `work_dir=FLEET_HOME`.
+    - Nothing here runs today: the push is unwired (G2). The tests pin the
+      contract as specified, so the contract change flips them.
+  - **Outcome: the handoff's stop branch.** (b) shows the agent can choose the
+    push destination and run a command through the worktree's git dir, so
+    the push contract changes before S3, and that isn't SQ7d's to decide.
+    S3 (the shared "supported remote" check, and whether the
+    declared-remote check is needed) waits for Rich's ruling, as SQ7f.
+    Under the current mount (a) says origin is unwritable, so the
+    declared-remote check isn't needed, unless the ruling widens the mount.
 
 ## Session log
 
