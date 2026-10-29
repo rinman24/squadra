@@ -87,6 +87,24 @@ writing it in.
   call it "the origin".
 - **`FleetHome`**: the distinct type for `host_git_argv`'s host-owned
   `work_dir`, so a workspace path fails pyright by name.
+- **Added by SQ7g0** (Rich confirmed Eric's names as given, N42):
+  - **Quarantine ref** enters the glossary. Eric wrote the entry, plus the
+    new Attempt and Relinquish entries, in
+    `~/Code/board-knowledge/sessions/2026-10-29-eric-sq7g0-quarantine-ref-entries.md`.
+    Use them verbatim. Avoid "quarantine branch", bare "quarantine",
+    "release"/"promote" and "archive". The Reaped, Relinquished and
+    Escalated comment wordings come from the same session.
+  - `WORKSPACE_DIR_SUFFIX = ".workspaces"` and
+    `default_workspace_dir(fleet_home: FleetHome) -> Path` (one function,
+    in `config.py`).
+  - `status.json`'s `worktree` becomes `workspace`: an absolute host path.
+    A pre-SQ7g file is refused with its own message ("`worktree` was
+    renamed `workspace` in SQ7g …"), not mapped. `squadra increment init
+    --worktree` becomes `--workspace`, and `runner-wrap.sh` reads
+    `FLEET_WORKSPACE` instead of deriving the path. Wording and README rows
+    are in `~/Code/board-knowledge/sessions/2026-10-29-eric-sq7g0-workspace-dir-suffix.md`.
+  - The Workspace entry gains "It lives outside `FLEET_HOME`, never inside
+    it."
 
 ## Facts found while writing this handoff (verify them, don't trust them)
 
@@ -146,22 +164,25 @@ writing it in.
   or its `.git`'s owner isn't the effective uid. The message names both uids.
   The cross-user acceptance step runs on the fleet-host as Rich's step (below,
   after SQ7g2 merges), and it settles 2a or 2b.
-- **Eric's blocking question** (N42), for Rich: when an Attempt fails or is
-  relinquished, is its workspace archived or removed, and does its quarantine
-  ref survive? Rich rules it in SQ7g0 (`handoffs/SQ7g0-rule-n42.md`) before
-  SQ7g2; N42 records the ruling. The default on the table: archive the
-  workspace (as today) and delete the ref. The
-  unpushed commits then live in the archived workspace, and Relinquish says so.
-  The quarantine ref stays out of the glossary.
-- **Where workspaces live** (N42, Juval's call per Eric): Eric says the default
-  `.claude/worktrees` must go, since it's Claude Code's own worktree directory.
-  Ruled in SQ7g0 too. If SQ7g1 runs first, `workspace_dir` keeps the current
-  default value and SQ7g2 moves it. Juval's nested-repo test runs wherever it
-  points.
+- **Eric's blocking question and where workspaces live: ruled** in SQ7g0
+  (N42, "Rich's rulings, 2026-10-29"). SQ7g0 ran before SQ7g1, so SQ7g1
+  builds the location and SQ7g2 builds the exit sequence. In short:
+  - Every exit short of finalize (retry, escalate, egress-escalate, timeout,
+    relinquish) imports the Attempt's commits into its quarantine ref,
+    persists the manifest result, and removes the workspace. Nothing is
+    archived. Finalize deletes the Increment's quarantine refs; otherwise
+    they stay until a human deletes them (Juval,
+    `sessions/2026-10-29-juval-sq7g0-archive-or-remove.md`).
+  - Workspaces live outside `FLEET_HOME`, by default in the sibling
+    `<FLEET_HOME>.workspaces` (fleet-host `/opt/squadra/app-backend.workspaces`),
+    and an absolute `[pipeline] workspace_dir` may override it (Juval,
+    `sessions/2026-10-29-juval-sq7g0-workspace-location.md`).
+  - The quarantine ref enters the glossary as **Quarantine ref** (Eric,
+    `sessions/2026-10-29-eric-sq7g0-quarantine-ref-entries.md`).
 
 ## The units
 
-### SQ7g1 · the workspace (~1.25 d; Juval's B, A for §2)
+### SQ7g1 · the workspace and where it lives (~1.75 d after SQ7g0's location ruling, was ~1.25 d; Juval's B, A for §2)
 
 Goal: each Attempt's `/work` is a standalone repository that git works in,
 made host-side, with nothing shared with `FLEET_HOME`; the worktree vocabulary
@@ -169,9 +190,14 @@ retired.
 
 Code: `src/squadra/worktree.py`, `dry_run.py`, `cleanup.py`, `sandbox.py`
 (`ComposeSandbox`, `_run_docker`), `supervisor.py` (`_worktree_for`,
-`_spec_for`, `_claim_and_launch`, `_build_facts`, `_retry`, `_finalize`,
+`_spec_for`, `_claim_and_launch`, `_build_facts`, `_retry`, `_escalate`,
+`_relinquish`, `_finalize`,
 `_read_commits_present`, `TickSeams`, `dry_run_seams`, `build_seams`),
-`config.py` (`worktree_dir`), `status.py` (if the base goes there);
+`config.py` (`worktree_dir`), `status.py` (the `workspace` field, and the base
+if it goes there), `cli.py` (`squadra increment init --workspace`),
+`scaffold.py` (`worktree_dir` line), `_scripts/runner-wrap.sh` (line 90's
+hardcoded path), README (status and config tables, the upgrade line),
+`constants.py` (the `fleet_root` comment's false "git-excluded" claim);
 `tests/test_worktree_git_dir.py`, `tests/test_supervisor_dry_run.py` and the
 worktree/cleanup tests.
 
@@ -184,6 +210,25 @@ worktree/cleanup tests.
   host-side, under `fleet_root/<item>/` beside `claimed-at` or in
   `status.json` (your call; record it), through a `TickSeams` write seam that
   `dry_run_seams` wraps.
+- **Where it lives (SQ7g0, Q2).** Workspaces live outside `FLEET_HOME`.
+  `default_workspace_dir(fleet_home)` returns the sibling
+  `<FLEET_HOME>.workspaces`, which the supervisor creates on first use.
+  `SquadraConfig.workspace_dir` is an absolute `Path`. The optional
+  `[pipeline] workspace_dir` overrides it, with these rules, each refused at
+  config load with a message naming the fix:
+  - it must be absolute (a relative value is refused, not reinterpreted);
+  - after resolving symlinks, it may not contain or sit inside `FLEET_HOME`
+    or `fleet_root`;
+  - a toml that sets `worktree_dir`, anywhere, is refused, and the message
+    says to delete the line, not rename it.
+
+  There's no env or flag layer. `squadra init` stops writing the key and
+  writes a comment showing the default and the disjointness rule.
+  `status.json` records the Attempt's absolute workspace path at create, and
+  the tick refuses while a claimed Increment's recorded `workspace` lies
+  outside `workspace_dir`, following the `fleet_stamp_refusal` pattern.
+  Correct `constants.py`'s "git-excluded there" comment. `fleet_root`'s own
+  location isn't ruled (N42).
 - squadra sets `FLEET_WORKSPACE=<workspace>` on every compose call
   (`ComposeSandbox`'s runner gains an env; compose interpolates on `ps`,
   `logs`, `down` and `exec` too). app-backend's rename of `FLEET_WORKTREE`, and
@@ -191,7 +236,12 @@ worktree/cleanup tests.
   change for Rich, not written here (fact 8 says nothing breaks meanwhile).
   Note it in the ledger.
 - Cleanup: `remove_workspace` removes the directory without following
-  symlinks (test it with a planted symlink pointing out of the workspace);
+  symlinks (test it with a planted symlink pointing out of the workspace).
+  It becomes the only end-of-Attempt disposal: `archive` and the archive
+  move are retired (SQ7g0, Q1). `_retry`, `_escalate` and `_relinquish` call
+  it for now, and SQ7g2 puts the import and manifest steps in front of it.
+  Until SQ7g2 an exit removes without importing, which is harmless because
+  no contained agent has run (fact 7).
   `delete_quarantine(attempt)` is `update-ref -d` on the Attempt's ref (fact 2;
   a no-op until SQ7g2); `prune_worktrees` goes. For the upgrade, one README
   line: `FLEET_HOME`'s existing linked worktrees are left to a manual `git
@@ -200,8 +250,12 @@ worktree/cleanup tests.
   workspace (it has no `origin/main` any more). That is still the agent's
   answer, as it is today (N41), and SQ7g2 moves it to `FLEET_HOME`. Say so in
   the docstring.
-- All of Eric's renames, the config key refusal, the glossary's Workspace
-  entry and the two Attempt edits, plus a GLOSSARY-SETTLED row (Workspace;
+- All of Eric's renames (SQ7g0's additions included: `status.json`'s
+  `workspace`, `--workspace`, `runner-wrap.sh` reading `FLEET_WORKSPACE`),
+  the config key refusal, the glossary's Workspace entry with "It lives
+  outside `FLEET_HOME`, never inside it.", and the two Attempt
+  worktree→workspace edits (Eric's full Attempt rewrite describes the exit
+  sequence, so SQ7g2 writes it), plus a GLOSSARY-SETTLED row (Workspace;
   rejected Worktree, Increment workspace; session
   `2026-10-28-eric-sq7g-workspace-names`). Leave Relinquish for SQ7g2.
 - ADR-0002 addendum, §2: the restatement Eric asked for. Host-side git is
@@ -209,26 +263,37 @@ worktree/cleanup tests.
   and the host runs no git in it after launch.
 - Tests: N41's (a) tests inverted (git works in the mount, `git commit` in
   `/work` succeeds, and nothing the agent does there touches `FLEET_HOME`'s
-  config). Juval's test 3 (nested repo: `FLEET_HOME`'s fetch, `reset --hard`
-  and prune read nothing from the workspace) and test 4 (no file in the
+  config). Juval's test 3 is replaced (SQ7g0, Q2): no workspace is nested any
+  more. In its place, during a workspace's life, a recursive listing of
+  `FLEET_HOME` and of `fleet_root`, and `git status --porcelain --ignored` in
+  `FLEET_HOME`, show no part of it. The refusals each refuse with a message
+  naming the fix: a toml with `worktree_dir`, a relative `workspace_dir`, one
+  inside `FLEET_HOME`, one overlapping `fleet_root`, a claimed Increment whose
+  recorded workspace is outside `workspace_dir`, and a pre-SQ7g `status.json`.
+  With no toml, a temp `FLEET_HOME` resolves to its sibling. Juval's test 4 (no file in the
   workspace shares an inode with `FLEET_HOME/.git`). Finalize completes
   against a standalone workspace. `FLEET_WORKSPACE` reaches every compose
   call. The dry-run exhaustiveness test covers the base-record seam.
 
-Cut line: the workspace, fact 1's `--no-hardlinks`, fact 2's cleanup and
-tests 3–4 can't be cut. If the renames run long, the config-key rename and its
-refusal can go to SQ7g2's start; the module and type renames can't, since
+Cut line: the workspace, its location outside `FLEET_HOME` with the
+disjointness refusal, fact 1's `--no-hardlinks`, fact 2's cleanup and test 4
+can't be cut. If the renames run long, the config-key rename and its refusal
+can go to SQ7g2's start; the module and type renames can't, since
 SQ7g2 builds on them.
 
-### SQ7g2 · the import and its verification (~1.25 d; Juval's C, A for §3, E's discriminating test)
+### SQ7g2 · the import, its verification and the Attempt's exit (~2 d after SQ7g0's exit-sequence ruling, was ~1.25 d; Juval's C, A for §3, E's discriminating test)
 
-Gate addition: SQ7g0 done (N42's rulings recorded). Build its rulings: the
-retry and relinquish handling of the workspace and the quarantine ref, and the
-location if SQ7g1 didn't.
+Gate addition: SQ7g0 done (N42's rulings recorded, 2026-10-29). Build its Q1
+ruling: one exit sequence for every exit short of finalize, the quarantine
+ref's retention, and the glossary and board wording that follow. SQ7g1 built
+the location.
 
 Code: `workspace.py`, `engines.py`, `supervisor.py` (`_build_facts`,
-`_read_commits_present`, `_retry`, the relinquish path, `TickSeams`,
-`dry_run_seams`), `dry_run.py`, `cleanup.py`; `docs/fleet-host/SMOKE.md`.
+`_read_commits_present`, `_retry`, `_escalate`, `_escalate_egress`, the timeout
+path, `_relinquish`, `_finalize`, `TickSeams`, `dry_run_seams`), `dry_run.py`,
+`cleanup.py`, `status.py` (the persisted manifest result), `board.py` (the
+Reaped, Relinquished and Escalated texts, both dialects); `GLOSSARY.md`,
+`GLOSSARY-SETTLED.md`; `docs/fleet-host/SMOKE.md`.
 
 - `FetchWorkspaceAccess.import_commits(attempt) -> QuarantinedTip | None`:
   refuse as root or on an owner mismatch (the uid rule above). Delete the
@@ -244,9 +309,33 @@ Code: `workspace.py`, `engines.py`, `supervisor.py` (`_build_facts`,
   runs a read-only `ls-remote <workspace>` from `FLEET_HOME`, logs `[dry-run]
   WOULD import`, and approximates commits as "the branch exists and its tip ≠
   base". Fix the `TickSeams` docstring's read/write lists.
-- The quarantine ref never outlives its Attempt under the ruled default:
-  `_retry`, relinquish and finalize delete it (`delete_quarantine`).
-  Relinquish's glossary entry gets the ruled wording (Eric's two branches).
+- **The exit sequence (SQ7g0, Q1; Juval's option C).** One sequence for every
+  exit short of finalize: retry, escalate, egress-escalate (today
+  `_escalate_egress` only tears down and leaves the workspace in place),
+  timeout and relinquish. Each trigger stays in its own code, and all five
+  call the sequence after the container is stopped:
+  1. import the Attempt's commits into its quarantine ref;
+  2. persist the manifest result (`read_manifest`'s data, not a copy of the
+     file) under `fleet_root/<item>/`, keyed by Attempt;
+  3. `remove_workspace`.
+
+  The sequence runs unconditionally whenever the workspace exists. That
+  includes relinquish and timeout, which the gather never imports, and
+  retry and escalate, where the import runs a second time; accept that. It
+  is gated on the workspace being present and runs in that order, so a
+  rerun after an interrupted exit skips the import and the ref survives.
+  An import refusal (root, owner mismatch) goes in `last_error`, and the
+  workspace is removed anyway.
+- **Retention.** Finalize deletes every `refs/squadra/quarantine/<item>/*`
+  (`delete_quarantine` for the Increment). Otherwise refs stay until a human
+  deletes them. Build nothing finer.
+- **Words.** The Reaped, Relinquished and Escalated comments (ADO and GitHub)
+  take Eric's wording: workspace removed, commits kept in quarantine ref
+  `refs/squadra/quarantine/<item>/<n>`; Escalated's clean restart says to
+  inspect or delete `refs/squadra/quarantine/<item>/*` in `FLEET_HOME` first.
+  The glossary takes Eric's Quarantine ref, Attempt and Relinquish entries
+  verbatim, plus GLOSSARY-SETTLED rows (Quarantine ref; rejected quarantine
+  branch, archive; sessions `2026-10-29-eric-sq7g0-quarantine-ref-entries`).
 - Juval's test 2 (alternates: a blob that exists only in a host repo named by
   the workspace's `objects/info/alternates` never lands in quarantine; if it
   does, refuse a workspace with alternates, or record 2b's trigger). His
@@ -265,10 +354,16 @@ Code: `workspace.py`, `engines.py`, `supervisor.py` (`_build_facts`,
   fake `refs/remotes/origin/main` and one commit in the workspace read as
   nothing unless the branch imports and verifies). A stale ref from Attempt n
   never passes Attempt n+1. The import refuses on root and on an owner
-  mismatch. The dry-run decorator writes no ref.
+  mismatch. The dry-run decorator writes no ref. Juval's exit test: plant a
+  marker as the workspace's `core.fsmonitor` and `core.pager` and a symlink
+  pointing out of it, then run each of the five exits plus one interrupted
+  and rerun exit. Assert the marker never fired, the ref resolves to the
+  Attempt's tip, the manifest result is persisted, the workspace is gone and
+  the symlink's target is intact. Finalize deletes all the Increment's refs.
 
 Cut line: the import, the Engine, `commits_present` in `FLEET_HOME`, the
-dry-run seam and tests 1–2 can't be cut. If the script runs long, its SMOKE
+dry-run seam, the exit sequence with its five callers and its test, and tests
+1–2 can't be cut. The board-comment wording can trail into SQ7g3's start. If the script runs long, its SMOKE
 section can trail into SQ7g3's start; the script itself can't.
 
 **Rich's fleet-host step (after SQ7g2 merges; ~1 h; never run by a session).**
